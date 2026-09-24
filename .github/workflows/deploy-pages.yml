@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -34,10 +35,7 @@ jobs:
         run: |
           sed -i 's#<base href="/" />#<base href="/ShapeEditor/" />#' release/wwwroot/index.html
           cp release/wwwroot/index.html release/wwwroot/404.html
-    touch release/wwwroot/.nojekyll
-
-      - name: Add GitHub Pages fallback
-        run: cp release/wwwroot/index.html release/wwwroot/404.html
+          touch release/wwwroot/.nojekyll
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
@@ -45,12 +43,11 @@ jobs:
           path: release/wwwroot
 
   deploy:
+    runs-on: ubuntu-latest
+    needs: build
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-
-    runs-on: ubuntu-latest
-    needs: build
 
     steps:
       - name: Deploy to GitHub Pages
