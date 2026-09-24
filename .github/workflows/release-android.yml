@@ -46,6 +46,22 @@ jobs:
             [Convert]::FromBase64String($env:KEYSTORE_BASE64)
           )
 
+      - name: Verify signing key
+        shell: pwsh
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          $key = Join-Path $PWD "signing\shapeeditor-release.keystore"
+          if (-not (Test-Path $key)) { throw "Keystore file is missing" }
+          Write-Host "Keystore size: $((Get-Item $key).Length) bytes"
+
+          & keytool -list `
+            -keystore $key `
+            -storepass:env ANDROID_KEYSTORE_PASSWORD `
+            -alias shapeeditor
+
+          if ($LASTEXITCODE -ne 0) { throw "Keystore password or alias is invalid" }
+
       - name: Publish signed APK
         shell: pwsh
         env:
@@ -56,6 +72,7 @@ jobs:
             -c Release `
             -f net10.0-android `
             --self-contained true `
+            -v:normal `
             -p:AndroidPackageFormats=apk `
             -p:AndroidFastDeployment=false `
             -p:EmbedAssembliesIntoApk=true `
