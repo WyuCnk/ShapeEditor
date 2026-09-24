@@ -520,3 +520,34 @@ button {
         flex: 1 1 auto;
     }
 }
+
+.resource-panel {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.resource-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 36px;
+    padding: 6px 14px;
+    color: #ffffff;
+    background: #512bd4;
+    border-radius: 7px;
+    text-decoration: none;
+    font-size: 14px;
+}
+
+    .resource-button:hover {
+        color: #ffffff;
+        background: #311b92;
+    }
+
+@media (max-width: 700px) {
+    .resource-button {
+        flex: 1 1 100%;
+    }
+}
