@@ -32,7 +32,19 @@
         <span class="dismiss">🗙</span>
     </div>
     <script src="_framework/blazor.webassembly#[.{fingerprint}].js"></script>
-    <script>navigator.serviceWorker.register('service-worker.js', { updateViaCache: 'none' });</script>
+    <div id="update-prompt" hidden role="status">
+        <span>发现新版本</span>
+        <button type="button" onclick="shapeUpdate.apply()">保存并更新</button>
+    </div>
+
+    <script>
+        if ("serviceWorker" in navigator) {
+            navigator.serviceWorker.register("service-worker.js", {
+                updateViaCache: "none"
+            }).catch(error => console.warn("Service Worker 注册失败", error));
+        }
+    </script>
+    <script src="js/shape-update.js"></script>
     <script src="js/shape-grid.js"></script>
     <script src="js/shape-storage.js"></script>
 </body>

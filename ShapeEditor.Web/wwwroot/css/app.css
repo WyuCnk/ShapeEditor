@@ -565,3 +565,18 @@ button {
     .blazor-error-boundary::after {
         content: "页面发生错误，请刷新后重试。";
     }
+
+#update-prompt:not([hidden]) {
+    position: fixed;
+    z-index: 1001;
+    right: 16px;
+    bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    background: #222;
+    color: #fff;
+    border-radius: 6px;
+    box-shadow: 0 4px 16px #0004;
+}

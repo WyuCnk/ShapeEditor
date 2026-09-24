@@ -998,6 +998,9 @@
             BrowserSaveKey);
     }
 
+    [JSInvokable]
+    public Task PrepareForUpdate() => SaveDocumentAsync();
+
     #endregion
 
     #region 图片导出
@@ -1054,6 +1057,8 @@
         {
             _dotNetReference =
                 DotNetObjectReference.Create(this);
+
+            await JS.InvokeVoidAsync("shapeUpdate.init", _dotNetReference);
 
             await RestoreDocumentAsync();
 
