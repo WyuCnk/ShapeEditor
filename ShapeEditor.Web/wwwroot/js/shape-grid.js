@@ -123,124 +123,90 @@ window.shapeGrid = {
         const rows = state.rows;
         const cells = state.cells;
 
-        const container = canvas.parentElement;
+        const viewWidth = canvas.clientWidth;
+        const viewHeight = canvas.clientHeight;
+
+        if (viewWidth <= 0 || viewHeight <= 0 || columns <= 0 || rows <= 0) {
+            return;
+        }
 
         const baseCellWidth = 100;
         const baseCellHeight = 76;
+        const margin = 12;
 
-        const availableWidth =
-            container?.clientWidth || 800;
+        const fitScale = Math.min(
+            (viewWidth - margin * 2) / (columns * baseCellWidth),
+            (viewHeight - margin * 2) / (rows * baseCellHeight),
+            1.45
+        );
 
-        const availableHeight =
-            container?.clientHeight || 500;
+        const cellScale = Math.max(0.05, fitScale);
+        const cellWidth = baseCellWidth * cellScale;
+        const cellHeight = baseCellHeight * cellScale;
 
-        const fitScaleX =
-            availableWidth /
-            (columns * baseCellWidth);
+        const gridWidth = columns * cellWidth;
+        const gridHeight = rows * cellHeight;
 
-        const fitScaleY =
-            availableHeight /
-            (rows * baseCellHeight);
-
-        /*
-         * 小图形自动放大，大图形自动缩小。
-         *
-         * 最小 0.55：
-         * 防止大矩阵缩得过小；
-         *
-         * 最大 1.45：
-         * 防止小矩阵在桌面上过大。
-         */
-        const adaptiveScale =
-            Math.max(
-                0.55,
-                Math.min(
-                    1.45,
-                    Math.min(
-                        fitScaleX,
-                        fitScaleY)));
-
-        const cellWidth =
-            baseCellWidth * adaptiveScale;
-
-        const cellHeight =
-            baseCellHeight * adaptiveScale;
-
-        if (canvas._shapeGridDotNet) {
-            canvas._shapeGridDotNet.invokeMethodAsync(
-                "OnCanvasMetrics",
-                cellWidth,
-                cellHeight);
-        }
-
-        const cssWidth = columns * cellWidth;
-        const cssHeight = rows * cellHeight;
+        // 这是矩阵在视口内的基础居中位置，不包含用户平移。
+        const originX = (viewWidth - gridWidth) / 2;
+        const originY = (viewHeight - gridHeight) / 2;
 
         const dpr = window.devicePixelRatio || 1;
+        canvas.width = Math.round(viewWidth * dpr);
+        canvas.height = Math.round(viewHeight * dpr);
+
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+            return;
+        }
+
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillRect(0, 0, viewWidth, viewHeight);
 
         const panX = state.panX || 0;
         const panY = state.panY || 0;
         const zoom = state.zoom || 1;
 
-        canvas.width = Math.round(cssWidth * dpr);
-        canvas.height = Math.round(cssHeight * dpr);
-        canvas.style.width = `${cssWidth}px`;
-        canvas.style.height = `${cssHeight}px`;
-
-        const ctx = canvas.getContext("2d");
-
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        ctx.clearRect(
-            0,
-            0,
-            cssWidth,
-            cssHeight);
+        // C# 命中检测需要与绘制完全相同的单元格尺寸和基础原点。
+        canvas._shapeGridDotNet?.invokeMethodAsync(
+            "OnCanvasMetrics",
+            cellWidth,
+            cellHeight,
+            originX,
+            originY
+        );
 
         ctx.save();
-
-        ctx.translate(panX, panY);
+        ctx.translate(originX + panX, originY + panY);
         ctx.scale(zoom, zoom);
 
         for (let row = 0; row < rows; row++) {
             for (let column = 0; column < columns; column++) {
-                const index =
-                    row * columns + column;
-
-                const cell =
-                    cells[index];
-
-                const x =
-                    column * cellWidth;
-
-                const y =
-                    row * cellHeight;
+                const cell = cells[row * columns + column];
 
                 drawCell(
                     ctx,
                     cell,
-                    x,
-                    y,
+                    column * cellWidth,
+                    row * cellHeight,
                     cellWidth,
-                    cellHeight);
+                    cellHeight
+                );
             }
         }
 
-        drawGrid(
-            ctx,
-            rows,
-            columns,
-            cellWidth,
-            cellHeight);
+        drawGrid(ctx, rows, columns, cellWidth, cellHeight);
 
-        if (state.selectedLayer !== null &&
-            state.selectedPart !== null) {
+        if (state.selectedLayer !== null && state.selectedPart !== null) {
             drawSelectedCell(
                 ctx,
                 state,
                 state.selectedLayer,
                 state.selectedPart,
                 cellWidth,
-                cellHeight);
+                cellHeight
+            );
         }
 
         ctx.restore();

@@ -277,6 +277,10 @@
 
     private float _cellHeight = 76f;
 
+    private float _canvasOriginX;
+
+    private float _canvasOriginY;
+
     private bool _isTransforming;
 
     private float _gestureStartDistance;
@@ -1290,17 +1294,12 @@
     #region Canvas 交互
 
     [JSInvokable]
-    public Task OnCanvasMetrics(float cellWidth, float cellHeight)
+    public Task OnCanvasMetrics(float cellWidth, float cellHeight, float originX, float originY)
     {
-        if (cellWidth > 0)
-        {
-            _cellWidth = cellWidth;
-        }
-
-        if (cellHeight > 0)
-        {
-            _cellHeight = cellHeight;
-        }
+        _cellWidth = cellWidth;
+        _cellHeight = cellHeight;
+        _canvasOriginX = originX;
+        _canvasOriginY = originY;
 
         return Task.CompletedTask;
     }
@@ -1531,25 +1530,30 @@
 
     private bool TryGetCanvasCell(float x, float y, out int layer, out int part)
     {
-        float localX =
-            (x - _panX) / _zoom;
+        layer = -1;
+        part = -1;
 
-        float localY =
-            (y - _panY) / _zoom;
+        if (_cellWidth <= 0 || _cellHeight <= 0 || _zoom <= 0)
+        {
+            return false;
+        }
 
-        part =
-            (int)(localX / _cellWidth);
+        float localX = (x - _canvasOriginX - _panX) / _zoom;
+        float localY = (y - _canvasOriginY - _panY) / _zoom;
 
-        int visualRow =
-            (int)(localY / _cellHeight);
+        // 必须在转 int 前判断负数；(int)(-0.2) 会得到 0。
+        if (localX < 0 || localY < 0 ||
+            localX >= Document.PartCount * _cellWidth ||
+            localY >= Document.LayerCount * _cellHeight)
+        {
+            return false;
+        }
 
-        layer =
-            Document.LayerCount - 1 - visualRow;
+        part = (int)(localX / _cellWidth);
+        int visualRow = (int)(localY / _cellHeight);
+        layer = Document.LayerCount - 1 - visualRow;
 
-        return part >= 0 &&
-               part < Document.PartCount &&
-               visualRow >= 0 &&
-               visualRow < Document.LayerCount;
+        return true;
     }
 
     #endregion
