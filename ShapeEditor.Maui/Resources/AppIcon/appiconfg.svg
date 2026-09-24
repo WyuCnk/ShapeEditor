@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="512"
+    height="512"
+    viewBox="0 0 512 512">
+
+  <!-- 白色矩阵网格 -->
+  <g
+      fill="none"
+      stroke="#FFFFFF"
+      stroke-width="14"
+      stroke-linejoin="round">
+
+    <rect
+        x="92"
+        y="92"
+        width="328"
+        height="328"
+        rx="12"/>
+
+    <path
+        d="
+                M174 92V420
+                M256 92V420
+                M338 92V420
+                M92 174H420
+                M92 256H420
+                M92 338H420"/>
+  </g>
+
+  <!-- 中央晶体 -->
+  <rect
+      x="208"
+      y="208"
+      width="96"
+      height="96"
+      rx="12"
+      fill="#FF6B9A"
+      stroke="#FFFFFF"
+      stroke-width="10"/>
+
+  <!-- 晶体中央高光 -->
+  <rect
+      x="246"
+      y="208"
+      width="20"
+      height="96"
+      fill="#FFFFFF"
+      opacity="0.35"/>
+</svg>

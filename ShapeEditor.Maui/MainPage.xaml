@@ -1,0 +1,625 @@
+﻿<ContentPage
+    x:Class="ShapeEditor.Maui.MainPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    Title="竖式图编辑器">
+
+    <ContentPage.Resources>
+
+        <!-- 页面普通按钮 -->
+        <Style x:Key="CompactButtonStyle"
+       TargetType="Button">
+
+            <Setter Property="FontSize"
+            Value="13"/>
+
+            <Setter Property="FontAutoScalingEnabled"
+            Value="False"/>
+
+            <Setter Property="Padding"
+            Value="8,2"/>
+
+            <Setter Property="MinimumHeightRequest"
+            Value="36"/>
+
+            <Setter Property="MinimumWidthRequest"
+            Value="0"/>
+
+            <Setter Property="CornerRadius"
+            Value="8"/>
+
+            <Setter Property="BackgroundColor"
+            Value="#512BD4"/>
+
+            <Setter Property="TextColor"
+            Value="White"/>
+
+            <Setter Property="BorderColor"
+            Value="Transparent"/>
+
+            <Setter Property="BorderWidth"
+            Value="1"/>
+
+            <Setter Property="VisualStateManager.VisualStateGroups">
+                <Setter.Value>
+                    <VisualStateGroupList>
+                        <VisualStateGroup x:Name="CommonStates">
+
+                            <VisualState x:Name="Normal"/>
+
+                            <VisualState x:Name="Disabled">
+                                <VisualState.Setters>
+                                    <Setter Property="BackgroundColor"
+                                    Value="#D0D0D0"/>
+
+                                    <Setter Property="TextColor"
+                                    Value="#777777"/>
+
+                                    <Setter Property="BorderColor"
+                                    Value="#B0B0B0"/>
+
+                                    <Setter Property="BorderWidth"
+                                    Value="1"/>
+                                </VisualState.Setters>
+                            </VisualState>
+
+                        </VisualStateGroup>
+                    </VisualStateGroupList>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 类型按钮 -->
+        <Style x:Key="TypeButtonStyle"
+           TargetType="Button"
+           BasedOn="{StaticResource CompactButtonStyle}">
+
+            <Setter Property="HeightRequest"
+                Value="38"/>
+
+            <Setter Property="FontSize"
+                Value="14"/>
+        </Style>
+
+        <!-- 颜色按钮 -->
+        <Style x:Key="ColorButtonStyle"
+       TargetType="Button"
+       BasedOn="{StaticResource CompactButtonStyle}">
+
+            <Setter Property="HeightRequest"
+            Value="36"/>
+
+            <Setter Property="FontSize"
+            Value="13"/>
+
+            <Setter Property="Padding"
+            Value="4,0"/>
+        </Style>
+
+        <Style    x:Key="CompactLabelStyle"    TargetType="Label">
+
+            <Setter
+        Property="TextColor"
+        Value="{AppThemeBinding
+            Light=#333333,
+            Dark=#EEEEEE}"/>
+
+            <Setter
+        Property="BackgroundColor"
+        Value="Transparent"/>
+
+            <Setter
+        Property="FontSize"
+        Value="13"/>
+
+            <Setter
+        Property="FontAutoScalingEnabled"
+        Value="False"/>
+        </Style>
+
+        <Style    x:Key="CompactEntryStyle"    TargetType="Entry">
+
+            <Setter
+        Property="TextColor"
+        Value="{AppThemeBinding
+            Light=#222222,
+            Dark=#EEEEEE}"/>
+
+            <Setter
+        Property="PlaceholderColor"
+        Value="{AppThemeBinding
+            Light=#777777,
+            Dark=#AAAAAA}"/>
+
+            <Setter
+        Property="BackgroundColor"
+        Value="Transparent"/>
+
+            <Setter
+        Property="FontSize"
+        Value="14"/>
+
+            <Setter
+        Property="FontAutoScalingEnabled"
+        Value="False"/>
+        </Style>
+
+        <!-- 短代码输入框 -->
+        <Style
+    x:Key="CodeEntryStyle"
+    TargetType="Entry">
+
+            <Setter
+        Property="FontSize"
+        Value="13"/>
+
+            <Setter
+        Property="FontAutoScalingEnabled"
+        Value="False"/>
+
+            <Setter
+        Property="TextColor"
+        Value="#222222"/>
+
+            <Setter
+        Property="PlaceholderColor"
+        Value="#777777"/>
+
+            <Setter
+        Property="BackgroundColor"
+        Value="Transparent"/>
+
+            <Setter
+        Property="HeightRequest"
+        Value="38"/>
+
+            <Setter
+        Property="HorizontalOptions"
+        Value="Fill"/>
+
+            <Setter
+        Property="HorizontalTextAlignment"
+        Value="Start"/>
+
+            <Setter
+        Property="VerticalTextAlignment"
+        Value="Center"/>
+        </Style>
+
+        <Color x:Key="LightPageBackground">#FFFFFF</Color>
+        <Color x:Key="DarkPageBackground">#121212</Color>
+
+        <Color x:Key="LightTextColor">#222222</Color>
+        <Color x:Key="DarkTextColor">#EEEEEE</Color>
+
+        <Color x:Key="LightSecondaryTextColor">#666666</Color>
+        <Color x:Key="DarkSecondaryTextColor">#BBBBBB</Color>
+
+        <Color x:Key="LightGridColor">#9E9E9E</Color>
+        <Color x:Key="DarkGridColor">#666666</Color>
+    </ContentPage.Resources>
+
+    <Grid
+    BackgroundColor="{AppThemeBinding
+        Light={StaticResource LightPageBackground},
+        Dark={StaticResource DarkPageBackground}}"
+    RowDefinitions="Auto,Auto,Auto,Auto,*,Auto">
+
+        <!-- 顶部历史操作栏 -->
+        <Grid
+    Grid.Row="0"
+    Padding="10,4,10,2"
+    ColumnDefinitions="*,Auto,Auto,Auto"
+    ColumnSpacing="4">
+
+            <Button
+        x:Name="UndoButton"
+        Grid.Column="1"
+        Text="撤销"
+        Style="{StaticResource CompactButtonStyle}"
+        IsEnabled="False"
+        Clicked="UndoButton_Clicked"/>
+
+            <Button
+        x:Name="RedoButton"
+        Grid.Column="2"
+        Text="重做"
+        Style="{StaticResource CompactButtonStyle}"
+        IsEnabled="False"
+        Clicked="RedoButton_Clicked"/>
+
+            <Button
+        Grid.Column="3"
+        Text="清空"
+        Style="{StaticResource CompactButtonStyle}"
+        Clicked="ClearButton_Clicked"/>
+        </Grid>
+
+        <!-- 尺寸设置 -->
+        <Grid
+    Grid.Row="1"
+    Padding="10,0,10,4"
+    ColumnDefinitions="Auto,48,Auto,48,Auto,*"
+    ColumnSpacing="5">
+
+            <Label
+        Text="层"
+        VerticalOptions="Center"
+                Style="{StaticResource CompactLabelStyle}"
+        FontSize="13"/>
+
+            <Entry
+        x:Name="LayerEntry"
+        Grid.Column="1"
+        Text="5"
+        HeightRequest="38"
+        Keyboard="Numeric"
+        HorizontalTextAlignment="Center"
+        VerticalTextAlignment="Center"
+        FontSize="14"
+                Style="{StaticResource CompactEntryStyle}"/>
+
+            <Label
+        Grid.Column="2"
+        Text="象限"
+        VerticalOptions="Center"
+                Style="{StaticResource CompactLabelStyle}"
+        FontSize="13"/>
+
+            <Entry
+        x:Name="PartEntry"
+        Grid.Column="3"
+        Text="4"
+        HeightRequest="38"
+        Keyboard="Numeric"
+        HorizontalTextAlignment="Center"
+        VerticalTextAlignment="Center"
+                Style="{StaticResource CompactEntryStyle}"
+        FontSize="14"/>
+
+            <Button
+        Grid.Column="4"
+        Text="应用"
+        Style="{StaticResource CompactButtonStyle}"
+        Clicked="ApplySizeButton_Clicked"/>
+
+            <Button
+        Grid.Column="5"
+        Text="适应屏幕"
+        Style="{StaticResource CompactButtonStyle}"
+        Clicked="ResetViewButton_Clicked"/>
+        </Grid>
+
+        <!-- 短代码区域 -->
+        <Grid
+    Grid.Row="2"
+    Padding="10,0,10,4"
+    RowDefinitions="Auto,Auto,Auto"
+    ColumnDefinitions="*,Auto,Auto"
+    ColumnSpacing="5"
+    RowSpacing="3">
+
+            <Entry
+    x:Name="CodeEntry"
+    Grid.Row="0"
+    Grid.Column="0"
+    Placeholder="输入短代码"
+    HeightRequest="38"
+    Style="{StaticResource CodeEntryStyle}"
+    HorizontalOptions="Fill"
+    ClearButtonVisibility="WhileEditing"/>
+
+            <Button
+        Grid.Row="0"
+        Grid.Column="1"
+        Text="解析代码"
+        Style="{StaticResource CompactButtonStyle}"
+        Clicked="ParseCodeButton_Clicked"/>
+
+            <Button
+        Grid.Row="0"
+        Grid.Column="2"
+        Text="导出代码"
+        Style="{StaticResource CompactButtonStyle}"
+        Clicked="ExportCodeButton_Clicked"/>
+
+            <Button
+        Grid.Row="1"
+        Grid.Column="0"
+        Text="复制短代码"
+        Style="{StaticResource CompactButtonStyle}"
+        Clicked="CopyCodeButton_Clicked"/>
+
+            <Button
+        x:Name="ExportImageButton"
+        Grid.Row="1"
+        Grid.Column="1"
+        Text="导出图片"
+        Style="{StaticResource CompactButtonStyle}"
+        Clicked="ExportImageButton_Clicked"/>
+
+            <Button
+        x:Name="ShareImageButton"
+        Grid.Row="1"
+        Grid.Column="2"
+        Text="分享图片"
+        Style="{StaticResource CompactButtonStyle}"
+        Clicked="ShareImageButton_Clicked"/>
+
+            <Label
+        x:Name="CodeErrorLabel"
+        Grid.Row="2"
+        Grid.ColumnSpan="3"
+        Margin="0,2,0,0"
+        TextColor="Red"
+        FontSize="11"
+        LineBreakMode="TailTruncation"/>
+        </Grid>
+
+        <!-- 模式切换 -->
+        <Grid
+    Grid.Row="3"
+    Padding="10,0,10,4"
+    ColumnDefinitions="*,*"
+    ColumnSpacing="5">
+
+            <Button
+        x:Name="PaintModeButton"
+        Grid.Column="0"
+        Text="画笔模式"
+        Style="{StaticResource CompactButtonStyle}"
+        Clicked="PaintModeButton_Clicked"/>
+
+            <Button
+        x:Name="MoveModeButton"
+        Grid.Column="1"
+        Text="移动模式"
+        Style="{StaticResource CompactButtonStyle}"
+        Clicked="MoveModeButton_Clicked"/>
+        </Grid>
+
+        <Border
+    Grid.Row="4"
+    Margin="8,4,8,4"
+    Stroke="#B0B0B0"
+    StrokeThickness="1"
+    BackgroundColor="{AppThemeBinding
+    Light=White,
+    Dark=#121212}">
+
+            <GraphicsView
+        x:Name="ShapeGraphicsView"
+        HorizontalOptions="Fill"
+        VerticalOptions="Fill"
+        StartInteraction="ShapeGraphicsView_StartInteraction"
+        DragInteraction="ShapeGraphicsView_DragInteraction"
+        EndInteraction="ShapeGraphicsView_EndInteraction"/>
+        </Border>
+
+        <!-- 单元格编辑面板 -->
+        <VerticalStackLayout
+    x:Name="EditorPanel"
+    Grid.Row="5"
+    Padding="8,2"
+    Spacing="3"
+    IsVisible="True">
+
+            <Label
+        x:Name="PageStatusLabel"
+        Text="画笔模式"
+        FontSize="12"
+        FontAutoScalingEnabled="False"
+        TextColor="{AppThemeBinding
+            Light=#666666,
+            Dark=#BBBBBB}"
+        MaxLines="1"
+        LineBreakMode="TailTruncation"/>
+
+            <Label
+        x:Name="SelectedCellLabel"
+        Text="未选择单元格"
+        FontSize="12"
+        FontAutoScalingEnabled="False"
+        TextColor="{AppThemeBinding
+            Light=#555555,
+            Dark=#CCCCCC}"
+        MaxLines="3"
+        LineBreakMode="TailTruncation"/>
+
+            <VerticalStackLayout
+    x:Name="PaintToolsPanel"
+    Spacing="3">
+
+                <!-- 类型按钮 -->
+                <Label
+Text="形状"
+FontSize="11"
+FontAutoScalingEnabled="False"
+TextColor="#777777"/>
+
+                <Grid
+x:Name="TypePanel"
+ColumnDefinitions="*,*,*,*"
+ColumnSpacing="3">
+
+                    <Button
+    x:Name="EmptyButton"
+    Grid.Column="0"
+    Text="空"
+    Style="{StaticResource TypeButtonStyle}"
+    Clicked="EmptyButton_Clicked"/>
+
+                    <Button
+    x:Name="PinButton"
+    Grid.Column="1"
+    Text="顶"
+    Style="{StaticResource TypeButtonStyle}"
+    Clicked="PinButton_Clicked"/>
+
+                    <Button
+    x:Name="CrystalButton"
+    Grid.Column="2"
+    Text="晶"
+    Style="{StaticResource TypeButtonStyle}"
+    Clicked="CrystalButton_Clicked"/>
+
+                    <Button
+    x:Name="ShapeButton"
+    Grid.Column="3"
+    Text="图"
+    Style="{StaticResource TypeButtonStyle}"
+    Clicked="ShapeButton_Clicked"/>
+                </Grid>
+
+                <!-- 颜色按钮 -->
+                <Label
+Text="颜色"
+FontSize="11"
+FontAutoScalingEnabled="False"
+TextColor="#777777"/>
+
+                <Grid
+x:Name="ColorPanel"
+ColumnDefinitions="*,*,*"
+RowDefinitions="Auto,Auto,Auto"
+ColumnSpacing="3"
+RowSpacing="2">
+
+                    <Button
+        Grid.Row="0"
+        Grid.Column="0"
+        Text="红"
+                Style="{StaticResource ColorButtonStyle}"
+        BackgroundColor="#FF3864"
+        TextColor="Black"
+        CommandParameter="r"
+        Clicked="ColorButton_Clicked"/>
+
+                    <Button
+        Grid.Row="0"
+        Grid.Column="1"
+        Text="绿"
+                Style="{StaticResource ColorButtonStyle}"
+        BackgroundColor="#83FF38"
+        TextColor="Black"
+        CommandParameter="g"
+        Clicked="ColorButton_Clicked"/>
+
+                    <Button
+        Grid.Row="0"
+        Grid.Column="2"
+        Text="蓝"
+                Style="{StaticResource ColorButtonStyle}"
+        BackgroundColor="#65B7FF"
+        TextColor="Black"
+        CommandParameter="b"
+        Clicked="ColorButton_Clicked"/>
+
+                    <Button
+        Grid.Row="1"
+        Grid.Column="0"
+        Text="青"
+                Style="{StaticResource ColorButtonStyle}"
+        BackgroundColor="#35E6C1"
+        TextColor="Black"
+        CommandParameter="c"
+        Clicked="ColorButton_Clicked"/>
+
+                    <Button
+        Grid.Row="1"
+        Grid.Column="1"
+        Text="洋红"
+                Style="{StaticResource ColorButtonStyle}"
+        BackgroundColor="#D85CFF"
+        TextColor="Black"
+        CommandParameter="m"
+        Clicked="ColorButton_Clicked"/>
+
+                    <Button
+        Grid.Row="1"
+        Grid.Column="2"
+        Text="黄"
+                Style="{StaticResource ColorButtonStyle}"
+        BackgroundColor="#FFB83E"
+        TextColor="Black"
+        CommandParameter="y"
+        Clicked="ColorButton_Clicked"/>
+
+                    <Button
+        Grid.Row="2"
+        Grid.Column="0"
+        Text="白"
+                Style="{StaticResource ColorButtonStyle}"
+        BackgroundColor="#F5F3F5"
+        TextColor="Black"
+        CommandParameter="w"
+        Clicked="ColorButton_Clicked"/>
+
+                    <Button
+        Grid.Row="2"
+        Grid.Column="1"
+        Text="黑"
+                Style="{StaticResource ColorButtonStyle}"
+        BackgroundColor="#35353C"
+        TextColor="White"
+        CommandParameter="k"
+        Clicked="ColorButton_Clicked"/>
+
+                    <Button
+        Grid.Row="2"
+        Grid.Column="2"
+        Text="未着色"
+                Style="{StaticResource ColorButtonStyle}"
+        BackgroundColor="#A9BAC8"
+        TextColor="Black"
+        CommandParameter="u"
+        Clicked="ColorButton_Clicked"/>
+                </Grid>
+
+            </VerticalStackLayout>
+
+            <VerticalStackLayout
+        x:Name="MoveToolsPanel"
+        Spacing="3"
+        IsVisible="False">
+
+                <Label
+            Text="整体移动"
+            FontSize="11"
+            FontAutoScalingEnabled="False"
+            TextColor="{AppThemeBinding
+                Light=#777777,
+                Dark=#AAAAAA}"/>
+
+                <Grid
+            ColumnDefinitions="*,*,*,*"
+            ColumnSpacing="3">
+
+                    <Button
+                Text="上移"
+                Style="{StaticResource CompactButtonStyle}"
+                Clicked="MoveUpButton_Clicked"/>
+
+                    <Button
+                Grid.Column="1"
+                Text="下移"
+                Style="{StaticResource CompactButtonStyle}"
+                Clicked="MoveDownButton_Clicked"/>
+
+                    <Button
+                Grid.Column="2"
+                Text="左移↻"
+                Style="{StaticResource CompactButtonStyle}"
+                Clicked="MoveLeftButton_Clicked"/>
+
+                    <Button
+                Grid.Column="3"
+                Text="右移↻"
+                Style="{StaticResource CompactButtonStyle}"
+                Clicked="MoveRightButton_Clicked"/>
+                </Grid>
+            </VerticalStackLayout>
+
+        </VerticalStackLayout>
+    </Grid>
+</ContentPage>

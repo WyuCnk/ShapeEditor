@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="ShapeEditor.Core/ShapeEditor.Core.csproj" />
+  <Project Path="ShapeEditor.Maui/ShapeEditor.Maui.csproj" />
+  <Project Path="ShapeEditor.Web/ShapeEditor.Web.csproj" />
+</Solution>

@@ -1,0 +1,1554 @@
+﻿@page "/"
+
+@using ShapeEditor.Core.Models
+@using ShapeEditor.Core.Services
+@inject IJSRuntime JS
+@using Microsoft.JSInterop
+@implements IDisposable
+@using System.Text.Json
+@using Microsoft.AspNetCore.Components.Forms
+
+<PageTitle>竖式图编辑器</PageTitle>
+
+<div class="editor-page">
+
+    <header class="editor-header">
+        <h1>竖式图编辑器</h1>
+
+        <div class="header-actions">
+            <button class="secondary-button"
+                    disabled="@(_undoStack.Count == 0)"
+                    @onclick="Undo">
+                撤销
+            </button>
+
+            <button class="secondary-button"
+                    disabled="@(_redoStack.Count == 0)"
+                    @onclick="Redo">
+                重做
+            </button>
+
+            <button class="secondary-button"
+                    @onclick="ClearDocument">
+                清空
+            </button>
+        </div>
+    </header>
+
+    <section class="dimension-panel">
+
+        <label>
+            层数
+            <input type="number"
+                   min="1"
+                   @bind="LayerCount" />
+        </label>
+
+        <label>
+            象限数
+            <input type="number"
+                   min="1"
+                   @bind="PartCount" />
+        </label>
+
+        <button class="primary-button"
+                @onclick="ApplyDimensions">
+            应用尺寸
+        </button>
+
+        <button class="secondary-button"
+                @onclick="ResetView">
+            适应屏幕
+        </button>
+
+    </section>
+
+    <section class="code-panel">
+
+        <input class="code-input"
+               placeholder="输入短代码"
+               @bind="Code" />
+
+        <button class="primary-button"
+                @onclick="ParseCode">
+            解析短代码
+        </button>
+
+        <button class="secondary-button"
+                @onclick="ExportCode">
+            导出短代码
+        </button>
+
+        <button class="secondary-button"
+                @onclick="ExportPng">
+            导出图片
+        </button>
+
+        <button class="secondary-button"
+                @onclick="SharePng">
+            分享图片
+        </button>
+
+        <button class="secondary-button"
+                @onclick="ExportSaveFile">
+            导出存档
+        </button>
+
+        <label class="file-button secondary-button">
+            <span>导入存档</span>
+
+            <InputFile OnChange="ImportSaveFile"
+                       accept=".json,application/json" />
+        </label>
+
+    </section>
+
+    @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+    {
+        <div class="error-message">
+            @ErrorMessage
+        </div>
+    }
+
+    <section class="shape-panel">
+
+        <div class="shape-title">
+            当前图形：@Document.LayerCount 层 × @Document.PartCount 象限
+        </div>
+
+        @if (_selectedLayer is int layer && _selectedPart is int part)
+        {
+            <div class="selected-cell-info">
+                第 @(layer + 1) 层，第 @(part + 1) 象限：
+                @Document[layer, part].ToShortCode()
+            </div>
+        }
+
+        <div class="mode-tabs">
+            <button class="@GetModeClass(CanvasMode.Paint)"
+                    @onclick="() => SetCanvasMode(CanvasMode.Paint)">
+                画笔模式
+            </button>
+
+            <button class="@GetModeClass(CanvasMode.Move)"
+                    @onclick="() => SetCanvasMode(CanvasMode.Move)">
+                移动模式
+            </button>
+        </div>
+
+        @if (_canvasMode == CanvasMode.Paint)
+        {
+            <section class="tool-panel">
+                <div class="tool-title">形状</div>
+
+                <div class="tool-grid type-tools">
+                    <button class="@GetShapeButtonClass(CellType.Empty)"
+                            @onclick="() => ToggleShapeBrush(CellType.Empty)">
+                        空
+                    </button>
+
+                    <button class="@GetShapeButtonClass(CellType.Pin)"
+                            @onclick="() => ToggleShapeBrush(CellType.Pin)">
+                        顶
+                    </button>
+
+                    <button class="@GetShapeButtonClass(CellType.Crystal)"
+                            @onclick="() => ToggleShapeBrush(CellType.Crystal)">
+                        晶
+                    </button>
+
+                    <button class="@GetShapeButtonClass(CellType.Shape)"
+                            @onclick="() => ToggleShapeBrush(CellType.Shape)">
+                        图
+                    </button>
+                </div>
+
+                <div class="tool-title">颜色</div>
+
+                <div class="tool-grid color-tools">
+                    @foreach (char color in ColorCodes)
+                    {
+                        <button class="@GetColorButtonClass(color)"
+                                style="@GetColorStyle(color)"
+                                @onclick="() => ToggleColorBrush(color)">
+                            @GetColorName(color)
+                        </button>
+                    }
+                </div>
+            </section>
+        }
+        else
+        {
+            <section class="tool-panel move-tools">
+                <div class="tool-title">整体移动</div>
+
+                <div class="move-grid">
+                    <button @onclick="MoveUp">上移</button>
+                    <button @onclick="MoveDown">下移</button>
+                    <button @onclick="MoveLeft">左移↻</button>
+                    <button @onclick="MoveRight">右移↻</button>
+                </div>
+            </section>
+        }
+
+        <div class="shape-canvas-container">
+            <canvas @ref="_canvas"
+                    class="shape-canvas">
+            </canvas>
+        </div>
+
+    </section>
+
+    <section class="help-panel">
+        <p>短代码从最低层开始书写，竖式图从最高层显示到最低层。</p>
+        <p>每两个字符表示一个象限，冒号表示不同层。</p>
+    </section>
+
+</div>
+
+@code {
+    private readonly ShortCodeParser Parser = new();
+
+    private readonly ShortCodeExporter Exporter = new();
+
+    private ShapeDocument Document =
+        new(layerCount: 4, partCount: 4);
+
+    private int LayerCount = 4;
+
+    private int PartCount = 4;
+
+    private string Code = "";
+
+    private string ErrorMessage = "";
+
+    private ElementReference _canvas;
+
+    private DotNetObjectReference<Home>? _dotNetReference;
+
+    private int? _selectedLayer;
+
+    private int? _selectedPart;
+
+    private bool _canvasNeedsRender = true;
+
+    private enum CanvasMode
+    {
+        Paint,
+        Move
+    }
+
+    private CanvasMode _canvasMode = CanvasMode.Paint;
+
+    private bool _shapeBrushActive;
+
+    private bool _colorBrushActive;
+
+    private CellType _selectedBrushShape = CellType.Shape;
+
+    private char _selectedBrushColor = 'u';
+
+    private bool _isPointerDown;
+
+    private bool _isDragging;
+
+    private float _pointerStartX;
+
+    private float _pointerStartY;
+
+    private float _lastPointerX;
+
+    private float _lastPointerY;
+
+    private float _panX;
+
+    private float _panY;
+
+    private float _zoom = 1f;
+
+    private float _cellWidth = 100f;
+
+    private float _cellHeight = 76f;
+
+    private bool _isTransforming;
+
+    private float _gestureStartDistance;
+
+    private float _gestureStartCenterX;
+
+    private float _gestureStartCenterY;
+
+    private float _gestureStartZoom;
+
+    private float _gestureStartPanX;
+
+    private float _gestureStartPanY;
+
+    private const float DragThreshold = 8f;
+
+    private static readonly char[] ColorCodes =
+        {
+        'r', 'g', 'b',
+        'c', 'm', 'y',
+        'w', 'k', 'u'
+    };
+
+    private readonly ShapeEditorService Editor = new();
+
+    private readonly Stack<ShapeDocument> _undoStack = new();
+
+    private readonly Stack<ShapeDocument> _redoStack = new();
+
+    private bool _historySavedForPointer;
+
+    private const int MaxHistoryCount = 100;
+
+    private sealed class CanvasState
+    {
+        public int Rows { get; init; }
+
+        public int Columns { get; init; }
+
+        public int? SelectedLayer { get; init; }
+
+        public int? SelectedPart { get; init; }
+
+        public float PanX { get; init; }
+
+        public float PanY { get; init; }
+
+        public float Zoom { get; init; }
+
+        public List<CanvasCell> Cells { get; init; } = new();
+    }
+
+    private sealed class CanvasCell
+    {
+        public string Type { get; init; } = "";
+
+        public char? ColorCode { get; init; }
+
+        public string Text { get; init; } = "";
+    }
+
+    private sealed class SavedDocument
+    {
+        public int LayerCount { get; init; }
+
+        public int PartCount { get; init; }
+
+        public string ShortCode { get; init; } = "";
+    }
+
+    private const string BrowserSaveKey = "shape-editor-current-document";
+
+    #region 存档模型
+
+    private sealed class SaveFile
+    {
+        public int Version { get; init; } = 1;
+
+        public int LayerCount { get; init; }
+
+        public int PartCount { get; init; }
+
+        public string ShortCode { get; init; } = "";
+
+        public DateTime SavedAt { get; init; }
+    }
+
+    #endregion
+
+    #region 存档导入导出
+
+    private async Task ExportSaveFile()
+    {
+        ErrorMessage = "";
+
+        var saveFile = new SaveFile
+        {
+            Version = 1,
+            LayerCount = Document.LayerCount,
+            PartCount = Document.PartCount,
+            ShortCode = Exporter.Export(
+                Document,
+                omitTopEmptyLayers: true),
+            SavedAt = DateTime.Now
+        };
+
+        string json = JsonSerializer.Serialize(
+            saveFile,
+            new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+
+        await JS.InvokeVoidAsync(
+            "shapeStorage.downloadText",
+            $"shape-editor-{DateTime.Now:yyyyMMdd-HHmmss}.json",
+            json,
+            "application/json;charset=utf-8");
+    }
+
+    private async Task ImportSaveFile(
+    InputFileChangeEventArgs e)
+    {
+        ErrorMessage = "";
+
+        IBrowserFile? file =
+            e.File;
+
+        if (file is null)
+        {
+            return;
+        }
+
+        const long maxFileSize = 1024 * 1024;
+
+        try
+        {
+            await using Stream stream =
+                file.OpenReadStream(maxFileSize);
+
+            using var reader =
+                new StreamReader(stream);
+
+            string json =
+                await reader.ReadToEndAsync();
+
+            SaveFile? saveFile =
+                JsonSerializer.Deserialize<SaveFile>(
+                    json);
+
+            if (saveFile is null)
+            {
+                ErrorMessage =
+                    "存档文件内容为空。";
+
+                return;
+            }
+
+            if (saveFile.Version != 1)
+            {
+                ErrorMessage =
+                    $"不支持的存档版本：{saveFile.Version}。";
+
+                return;
+            }
+
+            if (!IsValidDimensions(
+                    saveFile.LayerCount,
+                    saveFile.PartCount))
+            {
+                ErrorMessage =
+                    "存档中的图形尺寸无效。";
+
+                return;
+            }
+
+            ParseResult result =
+                Parser.Parse(
+                    saveFile.ShortCode,
+                    saveFile.LayerCount,
+                    saveFile.PartCount);
+
+            if (!result.Success ||
+                result.Document is null)
+            {
+                ErrorMessage =
+                    result.Error ??
+                    "存档中的短代码解析失败。";
+
+                return;
+            }
+
+            SaveUndoState();
+
+            Document =
+                result.Document;
+
+            LayerCount =
+                Document.LayerCount;
+
+            PartCount =
+                Document.PartCount;
+
+            Code =
+                Exporter.Export(
+                    Document,
+                    omitTopEmptyLayers: true);
+
+            ClearSelection();
+
+            await SaveDocumentAsync();
+            await RequestCanvasRender();
+        }
+        catch (JsonException)
+        {
+            ErrorMessage =
+                "存档文件不是有效的 JSON 格式。";
+        }
+        catch (IOException)
+        {
+            ErrorMessage =
+                "读取存档文件失败。";
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage =
+                $"导入存档失败：{ex.Message}";
+        }
+    }
+
+    private static bool IsValidDimensions(int layers, int parts)
+    {
+        return layers >= 1 &&
+               layers <= 100 &&
+               parts >= 1 &&
+               parts <= 100 &&
+               (long)layers * parts <= 10_000;
+    }
+
+    #endregion
+
+    #region 画笔状态
+
+    private BrushMode CurrentBrushMode
+    {
+        get
+        {
+            if (_shapeBrushActive && _colorBrushActive)
+            {
+                return BrushMode.Combined;
+            }
+
+            if (_shapeBrushActive)
+            {
+                return BrushMode.Shape;
+            }
+
+            if (_colorBrushActive)
+            {
+                return BrushMode.Color;
+            }
+
+            return BrushMode.None;
+        }
+    }
+
+    private enum BrushMode
+    {
+        None,
+        Shape,
+        Color,
+        Combined
+    }
+
+    #endregion
+
+    #region 模式和工具
+
+    private static string GetColorName(char color)
+    {
+        return color switch
+        {
+            'r' => "红",
+            'g' => "绿",
+            'b' => "蓝",
+            'c' => "青",
+            'm' => "洋红",
+            'y' => "黄",
+            'w' => "白",
+            'k' => "黑",
+            'u' => "未着色",
+            _ => ""
+        };
+    }
+
+    private static string GetColorStyle(char color)
+    {
+        return color switch
+        {
+            'r' => "background-color:#FF3864;color:#000000;",
+            'g' => "background-color:#83FF38;color:#000000;",
+            'b' => "background-color:#65B7FF;color:#000000;",
+            'c' => "background-color:#35E6C1;color:#000000;",
+            'm' => "background-color:#D85CFF;color:#000000;",
+            'y' => "background-color:#FFB83E;color:#000000;",
+            'w' => "background-color:#D8D8D8;color:#000000;",
+            'k' => "background-color:#35353C;color:#FFFFFF;",
+            'u' => "background-color:#A9BAC8;color:#000000;",
+            _ => "background-color:#EEEEEE;color:#000000;"
+        };
+    }
+
+    private Task SetCanvasMode(CanvasMode mode)
+    {
+        _canvasMode = mode;
+
+        _shapeBrushActive = false;
+        _colorBrushActive = false;
+
+        _selectedLayer = null;
+        _selectedPart = null;
+
+        _isPointerDown = false;
+        _isDragging = false;
+        _isTransforming = false;
+
+        return RequestCanvasRender();
+    }
+
+    private void ToggleShapeBrush(CellType type)
+    {
+        if (!_shapeBrushActive)
+        {
+            _shapeBrushActive = true;
+            _selectedBrushShape = type;
+        }
+        else if (_selectedBrushShape == type)
+        {
+            _shapeBrushActive = false;
+        }
+        else
+        {
+            _selectedBrushShape = type;
+        }
+
+        _ = RequestCanvasRender();
+    }
+
+    private void ToggleColorBrush(char color)
+    {
+        if (!_colorBrushActive)
+        {
+            _colorBrushActive = true;
+            _selectedBrushColor = color;
+        }
+        else if (_selectedBrushColor == color)
+        {
+            _colorBrushActive = false;
+        }
+        else
+        {
+            _selectedBrushColor = color;
+        }
+
+        _ = RequestCanvasRender();
+    }
+
+    private string GetModeClass(CanvasMode mode)
+    {
+        return _canvasMode == mode
+            ? "mode-button selected"
+            : "mode-button";
+    }
+
+    private string GetShapeButtonClass(CellType type)
+    {
+        bool isCurrentCell =
+            _selectedLayer is int layer &&
+            _selectedPart is int part &&
+            Document[layer, part].Type == type;
+
+        bool isActiveBrush =
+            _shapeBrushActive &&
+            _selectedBrushShape == type;
+
+        return GetToolButtonClass(
+            isCurrentCell,
+            isActiveBrush);
+    }
+
+    private string GetColorButtonClass(char color)
+    {
+        bool isCurrentCell =
+            _selectedLayer is int layer &&
+            _selectedPart is int part &&
+            Document[layer, part].ColorCode == color;
+
+        bool isActiveBrush =
+            _colorBrushActive &&
+            _selectedBrushColor == color;
+
+        return GetToolButtonClass(
+            isCurrentCell,
+            isActiveBrush);
+    }
+
+    private static string GetToolButtonClass(bool isCurrentCell, bool isActiveBrush)
+    {
+        if (isActiveBrush)
+        {
+            return "tool-button active-brush";
+        }
+
+        if (isCurrentCell)
+        {
+            return "tool-button current-cell";
+        }
+
+        return "tool-button";
+    }
+
+    private bool ApplyCurrentBrush(int layer, int part)
+    {
+        switch (CurrentBrushMode)
+        {
+            case BrushMode.Shape:
+                Editor.SetType(
+                    Document,
+                    layer,
+                    part,
+                    _selectedBrushShape);
+
+                return true;
+
+            case BrushMode.Color:
+                return Editor.ApplyColorBrush(
+                    Document,
+                    layer,
+                    part,
+                    _selectedBrushColor);
+
+            case BrushMode.Combined:
+                Editor.SetType(
+                    Document,
+                    layer,
+                    part,
+                    _selectedBrushShape);
+
+                ShapeCell cell =
+                    Document[layer, part];
+
+                if (cell.Type is CellType.Shape or CellType.Crystal)
+                {
+                    cell.SetColor(
+                        _selectedBrushColor);
+                }
+
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    private void PaintCell(int layer, int part)
+    {
+        if (CurrentBrushMode == BrushMode.None)
+        {
+            return;
+        }
+
+        if (!_historySavedForPointer)
+        {
+            SaveUndoState();
+            _historySavedForPointer = true;
+        }
+
+        if (!ApplyCurrentBrush(layer, part))
+        {
+            return;
+        }
+
+        _ = RequestCanvasRender();
+    }
+
+    #endregion
+
+    #region 图形整体移动
+
+    private async Task MoveUp()
+    {
+        SaveUndoState();
+
+        Document.MoveUpOneLayer();
+
+        ClearSelection();
+        await SaveDocumentAsync();
+        await RequestCanvasRender();
+    }
+
+    private async Task MoveDown()
+    {
+        SaveUndoState();
+
+        Document.MoveDownOneLayer();
+
+        ClearSelection();
+        await SaveDocumentAsync();
+        await RequestCanvasRender();
+    }
+
+    private async Task MoveLeft()
+    {
+        SaveUndoState();
+
+        Document.MoveLeftCircular();
+
+        ClearSelection();
+        await SaveDocumentAsync();
+        await RequestCanvasRender();
+    }
+
+    private async Task MoveRight()
+    {
+        SaveUndoState();
+
+        Document.MoveRightCircular();
+
+        ClearSelection();
+        await SaveDocumentAsync();
+        await RequestCanvasRender();
+    }
+
+    private void ClearSelectionAfterDocumentChanged()
+    {
+        ClearSelection();
+        _ = RequestCanvasRender();
+    }
+
+    #endregion
+
+    #region 历史记录
+
+    private void SaveUndoState()
+    {
+        _undoStack.Push(Document.Clone());
+
+        while (_undoStack.Count > MaxHistoryCount)
+        {
+            RemoveOldest(_undoStack);
+        }
+
+        _redoStack.Clear();
+    }
+
+    private async Task Undo()
+    {
+        if (_undoStack.Count == 0)
+        {
+            return;
+        }
+
+        _redoStack.Push(Document.Clone());
+        Document = _undoStack.Pop();
+
+        LayerCount = Document.LayerCount;
+        PartCount = Document.PartCount;
+
+        ClearSelection();
+        ResetPointerState();
+
+        await SaveDocumentAsync();
+        await RequestCanvasRender();
+    }
+
+    private async Task Redo()
+    {
+        if (_redoStack.Count == 0)
+        {
+            return;
+        }
+
+        _undoStack.Push(Document.Clone());
+        Document = _redoStack.Pop();
+
+        LayerCount = Document.LayerCount;
+        PartCount = Document.PartCount;
+
+        ClearSelection();
+        ResetPointerState();
+
+        await SaveDocumentAsync();
+        await RequestCanvasRender();
+    }
+
+    private static void RemoveOldest(
+        Stack<ShapeDocument> stack)
+    {
+        ShapeDocument[] items =
+            stack.ToArray();
+
+        stack.Clear();
+
+        for (int index = items.Length - 2;
+             index >= 0;
+             index--)
+        {
+            stack.Push(items[index]);
+        }
+    }
+
+    private void ClearSelection()
+    {
+        _selectedLayer = null;
+        _selectedPart = null;
+    }
+
+    private void ResetPointerState()
+    {
+        _isPointerDown = false;
+        _isDragging = false;
+        _isTransforming = false;
+        _historySavedForPointer = false;
+    }
+
+    #endregion
+
+    #region 浏览器自动保存
+
+    private async Task SaveDocumentAsync()
+    {
+        var saveFile = new SaveFile
+        {
+            Version = 1,
+            LayerCount = Document.LayerCount,
+            PartCount = Document.PartCount,
+            ShortCode = Exporter.Export(
+                Document,
+                omitTopEmptyLayers: true),
+            SavedAt = DateTime.Now
+        };
+
+        string json =
+            JsonSerializer.Serialize(saveFile);
+
+        await JS.InvokeVoidAsync(
+            "shapeStorage.save",
+            "shape-editor-current-document",
+            json);
+    }
+
+    private async Task RestoreDocumentAsync()
+    {
+        string? json =
+            await JS.InvokeAsync<string?>(
+                "shapeStorage.load",
+                BrowserSaveKey);
+
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return;
+        }
+
+        try
+        {
+            SavedDocument? saved =
+                JsonSerializer.Deserialize<SavedDocument>(
+                    json);
+
+            if (saved is null ||
+                string.IsNullOrWhiteSpace(saved.ShortCode))
+            {
+                return;
+            }
+
+            if (saved.LayerCount < 1 ||
+                saved.PartCount < 1 ||
+                saved.LayerCount > 100 ||
+                saved.PartCount > 100 ||
+                (long)saved.LayerCount * saved.PartCount > 10_000)
+            {
+                return;
+            }
+
+            ParseResult result =
+                Parser.Parse(
+                    saved.ShortCode,
+                    saved.LayerCount,
+                    saved.PartCount);
+
+            if (!result.Success ||
+                result.Document is null)
+            {
+                return;
+            }
+
+            Document = result.Document;
+            LayerCount = Document.LayerCount;
+            PartCount = Document.PartCount;
+            Code = saved.ShortCode;
+        }
+        catch
+        {
+            /*
+             * 本地数据损坏时忽略，
+             * 不阻止页面正常启动。
+             */
+        }
+    }
+
+    private async Task ClearSavedDocumentAsync()
+    {
+        await JS.InvokeVoidAsync(
+            "shapeStorage.remove",
+            BrowserSaveKey);
+    }
+
+    #endregion
+
+    #region 图片导出
+
+    private async Task ExportPng()
+    {
+        ErrorMessage = "";
+
+        try
+        {
+            await JS.InvokeVoidAsync(
+                "shapeGrid.downloadFullPng",
+                CreateCanvasState(),
+                $"shape-editor-{DateTime.Now:yyyyMMdd-HHmmss}.png");
+        }
+        catch (JSException ex)
+        {
+            ErrorMessage =
+                $"图片导出失败：{ex.Message}";
+        }
+    }
+
+    private async Task SharePng()
+    {
+        ErrorMessage = "";
+
+        try
+        {
+            await JS.InvokeVoidAsync(
+                "shapeGrid.shareFullPng",
+                CreateCanvasState(),
+                $"shape-editor-{DateTime.Now:yyyyMMdd-HHmmss}.png",
+                "竖式图编辑器");
+        }
+        catch (JSException ex)
+        {
+            if (!ex.Message.Contains(
+                    "AbortError",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                ErrorMessage =
+                    $"分享图片失败：{ex.Message}";
+            }
+        }
+    }
+
+    #endregion
+
+    private bool _documentRestored;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _dotNetReference =
+                DotNetObjectReference.Create(this);
+
+            await RestoreDocumentAsync();
+
+            await JS.InvokeVoidAsync(
+                "shapeGrid.init",
+                _canvas,
+                _dotNetReference);
+        }
+
+        if (!firstRender &&
+            !_canvasNeedsRender)
+        {
+            return;
+        }
+
+        _canvasNeedsRender = false;
+
+        await JS.InvokeVoidAsync(
+            "shapeGrid.render",
+            _canvas,
+            CreateCanvasState());
+    }
+
+    private CanvasState CreateCanvasState()
+    {
+        var state = new CanvasState
+        {
+            Rows = Document.LayerCount,
+            Columns = Document.PartCount,
+            SelectedLayer = _selectedLayer,
+            SelectedPart = _selectedPart,
+            Zoom = _zoom,
+            PanX = _panX,
+            PanY = _panY
+        };
+
+        for (int visualRow = 0;
+             visualRow < Document.LayerCount;
+             visualRow++)
+        {
+            int layer =
+                Document.LayerCount - 1 - visualRow;
+
+            for (int part = 0;
+                 part < Document.PartCount;
+                 part++)
+            {
+                ShapeCell cell =
+                    Document[layer, part];
+
+                state.Cells.Add(
+                    new CanvasCell
+                    {
+                        Type = GetCanvasType(cell),
+                        ColorCode = cell.ColorCode,
+                        Text = GetDisplayText(cell)
+                    });
+            }
+        }
+
+        return state;
+    }
+
+    private static string GetCanvasType(ShapeCell cell)
+    {
+        return cell.Type switch
+        {
+            CellType.Empty => "empty",
+            CellType.Pin => "pin",
+            CellType.Crystal => "crystal",
+            CellType.Shape => "shape",
+            _ => "empty"
+        };
+    }
+
+    private void ApplyDimensions()
+    {
+        ErrorMessage = "";
+
+        if (!IsValidDimensions(LayerCount, PartCount))
+        {
+            ErrorMessage =
+                "图形尺寸无效。层数和象限数必须大于 0，" +
+                "且单元格总数不能超过 10000。";
+
+            return;
+        }
+
+        Document =
+            Document.Resize(
+                LayerCount,
+                PartCount);
+
+        _ = SaveDocumentAsync();
+        _ = RequestCanvasRender();
+    }
+
+    private void ParseCode()
+    {
+        ErrorMessage = "";
+
+        if (string.IsNullOrWhiteSpace(Code))
+        {
+            ErrorMessage = "请输入短代码。";
+            return;
+        }
+
+        string[] layerCodes =
+            Code.Trim().Split(
+                ':',
+                StringSplitOptions.None);
+
+        if (layerCodes.Length == 0 ||
+            layerCodes[0].Length == 0 ||
+            layerCodes[0].Length % 2 != 0)
+        {
+            ErrorMessage =
+                "短代码格式错误。";
+
+            return;
+        }
+
+        int inferredLayers =
+            layerCodes.Length;
+
+        int inferredParts =
+            layerCodes[0].Length / 2;
+
+        /*
+         * 解析后的文档至少保持 4×4。
+         */
+        LayerCount =
+            Math.Max(
+                inferredLayers,
+                4);
+
+        PartCount =
+            Math.Max(
+                inferredParts,
+                4);
+
+        ParseResult result =
+            Parser.Parse(
+                Code.Trim(),
+                LayerCount,
+                PartCount);
+
+        if (!result.Success ||
+            result.Document is null)
+        {
+            ErrorMessage =
+                result.Error ??
+                "短代码解析失败。";
+
+            return;
+        }
+
+        SaveUndoState();
+
+        Document =
+            result.Document;
+
+        /*
+         * 输入框显示规范化后的短代码。
+         */
+        Code =
+            Exporter.Export(
+                Document,
+                omitTopEmptyLayers: true);
+
+        ClearSelection();
+
+        _ = SaveDocumentAsync();
+        _ = RequestCanvasRender();
+    }
+
+    private void ExportCode()
+    {
+        ErrorMessage = "";
+
+        Code =
+            Exporter.Export(
+                Document,
+                omitTopEmptyLayers: true);
+    }
+
+    private async Task ClearDocument()
+    {
+        ErrorMessage = "";
+
+        SaveUndoState();
+
+        Document = new ShapeDocument(
+            LayerCount,
+            PartCount);
+
+        Code = "";
+
+        ClearSelection();
+        ResetPointerState();
+
+        await SaveDocumentAsync();
+        await RequestCanvasRender();
+    }
+
+    private static string GetDisplayText(
+        ShapeCell cell)
+    {
+        return cell.Type switch
+        {
+            CellType.Empty => "",
+            CellType.Pin => "",
+            CellType.Crystal => "晶",
+            CellType.Shape => "图",
+            _ => ""
+        };
+    }
+
+    private Task ResetView()
+    {
+        _zoom = 1f;
+        _panX = 0;
+        _panY = 0;
+
+        return RequestCanvasRender();
+    }
+
+    #region Canvas 刷新
+
+    private Task RequestCanvasRender()
+    {
+        _canvasNeedsRender = true;
+        return InvokeAsync(StateHasChanged);
+    }
+
+    #endregion
+
+    #region Canvas 交互
+
+    [JSInvokable]
+    public Task OnCanvasMetrics(float cellWidth, float cellHeight)
+    {
+        if (cellWidth > 0)
+        {
+            _cellWidth = cellWidth;
+        }
+
+        if (cellHeight > 0)
+        {
+            _cellHeight = cellHeight;
+        }
+
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnCanvasTap(float x, float y)
+    {
+        const float cellWidth = 72;
+        const float cellHeight = 56;
+
+        int part = (int)(x / cellWidth);
+        int visualRow = (int)(y / cellHeight);
+
+        if (part < 0 || part >= Document.PartCount ||
+            visualRow < 0 || visualRow >= Document.LayerCount)
+        {
+            return Task.CompletedTask;
+        }
+
+        _selectedPart = part;
+        _selectedLayer =
+            Document.LayerCount - 1 - visualRow;
+
+        _canvasNeedsRender = true;
+
+        return InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public Task OnCanvasPointerDown(
+        int pointerId,
+        float x,
+        float y,
+        int pointerCount)
+    {
+        if (pointerCount > 1)
+        {
+            _isPointerDown = true;
+            _isDragging = false;
+            return Task.CompletedTask;
+        }
+
+        _isPointerDown = true;
+        _isDragging = false;
+
+        _pointerStartX = x;
+        _pointerStartY = y;
+        _lastPointerX = x;
+        _lastPointerY = y;
+
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnCanvasPointerMove(
+        int pointerId,
+        float x,
+        float y,
+        int pointerCount)
+    {
+        if (!_isPointerDown)
+        {
+            return Task.CompletedTask;
+        }
+
+        if (pointerCount > 1)
+        {
+            return Task.CompletedTask;
+        }
+
+        float dx =
+            x - _pointerStartX;
+
+        float dy =
+            y - _pointerStartY;
+
+        if (!_isDragging &&
+            MathF.Sqrt(dx * dx + dy * dy) < 8)
+        {
+            return Task.CompletedTask;
+        }
+
+        _isDragging = true;
+
+        if (_canvasMode == CanvasMode.Move)
+        {
+            _panX += x - _lastPointerX;
+            _panY += y - _lastPointerY;
+            _lastPointerX = x;
+            _lastPointerY = y;
+
+            _canvasNeedsRender = true;
+            return InvokeAsync(StateHasChanged);
+        }
+
+        if (CurrentBrushMode != BrushMode.None)
+        {
+            if (TryGetCanvasCell(
+                    x,
+                    y,
+                    out int layer,
+                    out int part))
+            {
+                PaintCell(layer, part);
+            }
+        }
+
+        _lastPointerX = x;
+        _lastPointerY = y;
+
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnCanvasResize()
+    {
+        return RequestCanvasRender();
+    }
+
+    [JSInvokable]
+    public Task OnCanvasPointerUp(
+        int pointerId,
+        float x,
+        float y,
+        int pointerCount)
+    {
+        if (_isTransforming)
+        {
+            _isTransforming = false;
+            _isPointerDown = false;
+            _isDragging = false;
+            _historySavedForPointer = false;
+
+            return Task.CompletedTask;
+        }
+
+        if (!_isPointerDown)
+        {
+            return Task.CompletedTask;
+        }
+
+        bool wasDragging =
+            _isDragging;
+
+        _isPointerDown = false;
+        _isDragging = false;
+
+        if (!wasDragging)
+        {
+            if (TryGetCanvasCell(
+                    x,
+                    y,
+                    out int layer,
+                    out int part))
+            {
+                if (_canvasMode == CanvasMode.Paint)
+                {
+                    if (CurrentBrushMode == BrushMode.None)
+                    {
+                        _selectedLayer = layer;
+                        _selectedPart = part;
+                        _canvasNeedsRender = true;
+                    }
+                    else
+                    {
+                        PaintCell(layer, part);
+                    }
+                }
+            }
+        }
+
+        _isPointerDown = false;
+        _isDragging = false;
+        _historySavedForPointer = false;
+        _ = SaveDocumentAsync();
+
+        return RequestCanvasRender();
+    }
+
+    [JSInvokable]
+    public Task OnCanvasTransformStart(float distance, float centerX, float centerY)
+    {
+        _isTransforming = true;
+
+        _gestureStartDistance = distance;
+        _gestureStartCenterX = centerX;
+        _gestureStartCenterY = centerY;
+
+        _gestureStartZoom = _zoom;
+        _gestureStartPanX = _panX;
+        _gestureStartPanY = _panY;
+
+        _isPointerDown = false;
+        _isDragging = false;
+
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnCanvasTransform(float distance, float centerX, float centerY)
+    {
+        if (!_isTransforming ||
+            _gestureStartDistance <= 0)
+        {
+            return Task.CompletedTask;
+        }
+
+        float scale =
+            distance / _gestureStartDistance;
+
+        _zoom = Math.Clamp(
+            _gestureStartZoom * scale,
+            0.35f,
+            5f);
+
+        _panX =
+            _gestureStartPanX +
+            centerX -
+            _gestureStartCenterX;
+
+        _panY =
+            _gestureStartPanY +
+            centerY -
+            _gestureStartCenterY;
+
+        return RequestCanvasRender();
+    }
+
+    private bool TryGetCanvasCell(float x, float y, out int layer, out int part)
+    {
+        float localX =
+            (x - _panX) / _zoom;
+
+        float localY =
+            (y - _panY) / _zoom;
+
+        part =
+            (int)(localX / _cellWidth);
+
+        int visualRow =
+            (int)(localY / _cellHeight);
+
+        layer =
+            Document.LayerCount - 1 - visualRow;
+
+        return part >= 0 &&
+               part < Document.PartCount &&
+               visualRow >= 0 &&
+               visualRow < Document.LayerCount;
+    }
+
+    #endregion
+
+    public void Dispose()
+    {
+        _dotNetReference?.Dispose();
+    }
+}

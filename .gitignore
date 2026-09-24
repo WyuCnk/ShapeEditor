@@ -1,0 +1,39 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# .NET build output
+bin/
+obj/
+
+# Publish output
+publish/
+artifacts/
+
+# Android packages
+*.apk
+*.aab
+*.apks
+
+# Signing secrets
+signing/
+*.keystore
+*.jks
+*.p12
+*.pfx
+
+# Local runtime files
+*.userprefs
+
+# Web generated files
+ShapeEditor.Web/wwwroot/_framework/
+ShapeEditor.Web/wwwroot/service-worker-assets.js
+
+# IDE/cache
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
