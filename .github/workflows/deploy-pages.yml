@@ -30,9 +30,11 @@ jobs:
       - name: Publish Web
         run: dotnet publish ShapeEditor.Web/ShapeEditor.Web.csproj -c Release -o release
 
-      - name: Fix base href
+      - name: Prepare GitHub Pages files
         run: |
           sed -i 's#<base href="/" />#<base href="/ShapeEditor/" />#' release/wwwroot/index.html
+          cp release/wwwroot/index.html release/wwwroot/404.html
+    touch release/wwwroot/.nojekyll
 
       - name: Add GitHub Pages fallback
         run: cp release/wwwroot/index.html release/wwwroot/404.html
