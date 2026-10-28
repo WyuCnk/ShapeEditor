@@ -5,36 +5,58 @@ namespace ShapeEditor.Core.Theme;
 /// <summary>
 /// 晶体单元格的竖条带配色。
 ///
-/// Web 端 shape-grid.js 里是同样的七段算法：
-/// 边缘压暗到 82%，中间向白色混合 12% 和 34%。
-/// 这里抽到 Core，供 MAUI 与 WPF 共用；Web 仍是独立的 JS 实现，
-/// 修改时两边都要同步。
+/// 七段算法：边缘压暗，中间向白色混合。
+/// Web、MAUI、WPF 三端共用这一份实现。
+///
+/// 黑色晶体是特例：底色太暗，高光需要更强，
+/// 否则玻璃效果看不出来。
 /// </summary>
 public static class CrystalBands
 {
     public const int BandCount = 7;
 
-    private static readonly ConcurrentDictionary<uint, uint[]> Cache = new();
+    private static readonly ConcurrentDictionary<char, uint[]> Cache = new();
 
+    /// <summary>
+    /// 按颜色代码取七段条带色，顺序为：
+    /// 边缘、基础、过渡、高光、过渡、基础、边缘。
+    /// </summary>
     public static uint[] Get(
-        uint baseColor)
+        char colorCode)
     {
         return Cache.GetOrAdd(
-            baseColor,
+            colorCode,
             Create);
     }
 
     private static uint[] Create(
-        uint baseColor)
+        char colorCode)
     {
+        uint baseColor = ShapePalette.FromCode(colorCode);
+
         byte a = (byte)(baseColor >> 24);
         byte r = (byte)(baseColor >> 16);
         byte g = (byte)(baseColor >> 8);
         byte b = (byte)baseColor;
 
-        uint edge = Pack(a, (byte)(r * 0.82), (byte)(g * 0.82), (byte)(b * 0.82));
-        uint shoulder = MixWithWhite(a, r, g, b, 0.12);
-        uint highlight = MixWithWhite(a, r, g, b, 0.34);
+        /*
+         * 黑色晶体提高高光强度，其余颜色用标准系数。
+         */
+        double edgeFactor = colorCode == 'k' ? 0.72 : 0.82;
+
+        double shoulderAmount = colorCode == 'k' ? 0.16 : 0.12;
+
+        double highlightAmount = colorCode == 'k' ? 0.42 : 0.34;
+
+        uint edge = Pack(
+            a,
+            (byte)(r * edgeFactor),
+            (byte)(g * edgeFactor),
+            (byte)(b * edgeFactor));
+
+        uint shoulder = MixWithWhite(a, r, g, b, shoulderAmount);
+
+        uint highlight = MixWithWhite(a, r, g, b, highlightAmount);
 
         return new[]
         {

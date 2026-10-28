@@ -1,4 +1,5 @@
 using ShapeEditor.Core.Models;
+using ShapeEditor.Core.Theme;
 
 namespace ShapeEditor.Web.Models;
 
@@ -21,6 +22,11 @@ public sealed class ShapeCanvasState
     public float PanX { get; init; }
 
     public float PanY { get; init; }
+
+    /// <summary>
+    /// 调色板与尺寸常量，来自 ShapeEditor.Core。
+    /// </summary>
+    public ShapeThemeData Theme { get; init; } = ShapeThemeData.Default;
 
     public List<ShapeCanvasCell> Cells { get; init; } = new();
 

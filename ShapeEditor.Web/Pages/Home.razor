@@ -1,7 +1,8 @@
-﻿@page "/"
+@page "/"
 
 @using ShapeEditor.Core.Models
 @using ShapeEditor.Core.Services
+@using ShapeEditor.Core.Theme
 @inject IJSRuntime JS
 @using Microsoft.JSInterop
 @implements IDisposable
@@ -344,6 +345,11 @@
         public float PanY { get; init; }
 
         public float Zoom { get; init; }
+
+        /// <summary>
+        /// 调色板与尺寸常量，来自 ShapeEditor.Core。
+        /// </summary>
+        public ShapeThemeData Theme { get; init; } = ShapeThemeData.Default;
 
         public List<CanvasCell> Cells { get; init; } = new();
     }

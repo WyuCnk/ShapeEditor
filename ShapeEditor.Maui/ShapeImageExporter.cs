@@ -1,5 +1,6 @@
-﻿using SkiaSharp;
+using SkiaSharp;
 using ShapeEditor.Core.Models;
+using ShapeEditor.Core.Theme;
 
 namespace ShapeEditor.Maui;
 
@@ -636,12 +637,8 @@ public sealed class ShapeImageExporter
 
         foreach (char colorCode in colorCodes)
         {
-            SKColor baseColor =
-                GetColor(colorCode);
-
             result[colorCode] =
                 CreateCrystalGradientColors(
-                    baseColor,
                     colorCode);
         }
 
@@ -649,80 +646,28 @@ public sealed class ShapeImageExporter
     }
 
     private static SKColor[] CreateCrystalGradientColors(
-        SKColor baseColor,
         char colorCode)
     {
-        float edgeFactor =
-            colorCode == 'k'
-                ? 0.72f
-                : 0.82f;
+        uint[] bands = CrystalBands.Get(colorCode);
 
-        float shoulderAmount =
-            colorCode == 'k'
-                ? 0.16f
-                : 0.12f;
+        var colors = new SKColor[bands.Length];
 
-        float highlightAmount =
-            colorCode == 'k'
-                ? 0.42f
-                : 0.34f;
-
-        SKColor edgeColor =
-            DarkenColor(
-                baseColor,
-                edgeFactor);
-
-        SKColor shoulderColor =
-            LightenColor(
-                baseColor,
-                shoulderAmount);
-
-        SKColor highlightColor =
-            LightenColor(
-                baseColor,
-                highlightAmount);
-
-        return new[]
+        for (int index = 0; index < bands.Length; index++)
         {
-        edgeColor,
-        baseColor,
-        shoulderColor,
-        highlightColor,
-        shoulderColor,
-        baseColor,
-        edgeColor
-    };
+            colors[index] = ToSKColor(bands[index]);
+        }
+
+        return colors;
     }
 
-    private static SKColor DarkenColor(
-        SKColor color,
-        float factor)
+    private static SKColor ToSKColor(
+        uint argb)
     {
         return new SKColor(
-            (byte)(color.Red * factor),
-            (byte)(color.Green * factor),
-            (byte)(color.Blue * factor),
-            color.Alpha);
-    }
-
-    private static SKColor LightenColor(
-        SKColor color,
-        float amount)
-    {
-        return new SKColor(
-            (byte)(
-                color.Red +
-                (255 - color.Red) * amount),
-
-            (byte)(
-                color.Green +
-                (255 - color.Green) * amount),
-
-            (byte)(
-                color.Blue +
-                (255 - color.Blue) * amount),
-
-            color.Alpha);
+            (byte)(argb >> 16),
+            (byte)(argb >> 8),
+            (byte)argb,
+            (byte)(argb >> 24));
     }
 
     private static void DrawText(
@@ -846,22 +791,7 @@ public sealed class ShapeImageExporter
     private static SKColor GetColor(
         char code)
     {
-        return code switch
-        {
-            'r' => SKColor.Parse("#FF3864"),
-            'g' => SKColor.Parse("#83FF38"),
-            'b' => SKColor.Parse("#65B7FF"),
-            'c' => SKColor.Parse("#35E6C1"),
-            'm' => SKColor.Parse("#D85CFF"),
-            'y' => SKColor.Parse("#FFB83E"),
-
-            // 与屏幕版 ShapeGridDrawable 保持一致
-            'w' => SKColor.Parse("#D8D8D8"),
-
-            'k' => SKColor.Parse("#35353C"),
-            'u' => SKColor.Parse("#A9BAC8"),
-            _ => SKColors.White
-        };
+        return ToSKColor(ShapePalette.FromCode(code));
     }
 
     #endregion

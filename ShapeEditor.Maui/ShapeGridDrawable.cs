@@ -1,5 +1,6 @@
-﻿using Microsoft.Maui.Graphics;
+using Microsoft.Maui.Graphics;
 using ShapeEditor.Core.Models;
+using ShapeEditor.Core.Theme;
 
 namespace ShapeEditor.Maui;
 
@@ -215,7 +216,7 @@ public sealed class ShapeGridDrawable : IDrawable
         int parts)
     {
         canvas.StrokeColor =
-            Color.FromArgb("#9E9E9E");
+            Color.FromUint(GridMetrics.GridLineColor);
 
         canvas.StrokeSize = 1;
 
@@ -294,7 +295,7 @@ public sealed class ShapeGridDrawable : IDrawable
         }
 
         canvas.StrokeColor =
-            Color.FromArgb("#1976D2");
+            Color.FromUint(GridMetrics.SelectionColor);
 
         canvas.StrokeSize = borderWidth;
 
@@ -727,12 +728,8 @@ public sealed class ShapeGridDrawable : IDrawable
 
         foreach (char colorCode in colorCodes)
         {
-            Color baseColor =
-                GetColor(colorCode);
-
             result[colorCode] =
                 CreateCrystalGradientColors(
-                    baseColor,
                     colorCode);
         }
 
@@ -740,65 +737,18 @@ public sealed class ShapeGridDrawable : IDrawable
     }
 
     private static Color[] CreateCrystalGradientColors(
-        Color baseColor,
         char colorCode)
     {
-        /*
-         * 黑色晶体适当提高中心高光，
-         * 否则黑色背景上的玻璃效果不明显。
-         */
-        float edgeFactor =
-            colorCode == 'k'
-                ? 0.72f
-                : 0.82f;
+        uint[] bands = CrystalBands.Get(colorCode);
 
-        float shoulderAmount =
-            colorCode == 'k'
-                ? 0.16f
-                : 0.12f;
+        var colors = new Color[bands.Length];
 
-        float highlightAmount =
-            colorCode == 'k'
-                ? 0.42f
-                : 0.34f;
-
-        Color edgeColor =
-            DarkenColor(
-                baseColor,
-                edgeFactor);
-
-        Color shoulderColor =
-            LightenColor(
-                baseColor,
-                shoulderAmount);
-
-        Color highlightColor =
-            LightenColor(
-                baseColor,
-                highlightAmount);
-
-        /*
-         * 7 段色带。
-         *
-         * 从左到右：
-         * 边缘暗色
-         * 基础色
-         * 过渡色
-         * 中央高光
-         * 过渡色
-         * 基础色
-         * 边缘暗色
-         */
-        return new[]
+        for (int index = 0; index < bands.Length; index++)
         {
-        edgeColor,
-        baseColor,
-        shoulderColor,
-        highlightColor,
-        shoulderColor,
-        baseColor,
-        edgeColor
-    };
+            colors[index] = Color.FromUint(bands[index]);
+        }
+
+        return colors;
     }
 
     private static void DrawCrystalGradient(
@@ -861,50 +811,10 @@ public sealed class ShapeGridDrawable : IDrawable
         canvas.RestoreState();
     }
 
-    private static Color DarkenColor(
-        Color color,
-        float factor)
-    {
-        return Color.FromRgba(
-            color.Red * factor,
-            color.Green * factor,
-            color.Blue * factor,
-            color.Alpha);
-    }
-
-    private static Color LightenColor(
-        Color color,
-        float amount)
-    {
-        return Color.FromRgba(
-            color.Red +
-                (1f - color.Red) * amount,
-
-            color.Green +
-                (1f - color.Green) * amount,
-
-            color.Blue +
-                (1f - color.Blue) * amount,
-
-            color.Alpha);
-    }
-
     private static Color GetColor(
         char code)
     {
-        return code switch
-        {
-            'r' => Color.FromArgb("#FF3864"),
-            'g' => Color.FromArgb("#83FF38"),
-            'b' => Color.FromArgb("#65B7FF"),
-            'c' => Color.FromArgb("#35E6C1"),
-            'm' => Color.FromArgb("#D85CFF"),
-            'y' => Color.FromArgb("#FFB83E"),
-            'w' => Color.FromArgb("#D8D8D8"),
-            'k' => Color.FromArgb("#35353C"),
-            'u' => Color.FromArgb("#A9BAC8"),
-            _ => Colors.White
-        };
+        return Color.FromUint(ShapePalette.FromCode(code));
     }
 
     #endregion

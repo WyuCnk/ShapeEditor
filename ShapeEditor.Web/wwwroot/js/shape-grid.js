@@ -1,4 +1,4 @@
-﻿const crystalBandCache = new Map();
+const crystalBandCache = new Map();
 
 window.shapeGrid = {
     init: function (canvas, dotNetObject) {
@@ -130,14 +130,20 @@ window.shapeGrid = {
             return;
         }
 
-        const baseCellWidth = 100;
-        const baseCellHeight = 76;
-        const margin = 12;
+        /*
+         * 主题常量来自 ShapeEditor.Core（见 ShapeThemeData），
+         * 这里只保留一份兜底默认值，正常情况下不会用到。
+         */
+        const theme = resolveTheme(state);
+
+        const baseCellWidth = theme.cellWidth;
+        const baseCellHeight = theme.cellHeight;
+        const margin = theme.fitMargin;
 
         const fitScale = Math.min(
             (viewWidth - margin * 2) / (columns * baseCellWidth),
             (viewHeight - margin * 2) / (rows * baseCellHeight),
-            1.45
+            theme.maxFitScale
         );
 
         const cellScale = Math.max(0.05, fitScale);
@@ -191,12 +197,13 @@ window.shapeGrid = {
                     column * cellWidth,
                     row * cellHeight,
                     cellWidth,
-                    cellHeight
+                    cellHeight,
+                    theme
                 );
             }
         }
 
-        drawGrid(ctx, rows, columns, cellWidth, cellHeight);
+        drawGrid(ctx, rows, columns, cellWidth, cellHeight, theme);
 
         if (state.selectedLayer !== null && state.selectedPart !== null) {
             drawSelectedCell(
@@ -205,7 +212,8 @@ window.shapeGrid = {
                 state.selectedLayer,
                 state.selectedPart,
                 cellWidth,
-                cellHeight
+                cellHeight,
+                theme
             );
         }
 
@@ -343,8 +351,10 @@ window.shapeGrid = {
 };
 
 function createFullImageCanvas(state) {
-    const cellWidth = 128;
-    const cellHeight = 96;
+    const theme = resolveTheme(state);
+
+    const cellWidth = theme.exportCellWidth;
+    const cellHeight = theme.exportCellHeight;
 
     const width =
         state.columns * cellWidth;
@@ -352,7 +362,7 @@ function createFullImageCanvas(state) {
     const height =
         state.rows * cellHeight;
 
-    const maxImageSide = 16000;
+    const maxImageSide = theme.maxExportSide;
 
     if (width > maxImageSide ||
         height > maxImageSide) {
@@ -414,7 +424,8 @@ function createFullImageCanvas(state) {
                 column * cellWidth,
                 row * cellHeight,
                 cellWidth,
-                cellHeight);
+                cellHeight,
+                theme);
         }
     }
 
@@ -423,12 +434,13 @@ function createFullImageCanvas(state) {
         state.rows,
         state.columns,
         cellWidth,
-        cellHeight);
+        cellHeight,
+        theme);
 
     return canvas;
 }
 
-function drawCell(ctx, cell, x, y, width, height) {
+function drawCell(ctx, cell, x, y, width, height, theme) {
     if (cell.type === "empty") {
         ctx.fillStyle = "#FFFFFF";
         ctx.fillRect(x, y, width, height);
@@ -440,33 +452,40 @@ function drawCell(ctx, cell, x, y, width, height) {
         ctx.fillRect(x, y, width, height);
 
         ctx.fillStyle = "#000000";
+
+        const barWidth =
+            width * theme.pinBarRatio;
+
         ctx.fillRect(
-            x + width / 3,
+            x + (width - barWidth) / 2,
             y,
-            width / 3,
+            barWidth,
             height);
 
         return;
     }
 
     const color =
-        getColor(cell.colorCode);
+        getColor(cell.colorCode, theme);
 
     if (cell.type === "crystal") {
         drawCrystalBands(
             ctx,
+            cell.colorCode,
             color,
             x,
             y,
             width,
-            height);
+            height,
+            theme);
 
         drawLightBorder(
             ctx,
             x,
             y,
             width,
-            height);
+            height,
+            theme);
     }
     else {
         ctx.fillStyle = color;
@@ -477,7 +496,8 @@ function drawCell(ctx, cell, x, y, width, height) {
             x,
             y,
             width,
-            height);
+            height,
+            theme);
     }
 
     const fontSize =
@@ -507,13 +527,15 @@ function drawCell(ctx, cell, x, y, width, height) {
 
 function drawCrystalBands(
     ctx,
+    colorCode,
     baseColor,
     x,
     y,
     width,
-    height) {
+    height,
+    theme) {
     const colors =
-        createCrystalBands(baseColor);
+        getCrystalBands(theme, colorCode, baseColor);
 
     const bandWidth =
         width / colors.length;
@@ -535,6 +557,20 @@ function drawCrystalBands(
             actualWidth,
             height);
     }
+}
+
+/*
+ * 晶体条带优先取 Core 计算好的颜色；
+ * 只有主题数据缺失时才在浏览器里现算。
+ */
+function getCrystalBands(theme, colorCode, baseColor) {
+    if (theme &&
+        theme.crystalBands &&
+        theme.crystalBands[colorCode]) {
+        return theme.crystalBands[colorCode];
+    }
+
+    return createCrystalBands(baseColor);
 }
 
 function createCrystalBands(baseColor) {
@@ -575,9 +611,10 @@ function drawLightBorder(
     x,
     y,
     width,
-    height) {
+    height,
+    theme) {
     ctx.strokeStyle =
-        "rgba(255,255,255,0.72)";
+        `rgba(255,255,255,${theme.cellBorderOpacity})`;
 
     ctx.lineWidth =
         Math.max(
@@ -603,7 +640,8 @@ function drawGrid(
     rows,
     columns,
     cellWidth,
-    cellHeight) {
+    cellHeight,
+    theme) {
     const width =
         columns * cellWidth;
 
@@ -612,7 +650,7 @@ function drawGrid(
 
     ctx.save();
 
-    ctx.strokeStyle = "#9E9E9E";
+    ctx.strokeStyle = theme.gridLineColor;
     ctx.lineWidth = 1;
 
     /*
@@ -660,7 +698,48 @@ function drawGrid(
     ctx.restore();
 }
 
-function getColor(code) {
+const FALLBACK_THEME = {
+    colors: {
+        r: "#FF3864",
+        g: "#83FF38",
+        b: "#65B7FF",
+        c: "#35E6C1",
+        m: "#D85CFF",
+        y: "#FFB83E",
+        w: "#D8D8D8",
+        k: "#35353C",
+        u: "#A9BAC8"
+    },
+    cellWidth: 100,
+    cellHeight: 76,
+    fitMargin: 12,
+    maxFitScale: 1.45,
+    gridLineColor: "#9E9E9E",
+    selectionColor: "#1976D2",
+    cellBorderOpacity: 0.72,
+    pinBarRatio: 1 / 3,
+    exportCellWidth: 128,
+    exportCellHeight: 96,
+    maxExportSide: 16000
+};
+
+/*
+ * 主题由 C# 端（ShapeEditor.Core）随每次渲染一起传下来，
+ * 正常情况一定存在；FALLBACK_THEME 只用于极端情况下兜底。
+ */
+function resolveTheme(state) {
+    if (state && state.theme) {
+        return state.theme;
+    }
+
+    return FALLBACK_THEME;
+}
+
+function getColor(code, theme) {
+    if (theme && theme.colors && theme.colors[code]) {
+        return theme.colors[code];
+    }
+
     switch (code) {
         case "r": return "#FF3864";
         case "g": return "#83FF38";
@@ -713,7 +792,8 @@ function drawSelectedCell(
     layer,
     part,
     cellWidth,
-    cellHeight) {
+    cellHeight,
+    theme) {
     const visualRow =
         state.rows - 1 - layer;
 
@@ -732,7 +812,7 @@ function drawSelectedCell(
 
     ctx.save();
 
-    ctx.strokeStyle = "#1976D2";
+    ctx.strokeStyle = theme.selectionColor;
     ctx.lineWidth = Math.max(
         2,
         Math.min(

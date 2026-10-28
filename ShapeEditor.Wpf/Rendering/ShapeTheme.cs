@@ -118,7 +118,7 @@ public sealed class ShapeTheme
             return brushes;
         }
 
-        uint[] bands = CrystalBands.Get(ShapePalette.FromCode(key));
+        uint[] bands = CrystalBands.Get(key);
 
         brushes = new SolidColorBrush[bands.Length];
 
