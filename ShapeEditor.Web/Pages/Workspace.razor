@@ -1,0 +1,593 @@
+@page "/workspace"
+
+@using ShapeEditor.Core.Models
+@using ShapeEditor.Core.Physics
+@using ShapeEditor.Core.Services
+@using ShapeEditor.Web.Models
+@using ShapeEditor.Web.Services
+@implements IDisposable
+@inject WorkspaceStore Store
+@inject NavigationManager Nav
+
+<PageTitle>图形工作区</PageTitle>
+
+<SiteHeader Active="workspace" />
+
+<div class="workspace-page">
+
+    <header class="editor-header">
+        <h1>图形工作区</h1>
+
+        <div class="header-actions">
+            <span class="batch-hint">@Store.Items.Count / @WorkspaceStore.MaxItems</span>
+
+            <button class="secondary-button"
+                    disabled="@(Store.Items.Count == 0)"
+                    @onclick="ClearAll">
+                清空
+            </button>
+        </div>
+    </header>
+
+    @if (!string.IsNullOrWhiteSpace(_message))
+    {
+        <div class="error-message">@_message</div>
+    }
+
+    <div class="workspace-body">
+
+        <section class="workspace-list">
+
+            @if (Store.Items.Count == 0)
+            {
+                <div class="batch-empty">
+                    工作区还是空的：在编辑器点「加入工作区」，或在批量查看里导入。
+                </div>
+            }
+
+            @foreach (WorkspaceItem item in Store.Items)
+            {
+                <div class="@GetCardClass(item)"
+                     @onclick="() => Store.ToggleSelect(item.Id)">
+
+                    <div class="workspace-card-head">
+                        <span class="workspace-order">@GetOrder(item.Id)</span>
+                        <span class="workspace-name">@item.Name</span>
+                        <span class="workspace-source">@item.SourceText</span>
+                    </div>
+
+                    <div class="workspace-thumb">
+                        @if (GetDocument(item) is ShapeDocument document)
+                        {
+                            <ShapePreview Document="document"
+                                          CssClass="workspace-preview" />
+                        }
+                        else
+                        {
+                            <span class="batch-thumb-error">解析失败</span>
+                        }
+                    </div>
+
+                    <div class="workspace-meta">
+                        <span>@item.DimensionText</span>
+                        <code title="@item.Code">@ShortCode(item)</code>
+                    </div>
+
+                    <div class="workspace-actions">
+                        <button class="mini-button"
+                                @onclick:stopPropagation="true"
+                                @onclick="() => LoadIntoEditor(item)">
+                            载入编辑器
+                        </button>
+
+                        <button class="mini-button"
+                                @onclick:stopPropagation="true"
+                                @onclick='() => Quick(item, "collapse")'>
+                            下落
+                        </button>
+
+                        <button class="mini-button"
+                                @onclick:stopPropagation="true"
+                                @onclick='() => Quick(item, "pin")'>
+                            顶针
+                        </button>
+
+                        <button class="mini-button"
+                                @onclick:stopPropagation="true"
+                                @onclick='() => Quick(item, "cut")'>
+                            切割
+                        </button>
+
+                        <button class="mini-button danger"
+                                @onclick:stopPropagation="true"
+                                @onclick="() => Store.Remove(item.Id)">
+                            删除
+                        </button>
+                    </div>
+                </div>
+            }
+
+        </section>
+
+        <aside class="workspace-panel">
+
+            <div class="mode-tabs">
+                <button class="@OperationClass("collapse")"
+                        @onclick='() => SetOperation("collapse")'>
+                    下落
+                </button>
+                <button class="@OperationClass("stack")"
+                        @onclick='() => SetOperation("stack")'>
+                    堆叠
+                </button>
+                <button class="@OperationClass("pin")"
+                        @onclick='() => SetOperation("pin")'>
+                    顶针
+                </button>
+                <button class="@OperationClass("cut")"
+                        @onclick='() => SetOperation("cut")'>
+                    切割
+                </button>
+            </div>
+
+            <div class="tool-panel">
+
+                <div class="tool-title">规则</div>
+
+                <div class="code-format">
+                    <button class="@ModeClass(CollapseMode.IncludeCycles)"
+                            @onclick="() => SetMode(CollapseMode.IncludeCycles)">
+                        含循环支撑
+                    </button>
+                    <button class="@ModeClass(CollapseMode.FloorOnly)"
+                            @onclick="() => SetMode(CollapseMode.FloorOnly)">
+                        仅地面
+                    </button>
+                </div>
+
+                @if (_operation == "stack")
+                {
+                    <div class="tool-title">堆叠参数</div>
+
+                    <label class="workspace-field">
+                        下方图形
+                        <select @bind="_bottomId">
+                            <option value="">请选择</option>
+                            @foreach (WorkspaceItem item in Store.Items)
+                            {
+                                <option value="@item.Id">@item.DimensionText · @item.SourceText</option>
+                            }
+                        </select>
+                    </label>
+
+                    <label class="workspace-field">
+                        上方图形
+                        <select @bind="_topId">
+                            <option value="">请选择</option>
+                            @foreach (WorkspaceItem item in Store.Items)
+                            {
+                                <option value="@item.Id">@item.DimensionText · @item.SourceText</option>
+                            }
+                        </select>
+                    </label>
+
+                    <label class="workspace-field">
+                        层数上限
+                        <input type="number"
+                               min="1"
+                               max="100"
+                               @bind="_heightLimit" />
+                    </label>
+                }
+                else if (_operation == "pin")
+                {
+                    <p class="batch-hint">
+                        顶针使用该图形现有层数作为上限；超过上限的顶层会先碎晶再删除。
+                    </p>
+                }
+                else if (_operation == "cut")
+                {
+                    <p class="batch-hint">
+                        切割沿中线分成东西两半，两半都会输出；跨中线的晶体会整块破碎。
+                    </p>
+                }
+
+                <button class="primary-button"
+                        @onclick="Compute">
+                    计算
+                </button>
+
+                @if (!string.IsNullOrWhiteSpace(_error))
+                {
+                    <div class="error-message">@_error</div>
+                }
+            </div>
+
+            @if (_west is not null && _east is not null)
+            {
+                <div class="workspace-result">
+                    <div class="tool-title">切割结果</div>
+
+                    <div class="workspace-result-pair">
+                        <div class="workspace-result-block">
+                            <span class="batch-hint">西半</span>
+                            <ShapePreview Document="_west"
+                                          CssClass="workspace-preview" />
+                            <button class="secondary-button"
+                                    @onclick='() => AddResult(_west, "cut")'>
+                                加入工作区
+                            </button>
+                        </div>
+
+                        <div class="workspace-result-block">
+                            <span class="batch-hint">东半</span>
+                            <ShapePreview Document="_east"
+                                          CssClass="workspace-preview" />
+                            <button class="secondary-button"
+                                    @onclick='() => AddResult(_east, "cut")'>
+                                加入工作区
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            }
+            else if (_result is not null)
+            {
+                <div class="workspace-result">
+                    <div class="tool-title">结果</div>
+
+                    <ShapePreview Document="_result"
+                                  CssClass="workspace-preview" />
+
+                    <p class="batch-hint">
+                        @_result.LayerCount 层 × @_result.PartCount 象限
+                    </p>
+
+                    <button class="primary-button"
+                            @onclick="() => AddResult(_result, _operation)">
+                        加入工作区
+                    </button>
+                </div>
+            }
+
+        </aside>
+
+    </div>
+
+</div>
+
+@code {
+    private readonly ShortCodeExporter Exporter = new();
+
+    private string _operation = "collapse";
+
+    private CollapseMode _mode = CollapseMode.IncludeCycles;
+
+    private string? _bottomId;
+
+    private string? _topId;
+
+    private int _heightLimit = 4;
+
+    private ShapeDocument? _result;
+
+    private ShapeDocument? _west;
+
+    private ShapeDocument? _east;
+
+    private string _error = "";
+
+    private string _message = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        Store.Changed += OnStoreChanged;
+
+        await Store.EnsureLoadedAsync();
+    }
+
+    private void OnStoreChanged()
+    {
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        Store.Changed -= OnStoreChanged;
+    }
+
+    private bool IsSelected(string id) => Store.SelectedIds.Contains(id);
+
+    private string GetCardClass(WorkspaceItem item)
+    {
+        return IsSelected(item.Id)
+            ? "workspace-card selected"
+            : "workspace-card";
+    }
+
+    private string GetOrder(string id)
+    {
+        int index = Store.SelectedIds.IndexOf(id);
+
+        return index switch
+        {
+            0 => "①",
+            1 => "②",
+            _ => ""
+        };
+    }
+
+    private ShapeDocument? GetDocument(WorkspaceItem item)
+    {
+        return Store.GetDocument(item, out _);
+    }
+
+    private string ShortCode(WorkspaceItem item)
+    {
+        return item.Code.Length <= 28
+            ? item.Code
+            : item.Code[..28] + "…";
+    }
+
+    private string OperationClass(string operation)
+    {
+        return _operation == operation
+            ? "mode-button selected"
+            : "mode-button";
+    }
+
+    private string ModeClass(CollapseMode mode)
+    {
+        return _mode == mode
+            ? "format-button active"
+            : "format-button";
+    }
+
+    private void SetOperation(string operation)
+    {
+        _operation = operation;
+
+        _error = "";
+        _result = null;
+        _west = null;
+        _east = null;
+
+        if (operation == "stack")
+        {
+            PrepareStackSelection();
+        }
+    }
+
+    private void PrepareStackSelection()
+    {
+        if (Store.SelectedIds.Count < 2)
+        {
+            return;
+        }
+
+        _bottomId = Store.SelectedIds[0];
+        _topId = Store.SelectedIds[1];
+
+        WorkspaceItem? bottom = FindItem(_bottomId);
+        WorkspaceItem? top = FindItem(_topId);
+
+        if (bottom is not null && top is not null)
+        {
+            _heightLimit = Math.Min(
+                100,
+                bottom.Layers + 1 + top.Layers);
+        }
+    }
+
+    private void SetMode(CollapseMode mode)
+    {
+        _mode = mode;
+    }
+
+    private WorkspaceItem? FindItem(string? id)
+    {
+        return id is null
+            ? null
+            : Store.Items.FirstOrDefault(item => item.Id == id);
+    }
+
+    private WorkspaceItem? SingleOperand()
+    {
+        return FindItem(Store.SelectedIds.LastOrDefault());
+    }
+
+    private void Quick(WorkspaceItem item, string operation)
+    {
+        Store.SelectedIds.Clear();
+        Store.SelectedIds.Add(item.Id);
+
+        _operation = operation;
+
+        _result = null;
+        _west = null;
+        _east = null;
+
+        Compute();
+    }
+
+    private void Compute()
+    {
+        _error = "";
+        _result = null;
+        _west = null;
+        _east = null;
+        _message = "";
+
+        switch (_operation)
+        {
+            case "stack":
+                ComputeStack();
+                break;
+
+            case "cut":
+                ComputeCut();
+                break;
+
+            case "pin":
+                ComputeSingle(document => ShapePhysics.Pin(document, _mode));
+                break;
+
+            default:
+                ComputeSingle(document => ShapePhysics.Collapse(document, _mode));
+                break;
+        }
+    }
+
+    private void ComputeSingle(Func<ShapeDocument, PhysicsResult> operation)
+    {
+        WorkspaceItem? item = SingleOperand();
+
+        if (item is null)
+        {
+            _error = "请先选择一个图形。";
+
+            return;
+        }
+
+        ShapeDocument? document = Store.GetDocument(item, out string? parseError);
+
+        if (document is null)
+        {
+            _error = parseError ?? "解析失败。";
+
+            return;
+        }
+
+        PhysicsResult result = operation(document);
+
+        if (!result.Success)
+        {
+            _error = result.Error ?? "操作失败。";
+
+            return;
+        }
+
+        _result = result.Document;
+    }
+
+    private void ComputeStack()
+    {
+        WorkspaceItem? bottom = FindItem(_bottomId);
+        WorkspaceItem? top = FindItem(_topId);
+
+        if (bottom is null || top is null)
+        {
+            _error = "请选择下方图形与上方图形。";
+
+            return;
+        }
+
+        ShapeDocument? bottomDocument = Store.GetDocument(bottom, out string? bottomError);
+
+        if (bottomDocument is null)
+        {
+            _error = bottomError ?? "下方图形解析失败。";
+
+            return;
+        }
+
+        ShapeDocument? topDocument = Store.GetDocument(top, out string? topError);
+
+        if (topDocument is null)
+        {
+            _error = topError ?? "上方图形解析失败。";
+
+            return;
+        }
+
+        PhysicsResult result = ShapePhysics.Stack(
+            bottomDocument,
+            topDocument,
+            _heightLimit,
+            _mode);
+
+        if (!result.Success)
+        {
+            _error = result.Error ?? "堆叠失败。";
+
+            return;
+        }
+
+        _result = result.Document;
+    }
+
+    private void ComputeCut()
+    {
+        WorkspaceItem? item = SingleOperand();
+
+        if (item is null)
+        {
+            _error = "请先选择一个图形。";
+
+            return;
+        }
+
+        ShapeDocument? document = Store.GetDocument(item, out string? parseError);
+
+        if (document is null)
+        {
+            _error = parseError ?? "解析失败。";
+
+            return;
+        }
+
+        CutResult result = ShapePhysics.Cut(document, _mode);
+
+        if (!result.Success)
+        {
+            _error = result.Error ?? "切割失败。";
+
+            return;
+        }
+
+        _west = result.West;
+        _east = result.East;
+    }
+
+    private void AddResult(
+        ShapeDocument document,
+        string operation)
+    {
+        string code = Exporter.Export(
+            document,
+            omitTopEmptyLayers: true);
+
+        WorkspaceAddResult result = Store.TryAdd(
+            code,
+            ShortCodeFormat.Full,
+            document.LayerCount,
+            document.PartCount,
+            "operation",
+            operation,
+            Store.SelectedIds.ToArray());
+
+        _message = result switch
+        {
+            WorkspaceAddResult.Added => "已加入工作区。",
+            WorkspaceAddResult.Duplicate => "工作区里已经有相同的图形。",
+            WorkspaceAddResult.Full => "工作区已满 200 条，请先清理。",
+            _ => "结果不是合法图形。"
+        };
+    }
+
+    private void LoadIntoEditor(WorkspaceItem item)
+    {
+        Store.PendingLoad = item;
+
+        Nav.NavigateTo("/");
+    }
+
+    private void ClearAll()
+    {
+        Store.Clear();
+
+        _result = null;
+        _west = null;
+        _east = null;
+    }
+}

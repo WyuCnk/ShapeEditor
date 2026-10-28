@@ -2,6 +2,8 @@
 
 @using ShapeEditor.Core.Models
 @using ShapeEditor.Core.Services
+@using ShapeEditor.Web.Services
+@inject WorkspaceStore Workspace
 
 <PageTitle>批量查看竖式图</PageTitle>
 
@@ -27,6 +29,13 @@
                     disabled="@(string.IsNullOrEmpty(RawText) && _entries.Count == 0)"
                     @onclick="ClearAll">
                 清空
+            </button>
+
+            <button class="secondary-button"
+                    disabled="@(_entries.Count == 0)"
+                    @onclick="ImportAllToWorkspace"
+                    title="把当前列表里的图形全部加入工作区，重复项会跳过">
+                全部加入工作区
             </button>
 
             <span class="batch-hint">
@@ -425,6 +434,63 @@
             LayerCount = layerCount,
             PartCount = partCount
         };
+    }
+
+    private void ImportAllToWorkspace()
+    {
+        ErrorMessage = "";
+
+        if (_entries.Count == 0)
+        {
+            ErrorMessage = "没有可导入的条目。";
+
+            return;
+        }
+
+        int added = 0;
+        int duplicate = 0;
+        int failed = 0;
+
+        foreach (BatchEntry entry in _entries)
+        {
+            if (Workspace.Items.Count >= WorkspaceStore.MaxItems)
+            {
+                ErrorMessage = "工作区已满 200 条，剩余条目未导入。";
+
+                break;
+            }
+
+            if (entry.Error is not null)
+            {
+                failed++;
+
+                continue;
+            }
+
+            WorkspaceAddResult result = Workspace.TryAdd(
+                entry.Code,
+                _format,
+                entry.LayerCount,
+                entry.PartCount,
+                "batch");
+
+            switch (result)
+            {
+                case WorkspaceAddResult.Added:
+                    added++;
+                    break;
+
+                case WorkspaceAddResult.Duplicate:
+                    duplicate++;
+                    break;
+
+                default:
+                    failed++;
+                    break;
+            }
+        }
+
+        StatusMessage = $"已加入工作区 {added} 条，跳过 {duplicate} 条重复、{failed} 条失败。";
     }
 
     private void ClearAll()

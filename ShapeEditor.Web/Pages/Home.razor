@@ -3,7 +3,10 @@
 @using ShapeEditor.Core.Models
 @using ShapeEditor.Core.Services
 @using ShapeEditor.Core.Theme
+@using ShapeEditor.Web.Models
+@using ShapeEditor.Web.Services
 @inject IJSRuntime JS
+@inject WorkspaceStore Workspace
 @using Microsoft.JSInterop
 @implements IDisposable
 @using System.Text.Json
@@ -19,6 +22,12 @@
         <h1>竖式图编辑器</h1>
 
         <div class="header-actions">
+            <button class="secondary-button"
+                    @onclick="AddToWorkspace"
+                    title="把当前图形加入工作区">
+                加入工作区
+            </button>
+
             <button class="secondary-button"
                     disabled="@(_undoStack.Count == 0)"
                     @onclick="Undo">
@@ -534,11 +543,10 @@
 
     private static bool IsValidDimensions(int layers, int parts)
     {
-        return layers >= 1 &&
-               layers <= 100 &&
-               parts >= 1 &&
-               parts <= 100 &&
-               (long)layers * parts <= 10_000;
+        /*
+         * 象限数必须为偶数，规则统一放在 Core 的 ShapeRules 里。
+         */
+        return Core.ShapeRules.IsValidDimensions(layers, parts);
     }
 
     #endregion
@@ -977,11 +985,7 @@
                 return;
             }
 
-            if (saved.LayerCount < 1 ||
-                saved.PartCount < 1 ||
-                saved.LayerCount > 100 ||
-                saved.PartCount > 100 ||
-                (long)saved.LayerCount * saved.PartCount > 10_000)
+            if (!IsValidDimensions(saved.LayerCount, saved.PartCount))
             {
                 return;
             }
@@ -1012,8 +1016,77 @@
         }
     }
 
-    private async Task ClearSavedDocumentAsync()
+    #region 工作区
+
+    private void AddToWorkspace()
     {
+        ErrorMessage = "";
+
+        string code = Exporter.Export(
+            Document,
+            omitTopEmptyLayers: true);
+
+        WorkspaceAddResult result = Workspace.TryAdd(
+            code,
+            ShortCodeFormat.Full,
+            Document.LayerCount,
+            Document.PartCount,
+            "editor");
+
+        ErrorMessage = result switch
+        {
+            WorkspaceAddResult.Duplicate => "工作区里已经有相同的图形。",
+            WorkspaceAddResult.Full => "工作区已满 200 条，请先清理。",
+            WorkspaceAddResult.Invalid => "当前图形无法加入工作区。",
+            _ => ""
+        };
+    }
+
+    private async Task LoadPendingWorkspaceItemAsync()
+    {
+        WorkspaceItem? item = Workspace.PendingLoad;
+
+        if (item is null)
+        {
+            return;
+        }
+
+        Workspace.PendingLoad = null;
+
+        ParseResult result = Parser.Parse(
+            item.Code,
+            item.Layers,
+            item.Parts,
+            item.Format);
+
+        if (!result.Success || result.Document is null)
+        {
+            ErrorMessage = result.Error ?? "载入工作区图形失败。";
+
+            return;
+        }
+
+        SaveUndoState();
+
+        Document = result.Document;
+
+        LayerCount = Document.LayerCount;
+        PartCount = Document.PartCount;
+
+        Code = Exporter.Export(
+            Document,
+            _codeFormat,
+            omitTopEmptyLayers: true);
+
+        ClearSelection();
+
+        await SaveDocumentAsync();
+        await RequestCanvasRender();
+    }
+
+    #endregion
+
+    private async Task ClearSavedDocumentAsync()    {
         await JS.InvokeVoidAsync(
             "shapeStorage.remove",
             BrowserSaveKey);
@@ -1085,6 +1158,8 @@
                 _dotNetReference);
 
             await RestoreDocumentAsync();
+
+            await LoadPendingWorkspaceItemAsync();
         }
         else if (!_canvasNeedsRender)
         {
@@ -1169,7 +1244,7 @@
         if (!IsValidDimensions(LayerCount, PartCount))
         {
             ErrorMessage =
-                "图形尺寸无效。层数和象限数必须大于 0，" +
+                "图形尺寸无效：象限数必须为偶数，" +
                 "且单元格总数不能超过 10000。";
 
             return;
@@ -1249,7 +1324,7 @@
         }
 
         /*
-         * 解析后的文档至少保持 4×4。
+         * 解析后的文档至少保持 4×4，象限数向上取偶。
          */
         LayerCount =
             Math.Max(
@@ -1257,9 +1332,10 @@
                 4);
 
         PartCount =
-            Math.Max(
-                inferredParts,
-                4);
+            Core.ShapeRules.NormalizePartCount(
+                Math.Max(
+                    inferredParts,
+                    4));
 
         ParseResult result =
             Parser.Parse(

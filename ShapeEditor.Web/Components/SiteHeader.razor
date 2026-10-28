@@ -10,6 +10,10 @@
     string batchClass = Active == "batch"
         ? "site-nav-link active"
         : "site-nav-link";
+
+    string workspaceClass = Active == "workspace"
+        ? "site-nav-link active"
+        : "site-nav-link";
 }
 
 <header class="site-bar">
@@ -41,6 +45,11 @@
             <a class="@batchClass"
                href="batch">
                 批量查看
+            </a>
+
+            <a class="@workspaceClass"
+               href="workspace">
+                工作区
             </a>
         </nav>
 

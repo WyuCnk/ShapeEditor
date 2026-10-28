@@ -77,7 +77,23 @@ internal static class Program
             ("批量:分页", BatchViewModelTests.PagingCapsPageCount),
             ("批量:选中项映射", BatchViewModelTests.SelectedOffsetMapsToGlobalIndex),
             ("批量:清空", BatchViewModelTests.ClearResetsEverything),
-            ("批量:空输入报错", BatchViewModelTests.EmptyInputShowsError)
+            ("批量:空输入报错", BatchViewModelTests.EmptyInputShowsError),
+
+            ("物理:悬空单格落底", PhysicsTests.FloatingCellFallsToFloor),
+            ("物理:受支撑塔不动", PhysicsTests.SupportedColumnStays),
+            ("物理:悬空塔整体下落", PhysicsTests.FloatingTowerFallsTogether),
+            ("物理:下落消晶", PhysicsTests.FallingCrystalDisappears),
+            ("物理:坍塌幂等", PhysicsTests.CollapseIsIdempotent),
+            ("物理:堆叠拒绝不同象限数", PhysicsTests.StackRejectsDifferentPartCount),
+            ("物理:堆叠清晶并使用上限", PhysicsTests.StackClearsTopCrystalsAndUsesLimit),
+            ("物理:堆叠超限截断", PhysicsTests.StackTruncatesAboveLimit),
+            ("物理:顶针加底", PhysicsTests.PinAddsPinsAtBottom),
+            ("物理:顶针截顶层", PhysicsTests.PinDropsTopLayerOverLimit),
+            ("物理:切割返回两半", PhysicsTests.CutReturnsBothHalves),
+            ("物理:切割保持象限数", PhysicsTests.CutKeepsPartCount),
+            ("物理:切割破碎跨线晶体", PhysicsTests.CutBreaksSpanningCrystal),
+            ("物理:奇数象限被拒", PhysicsTests.OddPartCountIsRejected),
+            ("物理:象限数取偶", PhysicsTests.NormalizePartCountRoundsUpToEven)
         };
 
         int failed = 0;
