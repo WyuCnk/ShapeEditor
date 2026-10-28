@@ -34,9 +34,9 @@
 		<!-- App Identifier -->
 		<ApplicationId>com.wyucnk.shapeeditor</ApplicationId>
 
-		<!-- Versions -->
-		<ApplicationDisplayVersion>1.2</ApplicationDisplayVersion>
-		<ApplicationVersion>3</ApplicationVersion>
+		<!-- 版本：产品版本来自 Directory.Build.props，versionCode 由 semver 自动派生 -->
+		<ApplicationDisplayVersion>$(ProductVersion)</ApplicationDisplayVersion>
+		<ApplicationVersion>$(AndroidVersionCode)</ApplicationVersion>
 
 		<!--
 		  Android/iOS 会把 ApplicationDisplayVersion 映射成 Version，Windows 不会。

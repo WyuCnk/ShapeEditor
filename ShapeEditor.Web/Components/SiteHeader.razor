@@ -1,5 +1,7 @@
 @* 全局顶栏：品牌、页面导航与客户端下载入口。 *@
 
+@using ShapeEditor.Web.Services
+
 @{
     string editorClass = Active == "editor"
         ? "site-nav-link active"
@@ -26,6 +28,8 @@
             </svg>
 
             <span class="site-name">ShapeEditor</span>
+
+            <span class="site-version">v@(AppVersion.Value)</span>
         </a>
 
         <nav class="site-nav" aria-label="页面导航">
