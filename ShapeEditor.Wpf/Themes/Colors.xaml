@@ -1,0 +1,25 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- 与 Web 端 app.css 同一套主色 -->
+    <SolidColorBrush x:Key="Brush.Primary" Color="#512BD4" />
+    <SolidColorBrush x:Key="Brush.PrimaryDark" Color="#4527A0" />
+    <SolidColorBrush x:Key="Brush.PrimaryDeep" Color="#311B92" />
+    <SolidColorBrush x:Key="Brush.PrimarySoft" Color="#EFEAFB" />
+
+    <SolidColorBrush x:Key="Brush.PageBackground" Color="#F5F5F7" />
+    <SolidColorBrush x:Key="Brush.Surface" Color="#FFFFFF" />
+    <SolidColorBrush x:Key="Brush.Border" Color="#E0E0E0" />
+    <SolidColorBrush x:Key="Brush.BorderStrong" Color="#C5C5C5" />
+
+    <SolidColorBrush x:Key="Brush.Text" Color="#212121" />
+    <SolidColorBrush x:Key="Brush.TextMuted" Color="#6B6B76" />
+    <SolidColorBrush x:Key="Brush.TextOnPrimary" Color="#FFFFFF" />
+
+    <SolidColorBrush x:Key="Brush.Danger" Color="#A00000" />
+    <SolidColorBrush x:Key="Brush.DangerSoft" Color="#FFF5F5" />
+    <SolidColorBrush x:Key="Brush.Selection" Color="#1976D2" />
+
+    <SolidColorBrush x:Key="Brush.Hover" Color="#F0EDF8" />
+
+</ResourceDictionary>

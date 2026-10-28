@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>WinExe</OutputType>
+		<TargetFramework>net10.0-windows</TargetFramework>
+		<UseWPF>true</UseWPF>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<RootNamespace>ShapeEditor.Wpf</RootNamespace>
+		<AssemblyName>ShapeEditor.Wpf</AssemblyName>
+
+		<!-- 与 Web / MAUI 保持同一版本号 -->
+		<Version>1.1.0</Version>
+		<AssemblyTitle>Shapez 2 竖式图编辑器</AssemblyTitle>
+		<Product>ShapeEditor</Product>
+
+		<NeutralLanguage>zh-Hans</NeutralLanguage>
+		<SatelliteResourceLanguages>zh-Hans</SatelliteResourceLanguages>
+
+		<ApplicationManifest>app.manifest</ApplicationManifest>
+
+		<!--
+		  单文件自包含发布的参数放在 Properties\PublishProfiles\win-x64.pubxml，
+		  避免日常 build 也被强制成自包含（那会额外拉取运行时包）。
+		  发布命令：dotnet publish -c Release -p:PublishProfile=win-x64
+		-->
+	</PropertyGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\ShapeEditor.Core\ShapeEditor.Core.csproj" />
+	</ItemGroup>
+
+</Project>

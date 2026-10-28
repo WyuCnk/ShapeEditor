@@ -1,0 +1,93 @@
+<Window x:Class="ShapeEditor.Wpf.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:views="clr-namespace:ShapeEditor.Wpf.Views"
+        Title="Shapez 2 竖式图编辑器"
+        Width="1280"
+        Height="860"
+        MinWidth="1020"
+        MinHeight="740"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource Brush.PageBackground}"
+        FontFamily="Microsoft YaHei UI, Segoe UI"
+        UseLayoutRounding="True"
+        PreviewKeyDown="OnPreviewKeyDown">
+
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- 顶栏：品牌、页面切换、快捷键入口 -->
+        <Border Grid.Row="0"
+                Background="{StaticResource Brush.Surface}"
+                BorderBrush="{StaticResource Brush.Border}"
+                BorderThickness="0,0,0,1"
+                Padding="18,8">
+            <Grid>
+                <StackPanel Orientation="Horizontal"
+                            VerticalAlignment="Center">
+                    <TextBlock Text="ShapeEditor"
+                               FontSize="16"
+                               FontWeight="Bold"
+                               VerticalAlignment="Center"
+                               Margin="0,0,20,0" />
+
+                    <RadioButton Content="编辑器"
+                                 IsChecked="{Binding IsEditorTab, Mode=TwoWay}"
+                                 Style="{StaticResource Toggle.Mode}"
+                                 Padding="16,6"
+                                 Margin="0,0,6,0" />
+
+                    <RadioButton Content="批量查看"
+                                 IsChecked="{Binding IsBatchTab, Mode=TwoWay}"
+                                 Style="{StaticResource Toggle.Mode}"
+                                 Padding="16,6" />
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center">
+                    <Button Content="快捷键（F1）"
+                            Click="OnShortcutHelpClick"
+                            Style="{StaticResource Button.Secondary}"
+                            Padding="12,6"
+                            ToolTip="查看全部快捷键与鼠标操作说明（F1）" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- 内容：两个页面按可见性切换 -->
+        <Grid Grid.Row="1">
+            <views:EditorView DataContext="{Binding Editor}"
+                              Visibility="{Binding DataContext.IsEditorVisible, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}" />
+
+            <views:BatchView DataContext="{Binding Batch}"
+                             Visibility="{Binding DataContext.IsBatchVisible, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}" />
+        </Grid>
+
+        <!-- 状态栏 -->
+        <Border Grid.Row="2"
+                Background="{StaticResource Brush.Surface}"
+                BorderBrush="{StaticResource Brush.Border}"
+                BorderThickness="0,1,0,0"
+                Padding="18,6">
+            <Grid>
+                <TextBlock Text="提示：按 F1 查看快捷键与操作说明"
+                           FontSize="12"
+                           Foreground="{StaticResource Brush.TextMuted}" />
+
+                <TextBlock Text="{Binding VersionText}"
+                           HorizontalAlignment="Right"
+                           FontSize="12"
+                           Foreground="{StaticResource Brush.TextMuted}" />
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

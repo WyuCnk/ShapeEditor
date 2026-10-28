@@ -1,0 +1,368 @@
+<UserControl x:Class="ShapeEditor.Wpf.Views.EditorView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:ShapeEditor.Wpf.Controls"
+             FontFamily="Microsoft YaHei UI, Segoe UI">
+
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+    </UserControl.Resources>
+
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- 顶部标题与历史操作 -->
+        <Grid Grid.Row="0" Margin="0,0,0,12">
+            <TextBlock Text="竖式图编辑器"
+                       Style="{StaticResource Text.PageTitle}"
+                       VerticalAlignment="Center" />
+
+            <StackPanel Orientation="Horizontal"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Center">
+                <Button Content="撤销"
+                        Command="{Binding UndoCommand}"
+                        IsEnabled="{Binding CanUndo}"
+                        Style="{StaticResource Button.Secondary}"
+                        ToolTip="撤销上一步（Ctrl+Z）"
+                        Margin="0,0,8,0" />
+
+                <Button Content="重做"
+                        Command="{Binding RedoCommand}"
+                        IsEnabled="{Binding CanRedo}"
+                        Style="{StaticResource Button.Secondary}"
+                        ToolTip="重做（Ctrl+Y）"
+                        Margin="0,0,8,0" />
+
+                <Button Content="清空"
+                        Command="{Binding ClearCommand}"
+                        Style="{StaticResource Button.Secondary}"
+                        ToolTip="清空当前图形" />
+            </StackPanel>
+        </Grid>
+
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="290" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="360" />
+            </Grid.ColumnDefinitions>
+
+            <!-- 左：尺寸、模式、工具 -->
+            <Border Grid.Column="0"
+                    Style="{StaticResource Card.Panel}"
+                    Margin="0,0,12,0">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+
+                        <TextBlock Text="尺寸"
+                                   Style="{StaticResource Text.SectionTitle}" />
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                <TextBlock Text="层数"
+                                           Style="{StaticResource Text.Hint}"
+                                           Margin="0,0,0,4" />
+                                <TextBox Text="{Binding LayerCount}"
+                                         Style="{StaticResource Input.Text}" />
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="1">
+                                <TextBlock Text="象限数"
+                                           Style="{StaticResource Text.Hint}"
+                                           Margin="0,0,0,4" />
+                                <TextBox Text="{Binding PartCount}"
+                                         Style="{StaticResource Input.Text}" />
+                            </StackPanel>
+                        </Grid>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                            <Button Content="应用尺寸"
+                                    Command="{Binding ApplyDimensionsCommand}"
+                                    Style="{StaticResource Button.Primary}"
+                                    ToolTip="按上面的层数与象限数调整图形（Ctrl+Enter）"
+                                    Margin="0,0,8,0" />
+
+                            <Button Content="适应屏幕"
+                                    Command="{Binding FitViewCommand}"
+                                    Style="{StaticResource Button.Secondary}"
+                                    ToolTip="恢复默认缩放与位置（Ctrl+0）" />
+                        </StackPanel>
+
+                        <TextBlock Text="模式"
+                                   Style="{StaticResource Text.SectionTitle}" />
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <RadioButton Content="画笔模式"
+                                         IsChecked="{Binding IsPaintMode, Mode=TwoWay}"
+                                         Style="{StaticResource Toggle.Mode}"
+                                         Margin="0,0,4,0" />
+
+                            <RadioButton Content="移动模式"
+                                         IsChecked="{Binding IsMoveMode, Mode=TwoWay}"
+                                         Style="{StaticResource Toggle.Mode}"
+                                         Grid.Column="1"
+                                         Margin="4,0,0,0" />
+                        </Grid>
+
+                        <!-- 画笔工具 -->
+                        <StackPanel Visibility="{Binding IsPaintMode, Converter={StaticResource BoolToVis}}">
+
+                            <TextBlock Text="形状"
+                                       Style="{StaticResource Text.SectionTitle}" />
+
+                            <ItemsControl ItemsSource="{Binding ShapeOptions}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <UniformGrid Columns="4" />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <ToggleButton Content="{Binding Label}"
+                                                      IsChecked="{Binding IsActive, Mode=TwoWay}"
+                                                      Style="{StaticResource Toggle.Tool}"
+                                                      Margin="3" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <TextBlock Text="颜色"
+                                       Style="{StaticResource Text.SectionTitle}" />
+
+                            <ItemsControl ItemsSource="{Binding ColorOptions}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <UniformGrid Columns="3" />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <ToggleButton Content="{Binding Label}"
+                                                      Background="{Binding Swatch}"
+                                                      Foreground="{Binding TextBrush}"
+                                                      IsChecked="{Binding IsActive, Mode=TwoWay}"
+                                                      Style="{StaticResource Toggle.Swatch}"
+                                                      Margin="3" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <Button Content="清空所选单元格"
+                                    Command="{Binding ClearCellCommand}"
+                                    Style="{StaticResource Button.Secondary}"
+                                    Margin="0,8,0,0"
+                                    ToolTip="把选中单元格恢复为空（Delete）" />
+                        </StackPanel>
+
+                        <!-- 移动工具 -->
+                        <StackPanel Visibility="{Binding IsMoveMode, Converter={StaticResource BoolToVis}}">
+
+                            <TextBlock Text="整体移动"
+                                       Style="{StaticResource Text.SectionTitle}" />
+
+                            <UniformGrid Columns="2">
+                                <Button Content="上移"
+                                        Command="{Binding MoveUpCommand}"
+                                        Style="{StaticResource Button.Secondary}"
+                                        Margin="3"
+                                        ToolTip="整体上移一层（↑）" />
+
+                                <Button Content="下移"
+                                        Command="{Binding MoveDownCommand}"
+                                        Style="{StaticResource Button.Secondary}"
+                                        Margin="3"
+                                        ToolTip="整体下移一层（↓）" />
+
+                                <Button Content="左移 ↻"
+                                        Command="{Binding MoveLeftCommand}"
+                                        Style="{StaticResource Button.Secondary}"
+                                        Margin="3"
+                                        ToolTip="同层象限循环左移（←）" />
+
+                                <Button Content="右移 ↻"
+                                        Command="{Binding MoveRightCommand}"
+                                        Style="{StaticResource Button.Secondary}"
+                                        Margin="3"
+                                        ToolTip="同层象限循环右移（→）" />
+                            </UniformGrid>
+                        </StackPanel>
+
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+
+            <!-- 中：画布 -->
+            <Border Grid.Column="1"
+                    Style="{StaticResource Card.Panel}"
+                    Padding="0"
+                    Margin="0,0,12,0"
+                    ClipToBounds="True">
+                <Grid>
+                    <controls:ShapeGridView x:Name="Grid"
+                                            Document="{Binding Document}"
+                                            Zoom="{Binding Zoom, Mode=TwoWay}"
+                                            PanX="{Binding PanX, Mode=TwoWay}"
+                                            PanY="{Binding PanY, Mode=TwoWay}"
+                                            SelectedLayer="{Binding SelectedLayer, Mode=TwoWay}"
+                                            SelectedPart="{Binding SelectedPart, Mode=TwoWay}"
+                                            PaintEnabled="{Binding IsPaintBrushActive}"
+                                            CellPaintRequested="OnCellPaintRequested"
+                                            CellSelected="OnCellSelected"
+                                            StrokeStarted="OnStrokeStarted"
+                                            StrokeEnded="OnStrokeEnded" />
+
+                    <TextBlock Text="滚动滚轮缩放 · 中键拖动平移 · 空格+左键拖动平移"
+                               HorizontalAlignment="Right"
+                               VerticalAlignment="Bottom"
+                               Margin="12"
+                               FontSize="11"
+                               Foreground="{StaticResource Brush.TextMuted}"
+                               IsHitTestVisible="False" />
+                </Grid>
+            </Border>
+
+            <!-- 右：短代码与导出 -->
+            <Border Grid.Column="2"
+                    Style="{StaticResource Card.Panel}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+
+                        <TextBlock Text="短代码"
+                                   Style="{StaticResource Text.SectionTitle}" />
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <RadioButton Content="短代码"
+                                         IsChecked="{Binding IsFullFormat, Mode=TwoWay}"
+                                         Style="{StaticResource Toggle.Mode}"
+                                         Margin="0,0,4,0" />
+
+                            <RadioButton Content="超短代码"
+                                         IsChecked="{Binding IsSuperFormat, Mode=TwoWay}"
+                                         Style="{StaticResource Toggle.Mode}"
+                                         Grid.Column="1"
+                                         Margin="4,0,0,0" />
+                        </Grid>
+
+                        <TextBox Text="{Binding Code}"
+                                 Style="{StaticResource Input.Text}"
+                                 Margin="0,10,0,0"
+                                 ToolTip="{Binding CodePlaceholder}" />
+
+                        <TextBlock Text="{Binding CodePlaceholder}"
+                                   Style="{StaticResource Text.Hint}"
+                                   Margin="2,4,0,0" />
+
+                        <UniformGrid Columns="2" Margin="0,10,0,0">
+                            <Button Content="{Binding ParseButtonText}"
+                                    Command="{Binding ParseCommand}"
+                                    Style="{StaticResource Button.Primary}"
+                                    Margin="0,0,4,6"
+                                    ToolTip="解析输入框里的短代码（Ctrl+Enter）" />
+
+                            <Button Content="{Binding ExportButtonText}"
+                                    Command="{Binding ExportCodeCommand}"
+                                    Style="{StaticResource Button.Secondary}"
+                                    Margin="4,0,0,6"
+                                    ToolTip="把当前图形导出到输入框" />
+
+                            <Button Content="复制短代码"
+                                    Command="{Binding CopyCodeCommand}"
+                                    Style="{StaticResource Button.Secondary}"
+                                    Margin="0,0,4,6"
+                                    ToolTip="复制到剪贴板（Ctrl+C）" />
+
+                            <Button Content="粘贴短代码"
+                                    Command="{Binding PasteCodeCommand}"
+                                    Style="{StaticResource Button.Secondary}"
+                                    Margin="4,0,0,6"
+                                    ToolTip="从剪贴板粘贴（Ctrl+V）" />
+                        </UniformGrid>
+
+                        <TextBlock Text="图片与存档"
+                                   Style="{StaticResource Text.SectionTitle}" />
+
+                        <UniformGrid Columns="2">
+                            <Button Content="导出图片"
+                                    Command="{Binding ExportImageCommand}"
+                                    Style="{StaticResource Button.Secondary}"
+                                    Margin="0,0,4,6"
+                                    ToolTip="保存为 PNG（Ctrl+Shift+S）" />
+
+                            <Button Content="复制图片"
+                                    Command="{Binding CopyImageCommand}"
+                                    Style="{StaticResource Button.Secondary}"
+                                    Margin="4,0,0,6"
+                                    ToolTip="把 PNG 复制到剪贴板" />
+
+                            <Button Content="导出存档"
+                                    Command="{Binding ExportSaveFileCommand}"
+                                    Style="{StaticResource Button.Secondary}"
+                                    Margin="0,0,4,6"
+                                    ToolTip="导出为 JSON（Ctrl+S）" />
+
+                            <Button Content="导入存档"
+                                    Command="{Binding ImportSaveFileCommand}"
+                                    Style="{StaticResource Button.Secondary}"
+                                    Margin="4,0,0,6"
+                                    ToolTip="从 JSON 导入（Ctrl+O）" />
+                        </UniformGrid>
+
+                        <TextBlock Text="{Binding SelectedCellText}"
+                                   Style="{StaticResource Text.Hint}"
+                                   Margin="2,10,0,0" />
+
+                        <TextBlock Text="{Binding BrushStatusText}"
+                                   Style="{StaticResource Text.Hint}"
+                                   Margin="2,2,0,0" />
+
+                        <TextBlock Text="{Binding DocumentSummary}"
+                                   Style="{StaticResource Text.Hint}"
+                                   Margin="2,2,0,0" />
+
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+        </Grid>
+
+        <!-- 底部提示 -->
+        <StackPanel Grid.Row="2" Margin="0,12,0,0">
+            <Border Background="{StaticResource Brush.DangerSoft}"
+                    BorderBrush="{StaticResource Brush.Danger}"
+                    BorderThickness="1"
+                    CornerRadius="8"
+                    Padding="12,8"
+                    Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}"
+                    Margin="0,0,0,8">
+                <TextBlock Text="{Binding ErrorMessage}"
+                           Foreground="{StaticResource Brush.Danger}"
+                           TextWrapping="Wrap" />
+            </Border>
+
+            <TextBlock Style="{StaticResource Text.Hint}">
+                短代码从最低层开始书写，竖式图从最高层显示到最低层；每两个字符表示一个象限，第一位是形状，第二位是颜色。
+            </TextBlock>
+        </StackPanel>
+    </Grid>
+</UserControl>
