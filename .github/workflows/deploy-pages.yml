@@ -28,14 +28,64 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      # 必须在发布前改写：service-worker-assets.js 里的完整性哈希是按发布产物算的，
+      # 发布后再改 index.html 会让哈希失配，Service Worker 安装失败（首屏画布不渲染）。
+      - name: Set GitHub Pages base href
+        run: |
+          sed -i 's#<base href="/" />#<base href="/ShapeEditor/" />#' ShapeEditor.Web/wwwroot/index.html
+          grep -q '<base href="/ShapeEditor/" />' ShapeEditor.Web/wwwroot/index.html
+
       - name: Publish Web
         run: dotnet publish ShapeEditor.Web/ShapeEditor.Web.csproj -c Release -o release
 
       - name: Prepare GitHub Pages files
         run: |
-          sed -i 's#<base href="/" />#<base href="/ShapeEditor/" />#' release/wwwroot/index.html
           cp release/wwwroot/index.html release/wwwroot/404.html
           touch release/wwwroot/.nojekyll
+
+      - name: Verify service worker asset integrity
+        shell: pwsh
+        run: |
+          function Get-ContentHashBase64([string] $path) {
+              $sha = [System.Security.Cryptography.SHA256]::Create()
+              try {
+                  return [Convert]::ToBase64String(
+                      $sha.ComputeHash([System.IO.File]::ReadAllBytes($path)))
+              }
+              finally {
+                  $sha.Dispose()
+              }
+          }
+
+          $root = "release/wwwroot"
+          $raw = Get-Content -Raw (Join-Path $root "service-worker-assets.js")
+          $json = (($raw -replace '(?m)^\s*//.*$', '') -replace '^\uFEFF?\s*self\.assetsManifest\s*=\s*', '') -replace ';\s*$', ''
+          $manifest = $json | ConvertFrom-Json
+
+          $problems = @()
+
+          foreach ($asset in $manifest.assets) {
+              if ([string]::IsNullOrEmpty($asset.hash)) { continue }
+
+              $path = Join-Path $root $asset.url
+
+              if (-not (Test-Path -LiteralPath $path)) {
+                  $problems += "缺少文件 $($asset.url)"
+                  continue
+              }
+
+              $actual = "sha256-" + (Get-ContentHashBase64 $path)
+
+              if ($actual -ne $asset.hash) {
+                  $problems += "哈希不匹配 $($asset.url)"
+              }
+          }
+
+          if ($problems.Count -gt 0) {
+              throw ("Service Worker 清单与发布产物不一致，安装会失败导致首屏空白：`n" + ($problems -join "`n"))
+          }
+
+          Write-Host "Service Worker 清单校验通过（$($manifest.assets.Count) 个资源）。"
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
