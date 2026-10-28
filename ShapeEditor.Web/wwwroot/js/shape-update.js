@@ -22,12 +22,16 @@
         }
     }
 
-    return {
-        async init(dotNetObject) {
-            if (!("serviceWorker" in navigator)) return;
-
-            prepareUpdate = dotNetObject;
+    /*
+     * Service Worker 只负责更新提示和离线缓存。
+     * 这里不能等待 navigator.serviceWorker.ready：
+     * 一旦注册失效（例如安装阶段的完整性校验不通过），
+     * ready 永远不会 resolve，等待它的调用方会一直挂起。
+     */
+    async function watchForUpdates() {
+        try {
             registration = await navigator.serviceWorker.ready;
+
             checkWaiting();
 
             registration.addEventListener("updatefound", () => {
@@ -40,7 +44,20 @@
             });
 
             window.setInterval(checkForUpdate, 30 * 60 * 1000);
+
             await checkForUpdate();
+        } catch (error) {
+            console.warn("Service Worker 更新检查未启动", error);
+        }
+    }
+
+    return {
+        init(dotNetObject) {
+            if (!("serviceWorker" in navigator)) return;
+
+            prepareUpdate = dotNetObject;
+
+            void watchForUpdates();
         },
 
         async apply() {

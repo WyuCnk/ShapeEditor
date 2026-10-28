@@ -1058,18 +1058,14 @@
             _dotNetReference =
                 DotNetObjectReference.Create(this);
 
-            await JS.InvokeVoidAsync("shapeUpdate.init", _dotNetReference);
-
-            await RestoreDocumentAsync();
-
             await JS.InvokeVoidAsync(
                 "shapeGrid.init",
                 _canvas,
                 _dotNetReference);
-        }
 
-        if (!firstRender &&
-            !_canvasNeedsRender)
+            await RestoreDocumentAsync();
+        }
+        else if (!_canvasNeedsRender)
         {
             return;
         }
@@ -1080,6 +1076,17 @@
             "shapeGrid.render",
             _canvas,
             CreateCanvasState());
+
+        /*
+         * 版本检查只影响更新提示，
+         * 放在首屏绘制之后，避免它挡住画布渲染。
+         */
+        if (firstRender)
+        {
+            await JS.InvokeVoidAsync(
+                "shapeUpdate.init",
+                _dotNetReference);
+        }
     }
 
     private CanvasState CreateCanvasState()
