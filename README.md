@@ -1,105 +1,165 @@
 # 竖式图编辑器
 
-一个用于将图形短代码转换为竖式图、编辑图形并导出结果的工具。目前提供 **Web 在线版**和 **Android 版**。项目使用 C# 编写核心逻辑，Web 版基于 Blazor WebAssembly。
+把图形短代码转成竖式图、编辑图形并导出结果的工具，同一套核心逻辑提供 **Web / Android / Windows** 三个平台。
+
+![WPF 主界面](docs/images/wpf-editor.png)
 
 ## 在线使用与下载
 
-- [打开 Web 在线版](https://wyucnk.github.io/ShapeEditor/)
-- [下载 Android APK](https://github.com/WyuCnk/ShapeEditor/releases)
+| 平台 | 入口 | 说明 |
+| --- | --- | --- |
+| Web | [wyucnk.github.io/ShapeEditor](https://wyucnk.github.io/ShapeEditor/) | Blazor WebAssembly + PWA，可离线使用 |
+| Windows | [下载 EXE](https://github.com/WyuCnk/ShapeEditor/releases/latest/download/ShapeEditor-Windows-x64.exe) | 单文件自包含，约 59 MB，双击即用，无需安装 .NET |
+| Android | [下载 APK](https://github.com/WyuCnk/ShapeEditor/releases/latest/download/ShapeEditor-android-universal.apk) | 通用包（arm64 / arm / x64），最低 Android 5.0 |
+| 所有版本 | [Releases](https://github.com/WyuCnk/ShapeEditor/releases) | |
 
-> Android APK 请从 Releases 中选择最新版本。Windows WPF 版计划后续整合进本解决方案，届时将在 Releases 中提供 EXE。
+三个客户端共用同一份存档格式（JSON，`Version: 1`），互相导入导出没有障碍。
 
 ## 功能
 
-- 解析、编辑和导出图形短代码，支持短代码与超短代码两种写法
-- 支持不同层数和象限数
-- 以矩阵形式显示竖式图：**最高层在上，最低层在下**
-- 显示空位、顶针、晶体、普通形状及其颜色
-- 形状画笔、颜色画笔和组合画笔
-- 图形整体上移、下移，以及按象限循环左移、右移
-- 画布移动和缩放
-- 撤销、重做
-- 导出完整竖式图 PNG
-- Web 版浏览器自动保存、JSON 存档导入和导出
-- Web 版批量查看：粘贴或导入 txt（一行一个短代码），列表分页，可上一条 / 下一条切换
+三个平台能力基本一致：
 
-部分浏览器不支持直接分享图片文件；此时可以先下载 PNG，再从设备中分享。
+- 解析、编辑、导出短代码，支持**短代码**与**超短代码**两种写法
+- 任意层数与象限数（1–100，单元格总数上限 10000）
+- 竖式图显示：**最高层在上，最低层在下**
+- 形状画笔（空 / 顶针 / 晶体 / 普通形状）、颜色画笔（9 色），可组合使用
+- 整体上移 / 下移，同层象限循环左移 / 右移
+- 画布缩放与平移，选中单元格查看其短代码
+- 撤销 / 重做（上限 100 步）
+- 导出完整竖式图 PNG；Windows 还支持把图片复制到剪贴板
+- 存档导入导出（JSON），自动保存并在下次打开时恢复
+- 批量查看：粘贴或导入 txt（一行一条），分页缩略图，上一条 / 下一条切换
+
+各平台差异：
+
+| 能力 | Web | Android | Windows |
+| --- | --- | --- | --- |
+| 分享图片 | 系统分享（浏览器支持时） | 系统分享 | 导出 + 剪贴板 |
+| 自动保存位置 | 浏览器 localStorage | 应用私有存储 | `%LOCALAPPDATA%\ShapeEditor\autosave.json` |
+| 快捷键 | 浏览器默认 | — | 全套（见下） |
+
+## Windows 快捷键
+
+首次使用按 **F1** 查看完整说明（菜单里也有入口），常用如下：
+
+| 快捷键 | 功能 |
+| --- | --- |
+| `Ctrl + Z` / `Ctrl + Y` | 撤销 / 重做 |
+| `Ctrl + Enter` | 解析输入框里的短代码 |
+| `Ctrl + 0` | 适应屏幕 |
+| `Ctrl + C` / `Ctrl + V` | 复制 / 粘贴短代码（焦点在输入框时走系统行为） |
+| `Ctrl + S` / `Ctrl + O` | 导出 / 导入存档 |
+| `Ctrl + Shift + S` | 导出图片 |
+| `Delete` / `Esc` | 清空选中单元格 / 取消画笔与选中 |
+| `↑ ↓ ← →` | 移动模式下整体移动 |
+| 滚轮 / 中键拖动 / 空格+左键拖动 | 缩放 / 平移画布 |
 
 ## 短代码规则
 
 冒号 `:` 分隔不同层，**第一段是最低层**；每两个字符表示一个象限，同一层按短代码顺序从左到右排列。
 
-例如：
-
 ```text
 CrP---Gu:ckckckck
 ```
 
-表示两层、每层四个象限。竖式图显示时，第二段位于第一段上方。
+表示两层、每层四个象限；竖式图显示时，第二段位于第一段上方。
 
-常见单元代码：
-
-| 代码 | 含义                |
-| ---- | ------------------- |
-| `--` | 空位                |
-| `P-` | 顶针                |
-| `cr` | 红色晶体            |
-| `Cu` | 未着色普通形状      |
+| 代码 | 含义 |
+| ---- | ---- |
+| `--` | 空位 |
+| `P-` | 顶针 |
+| `cr` | 红色晶体 |
+| `Cu` | 未着色普通形状 |
 | `Gu` | 未着色的 G 普通形状 |
 
-颜色字符包括 `r`、`g`、`b`、`c`、`m`、`y`、`w`、`k`、`u`；其中 `u` 表示未着色，与空位或顶针使用的 `-` 不同。
+颜色字符：`r`、`g`、`b`、`c`、`m`、`y`、`w`、`k`、`u`，其中 `u` 是未着色，与空位/顶针的 `-` 不同。
 
 ### 超短代码
 
-只描述形状、不带颜色的写法：**每一位表示一个象限**，冒号同样用于分层。`C` 表示普通形状、`c` 表示晶体、`P` 表示顶针、`-` 表示空位，普通形状的字母沿用 `A`–`Z`（`P` 除外）。
-
-例如：
+只描述形状、不带颜色：**每一位一个象限**，冒号同样分层。`C` 普通形状、`c` 晶体、`P` 顶针、`-` 空位，普通形状字母沿用 `A`–`Z`（`P` 除外）。
 
 ```text
 CcCc
 ```
 
-表示一层、四个象限，依次是「图、晶、图、晶」。`CcCc:Cc` 表示两层，第二层只有两个象限。
-
-解析时颜色按默认值补齐（普通形状未着色 `u`、晶体红色 `r`），所以超短代码可以随时再导出为带颜色的完整短代码。Web 版和 Android 版的输入框上方都可以在「短代码 / 超短代码」之间切换，Web 版的批量查看页同样支持切换。
+表示一层四个象限：图、晶、图、晶。解析时颜色按默认值补齐（普通形状未着色 `u`、晶体红色 `r`），因此随时可以再导出为带颜色的完整短代码。
 
 ## 项目结构
 
 ```text
-ShapeEditor.Core/    图形模型、短代码解析与导出、编辑操作
-ShapeEditor.Maui/    Android 应用
+ShapeEditor.Core/    图形模型、短代码解析与导出、主题常量（三端共享）
 ShapeEditor.Web/     Blazor WebAssembly 在线版与 PWA
+ShapeEditor.Maui/    Android 应用（MAUI 单项目）
+ShapeEditor.Wpf/     Windows 桌面客户端（WPF）
+ShapeEditor.Tests/   零依赖测试项目
+Directory.Build.props  产品版本与 Android versionCode 的唯一来源
 ShapeEditor.slnx     解决方案
 ```
 
-WPF 版后续将迁移到同一解决方案，并复用 `ShapeEditor.Core`。
+三个界面都以 `ShapeEditor.Core` 为唯一真源：短代码解析/导出、文档模型、调色板与晶体条带算法都不在界面层重复实现。
 
-## 本地运行 Web 版
+## 本地开发
 
-需要安装 .NET 10 SDK。在仓库根目录执行：
+需要 .NET 10 SDK；Android 另外需要 MAUI 工作负载、Android SDK 与 JDK。
 
 ```powershell
-dotnet restore .\ShapeEditor.Web\ShapeEditor.Web.csproj
+# Web（热重载）
 dotnet watch --project .\ShapeEditor.Web\ShapeEditor.Web.csproj
+
+# Windows 客户端
+dotnet run --project .\ShapeEditor.Wpf\ShapeEditor.Wpf.csproj
+
+# 测试（36 项）
+dotnet run --project .\ShapeEditor.Tests\ShapeEditor.Tests.csproj -c Release
+
+# Android（按需传入本机 SDK 与 JDK 路径）
+dotnet build .\ShapeEditor.Maui\ShapeEditor.Maui.csproj -f net10.0-android `
+  -p:AndroidSdkDirectory="D:\AndroidSdk" -p:JavaSdkDirectory="D:\AndroidJdk"
 ```
 
-然后打开终端显示的本地地址。
-
-单独编译核心库：
+### 发布 Windows 单文件
 
 ```powershell
-dotnet build .\ShapeEditor.Core\ShapeEditor.Core.csproj
+dotnet publish .\ShapeEditor.Wpf\ShapeEditor.Wpf.csproj -c Release -p:PublishProfile=win-x64
 ```
 
-Android 版的本地编译还需要 .NET MAUI 工作负载、Android SDK 和 JDK。
+输出在 `ShapeEditor.Wpf\bin\Release\net10.0-windows\publish\win-x64\ShapeEditor.Wpf.exe`。
+
+### 离屏自检
+
+没有图形界面时可以渲染界面到 PNG 验证绘制：
+
+```powershell
+.\ShapeEditor.Wpf\bin\Debug\net10.0-windows\ShapeEditor.Wpf.exe --render-test .\artifacts\render
+```
+
+## 版本管理
+
+三端共用一个产品版本号，定义在 `Directory.Build.props` 的 `ProductVersion`，发版只改这一处：
+
+- WPF：程序集版本与状态栏显示
+- Web：顶栏显示（读取程序集 `InformationalVersion`）
+- Android：`ApplicationDisplayVersion`，`versionCode` 由 `major*10000 + minor*100 + patch` 自动派生（只增不减）
+
+## 发布流程
+
+```powershell
+# 1. 修改 Directory.Build.props 里的 ProductVersion
+# 2. 提交后打标签
+git tag -a v1.2.2 -m "ShapeEditor 1.2.2"
+git push origin v1.2.2
+```
+
+打 `v*` 标签会触发 `.github/workflows/release.yml`：同时构建 Windows 单文件 EXE 与签名 APK，汇总到同一个 Release。网页上的两个下载按钮固定指向 `releases/latest/download/<固定文件名>`，因此发版后无需改网页。
+
+推送 `main` 会触发 `deploy-pages.yml` 自动部署 Web 版。
 
 ## 后续计划
 
-- 将现有 WPF 版迁入本解决方案
-- 提供 Windows EXE 下载
 - 扩展基于 C# 的图形性质分析功能
-- 持续优化 Web 版的移动端体验
+- 批量查看导出长图（列表过长时的分页导出方案仍在设计）
+- 持续优化 Web 版移动端体验
 
 ## 反馈
 
-如果发现短代码解析、显示或导出问题，欢迎在 [Issues](https://github.com/WyuCnk/ShapeEditor/issues) 中反馈，并尽量附上短代码、预期结果和实际截图。
+发现短代码解析、显示或导出问题，欢迎在 [Issues](https://github.com/WyuCnk/ShapeEditor/issues) 反馈，并附上短代码、预期结果与实际截图。
