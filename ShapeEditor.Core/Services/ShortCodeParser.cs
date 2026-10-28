@@ -4,6 +4,12 @@ namespace ShapeEditor.Core.Services;
 
 public sealed class ShortCodeParser
 {
+    public const int MaxLayerCount = 100;
+
+    public const int MaxPartCount = 100;
+
+    public const int MaxCellCount = 10_000;
+
     public ParseResult Parse(
         string code,
         int layerCount,
@@ -92,6 +98,88 @@ public sealed class ShortCodeParser
         }
 
         return ParseResult.Ok(document);
+    }
+
+    /// <summary>
+    /// 推断短代码对应的层数与象限数，供批量查看这类只读场景使用。
+    /// 不生成文档，只计算尺寸：
+    /// 层数等于冒号分隔的段数，象限数按最宽的一层计算，
+    /// 因此层与层之间宽度不一致的短代码也能推断出可显示的尺寸。
+    /// </summary>
+    public static bool TryInferDimensions(
+        string code,
+        out int layerCount,
+        out int partCount,
+        out string? error)
+    {
+        layerCount = 0;
+        partCount = 0;
+        error = null;
+
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            error = "短代码不能为空。";
+            return false;
+        }
+
+        string[] layerCodes =
+            code.Trim().Split(
+                ':',
+                StringSplitOptions.None);
+
+        int widestLayer = 0;
+
+        for (int index = 0;
+             index < layerCodes.Length;
+             index++)
+        {
+            int length =
+                layerCodes[index].Length;
+
+            if (length % 2 != 0)
+            {
+                error =
+                    $"第 {index + 1} 层代码长度必须是偶数。";
+
+                return false;
+            }
+
+            widestLayer =
+                Math.Max(
+                    widestLayer,
+                    length);
+        }
+
+        if (widestLayer == 0)
+        {
+            error = "短代码不能为空。";
+            return false;
+        }
+
+        layerCount = layerCodes.Length;
+        partCount = widestLayer / 2;
+
+        if (layerCount > MaxLayerCount)
+        {
+            error = $"层数不能超过 {MaxLayerCount}。";
+            return false;
+        }
+
+        if (partCount > MaxPartCount)
+        {
+            error = $"象限数不能超过 {MaxPartCount}。";
+            return false;
+        }
+
+        if ((long)layerCount * partCount > MaxCellCount)
+        {
+            error =
+                $"单元格总数不能超过 {MaxCellCount}。";
+
+            return false;
+        }
+
+        return true;
     }
 
     private static bool TryParseCell(

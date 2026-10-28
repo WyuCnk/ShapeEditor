@@ -212,6 +212,34 @@ window.shapeGrid = {
         ctx.restore();
     },
 
+    /*
+     * 画布刚插入 DOM 时可能还没有布局尺寸，
+     * 等到尺寸出现后再绘制，避免首帧空白。
+     */
+    renderWhenSized: function (canvas, state) {
+        let attempts = 0;
+
+        function attempt() {
+            if (!canvas.isConnected) {
+                return;
+            }
+
+            if (canvas.clientWidth > 0 &&
+                canvas.clientHeight > 0) {
+                window.shapeGrid.render(canvas, state);
+                return;
+            }
+
+            attempts++;
+
+            if (attempts < 20) {
+                window.requestAnimationFrame(attempt);
+            }
+        }
+
+        attempt();
+    },
+
     downloadPng: function (canvas, fileName) {
         canvas.toBlob(function (blob) {
             if (!blob) {

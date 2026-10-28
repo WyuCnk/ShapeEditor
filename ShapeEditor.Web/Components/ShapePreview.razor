@@ -1,0 +1,51 @@
+@inject IJSRuntime JS
+
+<canvas @ref="_canvas"
+        class="@GetCanvasClass()">
+</canvas>
+
+@code {
+    /// <summary>
+    /// 要显示的图形。为 null 时保留空白画布。
+    /// </summary>
+    [Parameter]
+    public ShapeDocument? Document { get; set; }
+
+    /// <summary>
+    /// 额外的 CSS 类，用来控制画布尺寸。
+    /// </summary>
+    [Parameter]
+    public string? CssClass { get; set; }
+
+    private ElementReference _canvas;
+
+    private ShapeDocument? _rendered;
+
+    protected override async Task OnAfterRenderAsync(
+        bool firstRender)
+    {
+        if (Document is null ||
+            ReferenceEquals(Document, _rendered))
+        {
+            return;
+        }
+
+        _rendered = Document;
+
+        /*
+         * 画布刚插入 DOM 时可能还没有尺寸，
+         * 交给 JS 端等布局完成后再绘制。
+         */
+        await JS.InvokeVoidAsync(
+            "shapeGrid.renderWhenSized",
+            _canvas,
+            ShapeCanvasState.Create(Document));
+    }
+
+    private string GetCanvasClass()
+    {
+        return string.IsNullOrWhiteSpace(CssClass)
+            ? "shape-preview"
+            : $"shape-preview {CssClass}";
+    }
+}

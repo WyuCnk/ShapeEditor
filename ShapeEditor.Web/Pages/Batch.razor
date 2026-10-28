@@ -1,0 +1,571 @@
+@page "/batch"
+
+@using ShapeEditor.Core.Models
+@using ShapeEditor.Core.Services
+
+<PageTitle>批量查看竖式图</PageTitle>
+
+<div class="batch-page">
+
+    <header class="editor-header">
+        <h1>批量查看竖式图</h1>
+
+        <div class="header-actions">
+            <a class="secondary-button link-button"
+               href="./">
+                返回编辑器
+            </a>
+        </div>
+    </header>
+
+    <section class="batch-panel">
+
+        <div class="batch-toolbar">
+            <label class="file-button secondary-button">
+                <span>导入 txt</span>
+
+                <InputFile OnChange="ImportTextFile"
+                           accept=".txt,text/plain" />
+            </label>
+
+            <button class="secondary-button"
+                    disabled="@(string.IsNullOrEmpty(RawText) && _entries.Count == 0)"
+                    @onclick="ClearAll">
+                清空
+            </button>
+
+            <span class="batch-hint">
+                一行一个短代码，空行会忽略；一次最多 @MaxEntryCount 行。
+            </span>
+        </div>
+
+        <textarea class="batch-input"
+                  spellcheck="false"
+                  @bind="RawText"
+                  @bind:event="oninput"
+                  placeholder="在这里粘贴短代码，每行一条，例如：&#10;CrP---Gu:ckckckck&#10;CuCuCuCu"></textarea>
+
+        <div class="batch-actions">
+            <button class="primary-button"
+                    @onclick="ParseEntries">
+                解析并查看
+            </button>
+
+            @if (!string.IsNullOrWhiteSpace(StatusMessage))
+            {
+                <span class="batch-status">@StatusMessage</span>
+            }
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="error-message">@ErrorMessage</div>
+        }
+
+    </section>
+
+    @if (_entries.Count == 0)
+    {
+        <section class="batch-empty">
+            解析成功后，这里会显示竖式图列表和预览。
+        </section>
+    }
+    else
+    {
+        <section class="batch-viewer">
+
+            <div class="batch-view-panel">
+
+                <div class="batch-view-header">
+                    <span class="batch-index">
+                        第 @(_currentIndex + 1) / @_entries.Count 条
+                    </span>
+
+                    @if (CurrentItem.Document is not null)
+                    {
+                        <span class="batch-dimension">
+                            @CurrentItem.LayerCount 层 × @CurrentItem.PartCount 象限
+                        </span>
+                    }
+                </div>
+
+                <div class="batch-view-actions">
+                    <button class="secondary-button"
+                            disabled="@(_currentIndex <= 0)"
+                            @onclick="ShowPrevious">
+                        上一条
+                    </button>
+
+                    <button class="secondary-button"
+                            disabled="@(_currentIndex >= _entries.Count - 1)"
+                            @onclick="ShowNext">
+                        下一条
+                    </button>
+                </div>
+
+                <div class="batch-canvas-box">
+                    @if (CurrentItem.Document is null)
+                    {
+                        <div class="batch-canvas-error">
+                            第 @(_currentIndex + 1) 条无法显示：@CurrentItem.Error
+                        </div>
+                    }
+                    else
+                    {
+                        <ShapePreview Document="CurrentItem.Document" />
+                    }
+                </div>
+
+                <div class="batch-code">@CurrentItem.Code</div>
+
+            </div>
+
+            <aside class="batch-list-panel">
+
+                <div class="batch-view-header">
+                    <span class="batch-index">列表</span>
+
+                    <span class="batch-dimension">
+                        第 @(_pageIndex + 1) / @PageCount 页
+                    </span>
+                </div>
+
+                <div class="batch-list">
+                    @for (int offset = 0;
+                          offset < _pageItems.Count;
+                          offset++)
+                    {
+                        int index = _pageStart + offset;
+
+                        BatchItemView item = _pageItems[offset];
+
+                        <button type="button"
+                                class="@GetThumbClass(index)"
+                                title="@item.Code"
+                                @onclick="() => ShowItem(index)">
+                            <span class="batch-thumb-index">
+                                @(index + 1)
+                            </span>
+
+                            @if (item.Document is null)
+                            {
+                                <span class="batch-thumb-error">
+                                    解析失败
+                                </span>
+                            }
+                            else
+                            {
+                                <ShapePreview Document="item.Document"
+                                              CssClass="batch-thumb-canvas" />
+                            }
+                        </button>
+                    }
+                </div>
+
+                <div class="batch-pager">
+                    <button class="secondary-button"
+                            disabled="@(_pageIndex <= 0)"
+                            @onclick="ShowPreviousPage">
+                        上一页
+                    </button>
+
+                    <span class="batch-pager-info">
+                        @(_pageIndex + 1) / @PageCount
+                    </span>
+
+                    <button class="secondary-button"
+                            disabled="@(_pageIndex >= PageCount - 1)"
+                            @onclick="ShowNextPage">
+                        下一页
+                    </button>
+                </div>
+
+            </aside>
+
+        </section>
+    }
+
+</div>
+
+@code {
+    private const int PageSize = 12;
+
+    private const int MaxEntryCount = 10_000;
+
+    private readonly ShortCodeParser Parser = new();
+
+    /// <summary>
+    /// 只保留短代码和解析结论，不保存文档，
+    /// 避免一次导入上万条时占用过多内存。
+    /// </summary>
+    private readonly List<BatchEntry> _entries = new();
+
+    /// <summary>
+    /// 当前页的条目，文档在这一层按需解析。
+    /// </summary>
+    private readonly List<BatchItemView> _pageItems = new();
+
+    private string RawText = "";
+
+    private string StatusMessage = "";
+
+    private string ErrorMessage = "";
+
+    private int _currentIndex;
+
+    private int _pageIndex;
+
+    private int _pageStart;
+
+    private int PageCount =>
+        Math.Max(
+            1,
+            (_entries.Count + PageSize - 1) / PageSize);
+
+    private BatchItemView CurrentItem =>
+        _pageItems[_currentIndex - _pageStart];
+
+    #region 导入与解析
+
+    private async Task ImportTextFile(
+        InputFileChangeEventArgs e)
+    {
+        ErrorMessage = "";
+        StatusMessage = "";
+
+        IBrowserFile? file = e.File;
+
+        if (file is null)
+        {
+            return;
+        }
+
+        const long maxFileSize = 5 * 1024 * 1024;
+
+        try
+        {
+            await using Stream stream =
+                file.OpenReadStream(maxFileSize);
+
+            using var reader =
+                new StreamReader(stream);
+
+            RawText =
+                await reader.ReadToEndAsync();
+        }
+        catch (Exception exception)
+        {
+            ErrorMessage =
+                $"读取文件失败：{exception.Message}";
+
+            return;
+        }
+
+        ParseEntries();
+    }
+
+    private void ParseEntries()
+    {
+        ErrorMessage = "";
+        StatusMessage = "";
+
+        if (string.IsNullOrWhiteSpace(RawText))
+        {
+            ErrorMessage =
+                "请先粘贴短代码，或者导入一个 txt 文件。";
+
+            return;
+        }
+
+        string[] lines =
+            RawText.Replace("\r\n", "\n")
+                    .Replace('\r', '\n')
+                    .Split('\n');
+
+        _entries.Clear();
+        _pageItems.Clear();
+
+        int failedCount = 0;
+
+        bool truncated = false;
+
+        foreach (string rawLine in lines)
+        {
+            string code = rawLine.Trim();
+
+            if (code.Length == 0)
+            {
+                continue;
+            }
+
+            if (_entries.Count >= MaxEntryCount)
+            {
+                truncated = true;
+                break;
+            }
+
+            BatchEntry entry = CreateEntry(code);
+
+            if (entry.Error is not null)
+            {
+                failedCount++;
+            }
+
+            _entries.Add(entry);
+        }
+
+        if (_entries.Count == 0)
+        {
+            ErrorMessage = "没有找到包含短代码的行。";
+            return;
+        }
+
+        StatusMessage = failedCount == 0
+            ? $"已加载 {_entries.Count} 条短代码。"
+            : $"已加载 {_entries.Count} 条短代码，" +
+              $"其中 {failedCount} 条解析失败。";
+
+        if (truncated)
+        {
+            ErrorMessage =
+                $"一次最多处理 {MaxEntryCount} 条，" +
+                "后面的行已忽略。";
+        }
+
+        _currentIndex = 0;
+        _pageIndex = 0;
+
+        BuildPage();
+    }
+
+    private BatchEntry CreateEntry(
+        string code)
+    {
+        if (!ShortCodeParser.TryInferDimensions(
+                code,
+                out int layerCount,
+                out int partCount,
+                out string? error))
+        {
+            return new BatchEntry
+            {
+                Code = code,
+                Error = error ?? "短代码无效。"
+            };
+        }
+
+        ParseResult result =
+            Parser.Parse(
+                code,
+                layerCount,
+                partCount);
+
+        if (!result.Success ||
+            result.Document is null)
+        {
+            return new BatchEntry
+            {
+                Code = code,
+                Error = result.Error ?? "短代码解析失败。"
+            };
+        }
+
+        return new BatchEntry
+        {
+            Code = code,
+            LayerCount = layerCount,
+            PartCount = partCount
+        };
+    }
+
+    private void ClearAll()
+    {
+        RawText = "";
+        StatusMessage = "";
+        ErrorMessage = "";
+
+        _entries.Clear();
+        _pageItems.Clear();
+
+        _currentIndex = 0;
+        _pageIndex = 0;
+        _pageStart = 0;
+    }
+
+    #endregion
+
+    #region 分页与条目缓存
+
+    private void BuildPage()
+    {
+        _pageItems.Clear();
+
+        _pageStart = _pageIndex * PageSize;
+
+        int end = Math.Min(
+            _pageStart + PageSize,
+            _entries.Count);
+
+        for (int index = _pageStart;
+             index < end;
+             index++)
+        {
+            _pageItems.Add(
+                CreateView(_entries[index]));
+        }
+    }
+
+    private BatchItemView CreateView(
+        BatchEntry entry)
+    {
+        if (entry.Error is not null)
+        {
+            return new BatchItemView
+            {
+                Code = entry.Code,
+                Error = entry.Error
+            };
+        }
+
+        ParseResult result =
+            Parser.Parse(
+                entry.Code,
+                entry.LayerCount,
+                entry.PartCount);
+
+        if (!result.Success ||
+            result.Document is null)
+        {
+            return new BatchItemView
+            {
+                Code = entry.Code,
+                Error = result.Error ?? "短代码解析失败。"
+            };
+        }
+
+        return new BatchItemView
+        {
+            Code = entry.Code,
+            Document = result.Document,
+            LayerCount = entry.LayerCount,
+            PartCount = entry.PartCount
+        };
+    }
+
+    #endregion
+
+    #region 导航
+
+    private void ShowPrevious()
+    {
+        if (_currentIndex <= 0)
+        {
+            return;
+        }
+
+        SetCurrent(_currentIndex - 1);
+    }
+
+    private void ShowNext()
+    {
+        if (_currentIndex >= _entries.Count - 1)
+        {
+            return;
+        }
+
+        SetCurrent(_currentIndex + 1);
+    }
+
+    private void ShowItem(
+        int index)
+    {
+        if (index < 0 ||
+            index >= _entries.Count)
+        {
+            return;
+        }
+
+        SetCurrent(index);
+    }
+
+    private void SetCurrent(
+        int index)
+    {
+        int page = index / PageSize;
+
+        if (page != _pageIndex)
+        {
+            _pageIndex = page;
+            BuildPage();
+        }
+
+        _currentIndex = index;
+    }
+
+    private void ShowPreviousPage()
+    {
+        if (_pageIndex <= 0)
+        {
+            return;
+        }
+
+        GoToPage(_pageIndex - 1);
+    }
+
+    private void ShowNextPage()
+    {
+        if (_pageIndex >= PageCount - 1)
+        {
+            return;
+        }
+
+        GoToPage(_pageIndex + 1);
+    }
+
+    private void GoToPage(
+        int page)
+    {
+        _pageIndex = Math.Clamp(
+            page,
+            0,
+            PageCount - 1);
+
+        BuildPage();
+
+        _currentIndex = _pageStart;
+    }
+
+    private string GetThumbClass(
+        int index)
+    {
+        return index == _currentIndex
+            ? "batch-thumb selected"
+            : "batch-thumb";
+    }
+
+    #endregion
+
+    private sealed class BatchEntry
+    {
+        public string Code { get; init; } = "";
+
+        public string? Error { get; init; }
+
+        public int LayerCount { get; init; }
+
+        public int PartCount { get; init; }
+    }
+
+    private sealed class BatchItemView
+    {
+        public string Code { get; init; } = "";
+
+        public string? Error { get; init; }
+
+        public ShapeDocument? Document { get; init; }
+
+        public int LayerCount { get; init; }
+
+        public int PartCount { get; init; }
+    }
+}
