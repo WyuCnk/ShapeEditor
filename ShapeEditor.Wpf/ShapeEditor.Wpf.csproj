@@ -19,6 +19,9 @@
 
 		<ApplicationManifest>app.manifest</ApplicationManifest>
 
+		<!-- 应用图标：与 Web/MAUI 同一套紫色圆角方块 -->
+		<ApplicationIcon>Resources\app.ico</ApplicationIcon>
+
 		<!--
 		  单文件自包含发布的参数放在 Properties\PublishProfiles\win-x64.pubxml，
 		  避免日常 build 也被强制成自包含（那会额外拉取运行时包）。
