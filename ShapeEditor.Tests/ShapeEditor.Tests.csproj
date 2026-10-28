@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<TargetFramework>net10.0-windows</TargetFramework>
+		<UseWPF>true</UseWPF>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<RootNamespace>ShapeEditor.Tests</RootNamespace>
+
+		<!--
+		  不依赖 xunit / MSTest：
+		  本机与 CI 都可能在无外网环境下还原包，
+		  这里用一个自带断言的小型测试运行器，dotnet run 即可执行。
+		-->
+		<IsPackable>false</IsPackable>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\ShapeEditor.Core\ShapeEditor.Core.csproj" />
+		<ProjectReference Include="..\ShapeEditor.Wpf\ShapeEditor.Wpf.csproj" />
+	</ItemGroup>
+
+</Project>

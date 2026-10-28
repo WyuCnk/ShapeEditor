@@ -13,12 +13,18 @@ public sealed class AutoSaveService
 {
     private readonly SaveFileService _files = new();
 
-    public AutoSaveService()
+    /// <summary>
+    /// 默认写到 %LOCALAPPDATA%\ShapeEditor；
+    /// 测试可以传入临时目录，避免碰到真实存档。
+    /// </summary>
+    public AutoSaveService(
+        string? directoryPath = null)
     {
-        string root = Path.Combine(
-            Environment.GetFolderPath(
-                Environment.SpecialFolder.LocalApplicationData),
-            "ShapeEditor");
+        string root = directoryPath ??
+            Path.Combine(
+                Environment.GetFolderPath(
+                    Environment.SpecialFolder.LocalApplicationData),
+                "ShapeEditor");
 
         DirectoryPath = root;
 

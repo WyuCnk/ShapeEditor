@@ -3,4 +3,5 @@
   <Project Path="ShapeEditor.Maui/ShapeEditor.Maui.csproj" />
   <Project Path="ShapeEditor.Web/ShapeEditor.Web.csproj" />
   <Project Path="ShapeEditor.Wpf/ShapeEditor.Wpf.csproj" />
+  <Project Path="ShapeEditor.Tests/ShapeEditor.Tests.csproj" />
 </Solution>
