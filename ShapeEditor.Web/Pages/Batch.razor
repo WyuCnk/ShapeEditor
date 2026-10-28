@@ -30,7 +30,7 @@
             </button>
 
             <span class="batch-hint">
-                一行一个短代码，空行会忽略；一次最多 @MaxEntryCount 行。
+                @BatchHint
             </span>
         </div>
 
@@ -38,9 +38,21 @@
                   spellcheck="false"
                   @bind="RawText"
                   @bind:event="oninput"
-                  placeholder="在这里粘贴短代码，每行一条，例如：&#10;CrP---Gu:ckckckck&#10;CuCuCuCu"></textarea>
+                  placeholder="@InputPlaceholder"></textarea>
 
         <div class="batch-actions">
+            <div class="code-format">
+                <button class="@GetFormatClass(ShortCodeFormat.Full)"
+                        @onclick="() => SetFormat(ShortCodeFormat.Full)">
+                    短代码
+                </button>
+
+                <button class="@GetFormatClass(ShortCodeFormat.Super)"
+                        @onclick="() => SetFormat(ShortCodeFormat.Super)">
+                    超短代码
+                </button>
+            </div>
+
             <button class="primary-button"
                     @onclick="ParseEntries">
                 解析并查看
@@ -206,11 +218,23 @@
 
     private string ErrorMessage = "";
 
+    private ShortCodeFormat _format = ShortCodeFormat.Full;
+
     private int _currentIndex;
 
     private int _pageIndex;
 
     private int _pageStart;
+
+    private string BatchHint =>
+        _format == ShortCodeFormat.Super
+            ? $"一行一个超短代码（只有形状），空行会忽略；一次最多 {MaxEntryCount} 行。"
+            : $"一行一个短代码，空行会忽略；一次最多 {MaxEntryCount} 行。";
+
+    private string InputPlaceholder =>
+        _format == ShortCodeFormat.Super
+            ? "在这里粘贴超短代码，每行一条，例如：\nCcCc\nP---\n-CC-"
+            : "在这里粘贴短代码，每行一条，例如：\nCrP---Gu:ckckckck\nCuCuCuCu";
 
     private int PageCount =>
         Math.Max(
@@ -221,6 +245,34 @@
         _pageItems[_currentIndex - _pageStart];
 
     #region 导入与解析
+
+    private void SetFormat(
+        ShortCodeFormat format)
+    {
+        if (_format == format)
+        {
+            return;
+        }
+
+        _format = format;
+
+        /*
+         * 已经载入内容时按新格式重新解析，
+         * 避免列表停留在另一种格式的结果上。
+         */
+        if (_entries.Count > 0)
+        {
+            ParseEntries();
+        }
+    }
+
+    private string GetFormatClass(
+        ShortCodeFormat format)
+    {
+        return _format == format
+            ? "format-button active"
+            : "format-button";
+    }
 
     private async Task ImportTextFile(
         InputFileChangeEventArgs e)
@@ -338,6 +390,7 @@
     {
         if (!ShortCodeParser.TryInferDimensions(
                 code,
+                _format,
                 out int layerCount,
                 out int partCount,
                 out string? error))
@@ -353,7 +406,8 @@
             Parser.Parse(
                 code,
                 layerCount,
-                partCount);
+                partCount,
+                _format);
 
         if (!result.Success ||
             result.Document is null)
@@ -426,7 +480,8 @@
             Parser.Parse(
                 entry.Code,
                 entry.LayerCount,
-                entry.PartCount);
+                entry.PartCount,
+                _format);
 
         if (!result.Success ||
             result.Document is null)

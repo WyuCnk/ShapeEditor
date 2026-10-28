@@ -9,6 +9,17 @@ public sealed class ShortCodeExporter
         ShapeDocument document,
         bool omitTopEmptyLayers = true)
     {
+        return Export(
+            document,
+            ShortCodeFormat.Full,
+            omitTopEmptyLayers);
+    }
+
+    public string Export(
+        ShapeDocument document,
+        ShortCodeFormat format,
+        bool omitTopEmptyLayers = true)
+    {
         int highestLayer =
             document.LayerCount - 1;
 
@@ -36,9 +47,13 @@ public sealed class ShortCodeExporter
                  part < document.PartCount;
                  part++)
             {
+                ShapeCell cell =
+                    document[layer, part];
+
                 builder.Append(
-                    document[layer, part]
-                        .ToShortCode());
+                    format == ShortCodeFormat.Super
+                        ? cell.ToSuperShortCode()
+                        : cell.ToShortCode());
             }
         }
 

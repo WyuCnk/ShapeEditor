@@ -10,10 +10,31 @@ public sealed class ShortCodeParser
 
     public const int MaxCellCount = 10_000;
 
+    /// <summary>
+    /// 超短代码没有颜色，晶体默认红色、普通形状默认未着色，
+    /// 与编辑器的默认画笔颜色保持一致。
+    /// </summary>
+    private const char DefaultCrystalColor = 'r';
+
+    private const char DefaultShapeColor = 'u';
+
     public ParseResult Parse(
         string code,
         int layerCount,
         int partCount)
+    {
+        return Parse(
+            code,
+            layerCount,
+            partCount,
+            ShortCodeFormat.Full);
+    }
+
+    public ParseResult Parse(
+        string code,
+        int layerCount,
+        int partCount,
+        ShortCodeFormat format)
     {
         if (string.IsNullOrWhiteSpace(code))
         {
@@ -40,7 +61,11 @@ public sealed class ShortCodeParser
                 $"当前只能容纳 {layerCount} 层。");
         }
 
-        int expectedLength = checked(partCount * 2);
+        int cellWidth =
+            GetCellWidth(format);
+
+        int expectedLength =
+            checked(partCount * cellWidth);
 
         var document = new ShapeDocument(
             layerCount,
@@ -63,27 +88,23 @@ public sealed class ShortCodeParser
                     $"第 {inputLayer + 1} 层象限数超过目标尺寸。");
             }
 
-            if (layerCode.Length % 2 != 0)
+            if (layerCode.Length % cellWidth != 0)
             {
                 return ParseResult.Fail(
                     $"第 {inputLayer + 1} 层代码长度必须是偶数。");
             }
 
-            int inputPartCount = layerCode.Length / 2;
+            int inputPartCount =
+                layerCode.Length / cellWidth;
 
             for (int part = 0;
                  part < inputPartCount;
                  part++)
             {
-                char typeCode =
-                    layerCode[part * 2];
-
-                char colorCode =
-                    layerCode[part * 2 + 1];
-
                 if (!TryParseCell(
-                        typeCode,
-                        colorCode,
+                        layerCode,
+                        part,
+                        format,
                         out ShapeCell? cell,
                         out string? error))
                 {
@@ -112,6 +133,21 @@ public sealed class ShortCodeParser
         out int partCount,
         out string? error)
     {
+        return TryInferDimensions(
+            code,
+            ShortCodeFormat.Full,
+            out layerCount,
+            out partCount,
+            out error);
+    }
+
+    public static bool TryInferDimensions(
+        string code,
+        ShortCodeFormat format,
+        out int layerCount,
+        out int partCount,
+        out string? error)
+    {
         layerCount = 0;
         partCount = 0;
         error = null;
@@ -127,6 +163,9 @@ public sealed class ShortCodeParser
                 ':',
                 StringSplitOptions.None);
 
+        int cellWidth =
+            GetCellWidth(format);
+
         int widestLayer = 0;
 
         for (int index = 0;
@@ -136,7 +175,8 @@ public sealed class ShortCodeParser
             int length =
                 layerCodes[index].Length;
 
-            if (length % 2 != 0)
+            if (format == ShortCodeFormat.Full &&
+                length % 2 != 0)
             {
                 error =
                     $"第 {index + 1} 层代码长度必须是偶数。";
@@ -157,7 +197,7 @@ public sealed class ShortCodeParser
         }
 
         layerCount = layerCodes.Length;
-        partCount = widestLayer / 2;
+        partCount = widestLayer / cellWidth;
 
         if (layerCount > MaxLayerCount)
         {
@@ -180,6 +220,82 @@ public sealed class ShortCodeParser
         }
 
         return true;
+    }
+
+    private static int GetCellWidth(
+        ShortCodeFormat format)
+    {
+        return format == ShortCodeFormat.Super
+            ? 1
+            : 2;
+    }
+
+    private static bool TryParseCell(
+        string layerCode,
+        int part,
+        ShortCodeFormat format,
+        out ShapeCell? cell,
+        out string? error)
+    {
+        if (format == ShortCodeFormat.Super)
+        {
+            return TryParseSuperCell(
+                layerCode[part],
+                out cell,
+                out error);
+        }
+
+        return TryParseCell(
+            layerCode[part * 2],
+            layerCode[part * 2 + 1],
+            out cell,
+            out error);
+    }
+
+    /// <summary>
+    /// 超短代码的一位：- 空位、P 顶针、c 晶体、A-Z（P 除外）普通形状。
+    /// </summary>
+    private static bool TryParseSuperCell(
+        char typeCode,
+        out ShapeCell? cell,
+        out string? error)
+    {
+        cell = null;
+        error = null;
+
+        if (typeCode == '-')
+        {
+            cell = ShapeCell.Empty();
+            return true;
+        }
+
+        if (typeCode == 'P')
+        {
+            cell = ShapeCell.Pin();
+            return true;
+        }
+
+        if (typeCode == 'c')
+        {
+            cell = ShapeCell.Crystal(
+                DefaultCrystalColor);
+
+            return true;
+        }
+
+        if (ShapeCell.IsNormalShapeCode(typeCode))
+        {
+            cell = ShapeCell.Shape(
+                typeCode,
+                DefaultShapeColor);
+
+            return true;
+        }
+
+        error =
+            $"无法识别形状类型 {typeCode}。";
+
+        return false;
     }
 
     private static bool TryParseCell(

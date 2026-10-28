@@ -141,6 +141,31 @@ button {
     font-size: 14px;
 }
 
+.code-format {
+    display: inline-flex;
+    flex: 0 0 auto;
+    gap: 2px;
+    padding: 3px;
+    background: #ececf3;
+    border-radius: 8px;
+}
+
+    .code-format .format-button {
+        min-height: 30px;
+        padding: 4px 10px;
+        background: transparent;
+        color: #555;
+        border-radius: 6px;
+        font-size: 13px;
+    }
+
+    .code-format .format-button.active {
+        background: #fff;
+        color: #4527a0;
+        font-weight: 600;
+        box-shadow: 0 1px 2px #0000001f;
+    }
+
 .code-panel > button,
 .code-panel > .file-button {
     flex: 0 0 auto;

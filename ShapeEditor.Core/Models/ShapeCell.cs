@@ -93,6 +93,21 @@ public sealed class ShapeCell
         };
     }
 
+    /// <summary>
+    /// 超短代码的一位：只描述形状，不描述颜色。
+    /// </summary>
+    public string ToSuperShortCode()
+    {
+        return Type switch
+        {
+            CellType.Empty => "-",
+            CellType.Pin => "P",
+            CellType.Crystal => "c",
+            CellType.Shape => GetExportShapeCode().ToString(),
+            _ => "-"
+        };
+    }
+
     public string ToDisplayText()
     {
         return Type switch

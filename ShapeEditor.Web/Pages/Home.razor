@@ -67,18 +67,30 @@
 
     <section class="code-panel">
 
+        <div class="code-format">
+            <button class="@GetFormatClass(ShortCodeFormat.Full)"
+                    @onclick="() => SetCodeFormat(ShortCodeFormat.Full)">
+                短代码
+            </button>
+
+            <button class="@GetFormatClass(ShortCodeFormat.Super)"
+                    @onclick="() => SetCodeFormat(ShortCodeFormat.Super)">
+                超短代码
+            </button>
+        </div>
+
         <input class="code-input"
-               placeholder="输入短代码"
+               placeholder="@CodePlaceholder"
                @bind="Code" />
 
         <button class="primary-button"
                 @onclick="ParseCode">
-            解析短代码
+            @ParseButtonText
         </button>
 
         <button class="secondary-button"
                 @onclick="ExportCode">
-            导出短代码
+            @ExportButtonText
         </button>
 
         <button class="secondary-button"
@@ -203,7 +215,15 @@
 
     <section class="help-panel">
         <p>短代码从最低层开始书写，竖式图从最高层显示到最低层。</p>
-        <p>每两个字符表示一个象限，冒号表示不同层。</p>
+
+        @if (_codeFormat == ShortCodeFormat.Super)
+        {
+            <p>超短代码只表示形状：C 图、c 晶、P 顶针、- 空位；每位一个象限，冒号分隔层。</p>
+        }
+        else
+        {
+            <p>每两个字符表示一个象限：第一位是形状类型，第二位是颜色。</p>
+        }
     </section>
 
 </div>
@@ -1158,6 +1178,47 @@
         _ = RequestCanvasRender();
     }
 
+    #region 短代码格式
+
+    private ShortCodeFormat _codeFormat = ShortCodeFormat.Full;
+
+    private string CodePlaceholder =>
+        _codeFormat == ShortCodeFormat.Super
+            ? "输入超短代码，例如 CcCc"
+            : "输入短代码，例如 CrP---Gu:ckckckck";
+
+    private string ParseButtonText =>
+        _codeFormat == ShortCodeFormat.Super
+            ? "解析超短代码"
+            : "解析短代码";
+
+    private string ExportButtonText =>
+        _codeFormat == ShortCodeFormat.Super
+            ? "导出超短代码"
+            : "导出短代码";
+
+    private void SetCodeFormat(
+        ShortCodeFormat format)
+    {
+        if (_codeFormat == format)
+        {
+            return;
+        }
+
+        _codeFormat = format;
+        ErrorMessage = "";
+    }
+
+    private string GetFormatClass(
+        ShortCodeFormat format)
+    {
+        return _codeFormat == format
+            ? "format-button active"
+            : "format-button";
+    }
+
+    #endregion
+
     private void ParseCode()
     {
         ErrorMessage = "";
@@ -1168,26 +1229,18 @@
             return;
         }
 
-        string[] layerCodes =
-            Code.Trim().Split(
-                ':',
-                StringSplitOptions.None);
-
-        if (layerCodes.Length == 0 ||
-            layerCodes[0].Length == 0 ||
-            layerCodes[0].Length % 2 != 0)
+        if (!ShortCodeParser.TryInferDimensions(
+                Code,
+                _codeFormat,
+                out int inferredLayers,
+                out int inferredParts,
+                out string? error))
         {
             ErrorMessage =
-                "短代码格式错误。";
+                error ?? "短代码格式错误。";
 
             return;
         }
-
-        int inferredLayers =
-            layerCodes.Length;
-
-        int inferredParts =
-            layerCodes[0].Length / 2;
 
         /*
          * 解析后的文档至少保持 4×4。
@@ -1206,7 +1259,8 @@
             Parser.Parse(
                 Code.Trim(),
                 LayerCount,
-                PartCount);
+                PartCount,
+                _codeFormat);
 
         if (!result.Success ||
             result.Document is null)
@@ -1229,6 +1283,7 @@
         Code =
             Exporter.Export(
                 Document,
+                _codeFormat,
                 omitTopEmptyLayers: true);
 
         ClearSelection();
@@ -1244,6 +1299,7 @@
         Code =
             Exporter.Export(
                 Document,
+                _codeFormat,
                 omitTopEmptyLayers: true);
     }
 
