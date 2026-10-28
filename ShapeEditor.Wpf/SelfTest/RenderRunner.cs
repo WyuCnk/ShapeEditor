@@ -1,5 +1,6 @@
 using System.IO;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using ShapeEditor.Core.Models;
@@ -57,6 +58,14 @@ public static class RenderRunner
 
             RenderMainWindow(
                 Path.Combine(outputDirectory, "ui-mainwindow.png"));
+
+            /*
+             * 快捷键说明窗口用非模态 Show() 打开，
+             * 这里验证「关闭」按钮确实能关掉窗口。
+             */
+            File.WriteAllText(
+                Path.Combine(outputDirectory, "help-window-close.txt"),
+                CheckHelpWindowCloses() ? "PASS" : "FAIL");
 
             File.WriteAllText(
                 Path.Combine(outputDirectory, "ok.txt"),
@@ -267,6 +276,35 @@ public static class RenderRunner
         }
 
         window.Close();
+    }
+
+    private static bool CheckHelpWindowCloses()
+    {
+        var window = new ShortcutHelpWindow
+        {
+            ShowInTaskbar = false,
+            WindowStyle = WindowStyle.None,
+            WindowStartupLocation = WindowStartupLocation.Manual,
+            Left = -20000,
+            Top = -20000,
+            Width = 400,
+            Height = 300,
+            Opacity = 0
+        };
+
+        window.Show();
+
+        window.CloseButton.RaiseEvent(
+            new RoutedEventArgs(Button.ClickEvent));
+
+        bool closed = !window.IsVisible;
+
+        if (window.IsVisible)
+        {
+            window.Close();
+        }
+
+        return closed;
     }
 
     private static void RenderElement(
