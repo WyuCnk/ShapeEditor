@@ -80,6 +80,12 @@ public partial class MainPage : ContentPage
 
     private bool _documentRestored;
 
+    /// <summary>
+    /// 当前短代码输入、解析与导出使用的格式。
+    /// </summary>
+    private ShortCodeFormat _codeFormat =
+        ShortCodeFormat.Full;
+
     private ShapeDocument _document =
         new(layerCount: 5, partCount: 4);
 
@@ -246,6 +252,7 @@ public partial class MainPage : ContentPage
 
         RefreshShapeGrid();
         RefreshModeButtons();
+        RefreshCodeFormatButtons();
         RefreshEditorPanel();
         UpdateUndoRedoState();
         UpdateStatus();
@@ -317,82 +324,20 @@ public partial class MainPage : ContentPage
     out int layers,
     out int parts)
     {
-        layers = 0;
-        parts = 0;
-
-        string[] layerCodes =
-            code.Split(
-                ':',
-                StringSplitOptions.None);
-
-        if (layerCodes.Length == 0)
+        /*
+         * 尺寸推断统一交给 Core，
+         * 这样短代码和超短代码用的是同一套规则，
+         * 层与层宽度不一致时按最宽的一层计算。
+         */
+        if (!ShortCodeParser.TryInferDimensions(
+                code,
+                _codeFormat,
+                out layers,
+                out parts,
+                out string? error))
         {
             CodeErrorLabel.Text =
-                "短代码没有包含有效层。";
-
-            return false;
-        }
-
-        layers = layerCodes.Length;
-
-        int firstLength =
-            layerCodes[0].Length;
-
-        if (firstLength == 0 ||
-            firstLength % 2 != 0)
-        {
-            CodeErrorLabel.Text =
-                "每层短代码长度必须是偶数。";
-
-            return false;
-        }
-
-        parts = firstLength / 2;
-
-        if (parts <= 0)
-        {
-            CodeErrorLabel.Text =
-                "每层至少需要包含一个象限。";
-
-            return false;
-        }
-
-        for (int index = 0;
-             index < layerCodes.Length;
-             index++)
-        {
-            if (layerCodes[index].Length != firstLength)
-            {
-                CodeErrorLabel.Text =
-                    $"第 {index + 1} 层的象限数与其他层不一致。";
-
-                return false;
-            }
-        }
-
-        if (layers > MaxLayerCount)
-        {
-            CodeErrorLabel.Text =
-                $"短代码层数不能超过 {MaxLayerCount}。";
-
-            return false;
-        }
-
-        if (parts > MaxPartCount)
-        {
-            CodeErrorLabel.Text =
-                $"短代码象限数不能超过 {MaxPartCount}。";
-
-            return false;
-        }
-
-        long cellCount =
-            (long)layers * parts;
-
-        if (cellCount > MaxCellCount)
-        {
-            CodeErrorLabel.Text =
-                $"短代码单元格总数不能超过 {MaxCellCount}。";
+                error ?? "短代码格式错误。";
 
             return false;
         }
@@ -1608,6 +1553,45 @@ public partial class MainPage : ContentPage
 
     #region 短代码解析和导出
 
+    private void CodeFormatButton_Clicked(
+        object? sender,
+        EventArgs e)
+    {
+        ShortCodeFormat format =
+            ReferenceEquals(
+                sender,
+                SuperCodeFormatButton)
+                ? ShortCodeFormat.Super
+                : ShortCodeFormat.Full;
+
+        if (_codeFormat == format)
+        {
+            return;
+        }
+
+        _codeFormat = format;
+
+        CodeErrorLabel.Text = "";
+
+        RefreshCodeFormatButtons();
+    }
+
+    private void RefreshCodeFormatButtons()
+    {
+        SetButtonSelected(
+            FullCodeFormatButton,
+            _codeFormat == ShortCodeFormat.Full);
+
+        SetButtonSelected(
+            SuperCodeFormatButton,
+            _codeFormat == ShortCodeFormat.Super);
+
+        CodeEntry.Placeholder =
+            _codeFormat == ShortCodeFormat.Super
+                ? "输入超短代码，例如 CcCc"
+                : "输入短代码";
+    }
+
     private async void ParseCodeButton_Clicked(
     object? sender,
     EventArgs e)
@@ -1644,7 +1628,8 @@ public partial class MainPage : ContentPage
             _parser.Parse(
                 code,
                 layers,
-                parts);
+                parts,
+                _codeFormat);
 
         if (!result.Success ||
             result.Document is null)
@@ -1671,8 +1656,14 @@ public partial class MainPage : ContentPage
          */
         SyncDimensionInputs();
 
+        /*
+         * 输入框显示与当前格式一致的规范化代码。
+         */
         CodeEntry.Text =
-            code;
+            _exporter.Export(
+                _document,
+                _codeFormat,
+                omitTopEmptyLayers: true);
 
         SaveCurrentDocument();
 
@@ -1696,6 +1687,7 @@ public partial class MainPage : ContentPage
         string code =
             _exporter.Export(
                 _document,
+                _codeFormat,
                 omitTopEmptyLayers: true);
 
         CodeEntry.Text = code;
@@ -1710,6 +1702,7 @@ public partial class MainPage : ContentPage
         string code =
             _exporter.Export(
                 _document,
+                _codeFormat,
                 omitTopEmptyLayers: true);
 
         CodeEntry.Text = code;
