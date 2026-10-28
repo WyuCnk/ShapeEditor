@@ -10,7 +10,7 @@
 		<AssemblyName>ShapeEditor.Wpf</AssemblyName>
 
 		<!-- 与 Web / MAUI 保持同一版本号 -->
-		<Version>1.1.0</Version>
+		<Version>1.2.0</Version>
 		<AssemblyTitle>Shapez 2 竖式图编辑器</AssemblyTitle>
 		<Product>ShapeEditor</Product>
 

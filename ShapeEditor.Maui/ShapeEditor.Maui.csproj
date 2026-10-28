@@ -35,8 +35,8 @@
 		<ApplicationId>com.wyucnk.shapeeditor</ApplicationId>
 
 		<!-- Versions -->
-		<ApplicationDisplayVersion>1.1</ApplicationDisplayVersion>
-		<ApplicationVersion>2</ApplicationVersion>
+		<ApplicationDisplayVersion>1.2</ApplicationDisplayVersion>
+		<ApplicationVersion>3</ApplicationVersion>
 
 		<!--
 		  Android/iOS 会把 ApplicationDisplayVersion 映射成 Version，Windows 不会。
