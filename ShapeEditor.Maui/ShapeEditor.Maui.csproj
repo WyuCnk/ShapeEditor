@@ -37,6 +37,13 @@
 		<ApplicationDisplayVersion>1.1</ApplicationDisplayVersion>
 		<ApplicationVersion>2</ApplicationVersion>
 
+		<!--
+		  Android/iOS 会把 ApplicationDisplayVersion 映射成 Version，Windows 不会。
+		  NuGet 要求同一项目在所有目标框架下只有一个包版本，
+		  否则 restore 会报 NU1105（资产文件缺少各目标框架的条目）。
+		-->
+		<Version>$(ApplicationDisplayVersion)</Version>
+
     <RuntimeIdentifiers
     Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
       android-arm64;android-arm
