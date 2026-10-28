@@ -158,33 +158,192 @@ button {
 
 
 /* =========================================================
-   APK 等资源链接
+   顶栏：品牌、导航与客户端下载
    ========================================================= */
 
-.resource-panel {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-bottom: 10px;
+.site-bar {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    background: #fff;
+    border-bottom: 1px solid #e3e3e3;
+    box-shadow: 0 1px 3px #0000000a;
 }
 
-.resource-button {
+.site-bar-inner {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    width: min(1440px, 100%);
+    margin: 0 auto;
+    padding: 8px 16px;
+}
+
+.site-brand {
     display: inline-flex;
     align-items: center;
-    justify-content: center;
-    min-height: 36px;
-    padding: 6px 14px;
-    background: #512bd4;
-    color: #fff;
+    gap: 8px;
+    color: #1c1c22;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+    text-decoration: none;
+}
+
+    .site-brand:hover {
+        color: #4527a0;
+    }
+
+.site-logo {
+    width: 26px;
+    height: 26px;
+    flex: 0 0 auto;
+}
+
+.site-nav {
+    display: flex;
+    gap: 4px;
+    margin-left: 8px;
+}
+
+.site-nav-link {
+    padding: 6px 12px;
     border-radius: 7px;
+    color: #555;
     font-size: 14px;
     text-decoration: none;
 }
 
-    .resource-button:hover {
-        background: #311b92;
-        color: #fff;
+    .site-nav-link:hover {
+        background: #f1f1f6;
+        color: #222;
     }
+
+    .site-nav-link.active {
+        background: #ece7fd;
+        color: #4527a0;
+        font-weight: 600;
+    }
+
+.download-menu {
+    position: relative;
+    margin-left: auto;
+}
+
+.download-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    border-radius: 8px;
+    background: #512bd4;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+}
+
+    .download-button::-webkit-details-marker {
+        display: none;
+    }
+
+    .download-button:hover {
+        background: #4523bb;
+    }
+
+.download-menu[open] .download-caret {
+    transform: rotate(180deg);
+}
+
+.download-icon,
+.download-caret {
+    width: 14px;
+    height: 14px;
+    flex: 0 0 auto;
+}
+
+.download-caret {
+    width: 10px;
+    height: 10px;
+    transition: transform 0.15s ease;
+}
+
+.download-list {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 40;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    width: 248px;
+    padding: 6px;
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 12px;
+    box-shadow: 0 16px 40px #1a103c26;
+}
+
+.download-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 9px 10px;
+    border-radius: 8px;
+    color: #222;
+    text-decoration: none;
+}
+
+    a.download-item:hover {
+        background: #f3f1fd;
+    }
+
+    .download-item.disabled {
+        opacity: 0.55;
+        cursor: default;
+    }
+
+.download-item-title {
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.download-item-meta {
+    color: #6b6b75;
+    font-size: 12px;
+}
+
+@media (max-width: 700px) {
+    .site-bar-inner {
+        gap: 8px;
+        padding: 8px;
+    }
+
+    .site-name {
+        display: none;
+    }
+
+    .site-nav {
+        margin-left: 0;
+    }
+
+    .site-nav-link {
+        padding: 6px 8px;
+        font-size: 13px;
+    }
+
+    .download-button {
+        gap: 6px;
+        padding: 7px 10px;
+        font-size: 13px;
+    }
+
+    .download-list {
+        width: 220px;
+    }
+}
 
 
 /* =========================================================
@@ -467,10 +626,6 @@ button {
         flex: 1 1 auto;
     }
 
-    .resource-button {
-        flex: 1 1 100%;
-    }
-
     .tool-button,
     .move-grid button {
         font-size: 13px;
@@ -585,27 +740,6 @@ button {
 /* =========================================================
    批量查看
    ========================================================= */
-
-.link-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 36px;
-    padding: 6px 14px;
-    border-radius: 7px;
-    font-size: 14px;
-    text-decoration: none;
-}
-
-.resource-button.secondary {
-    background: #ddd;
-    color: #222;
-}
-
-    .resource-button.secondary:hover {
-        background: #cfcfcf;
-        color: #222;
-    }
 
 .batch-page {
     width: min(1440px, 100%);

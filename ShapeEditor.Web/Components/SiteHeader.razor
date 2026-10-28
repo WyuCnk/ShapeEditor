@@ -1,0 +1,106 @@
+@* 全局顶栏：品牌、页面导航与客户端下载入口。 *@
+
+@{
+    string editorClass = Active == "editor"
+        ? "site-nav-link active"
+        : "site-nav-link";
+
+    string batchClass = Active == "batch"
+        ? "site-nav-link active"
+        : "site-nav-link";
+}
+
+<header class="site-bar">
+    <div class="site-bar-inner">
+
+        <a class="site-brand"
+           href="./">
+            <svg class="site-logo"
+                 viewBox="0 0 24 24"
+                 aria-hidden="true"
+                 focusable="false">
+                <rect x="1.5" y="1.5" width="9.5" height="9.5" rx="2.4" fill="#d64545" />
+                <rect x="13" y="1.5" width="9.5" height="9.5" rx="2.4" fill="#2f9e5f" />
+                <rect x="1.5" y="13" width="9.5" height="9.5" rx="2.4" fill="#2f6fd0" />
+                <rect x="13" y="13" width="9.5" height="9.5" rx="2.4" fill="#e0b31d" />
+            </svg>
+
+            <span class="site-name">ShapeEditor</span>
+        </a>
+
+        <nav class="site-nav" aria-label="页面导航">
+            <a class="@editorClass"
+               href="./">
+                编辑器
+            </a>
+
+            <a class="@batchClass"
+               href="batch">
+                批量查看
+            </a>
+        </nav>
+
+        <details class="download-menu">
+            <summary class="download-button">
+                <svg class="download-icon"
+                     viewBox="0 0 16 16"
+                     aria-hidden="true"
+                     focusable="false">
+                    <path d="M8 2v7.5M4.8 6.6 8 9.9l3.2-3.3M3 12.5h10"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.6"
+                          stroke-linecap="round"
+                          stroke-linejoin="round" />
+                </svg>
+
+                <span>下载客户端</span>
+
+                <svg class="download-caret"
+                     viewBox="0 0 10 6"
+                     aria-hidden="true"
+                     focusable="false">
+                    <path d="M1 1l4 4 4-4"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.6"
+                          stroke-linecap="round"
+                          stroke-linejoin="round" />
+                </svg>
+            </summary>
+
+            <div class="download-list">
+
+                <a class="download-item"
+                   href="https://github.com/WyuCnk/ShapeEditor/releases/latest/download/ShapeEditor-android-universal.apk">
+                    <span class="download-item-title">Android 版</span>
+                    <span class="download-item-meta">APK · 最新版本</span>
+                </a>
+
+                <span class="download-item disabled"
+                      aria-disabled="true">
+                    <span class="download-item-title">Windows 版</span>
+                    <span class="download-item-meta">EXE · 即将推出</span>
+                </span>
+
+                <a class="download-item"
+                   href="https://github.com/WyuCnk/ShapeEditor/releases"
+                   target="_blank"
+                   rel="noopener">
+                    <span class="download-item-title">所有版本</span>
+                    <span class="download-item-meta">GitHub Releases</span>
+                </a>
+
+            </div>
+        </details>
+
+    </div>
+</header>
+
+@code {
+    /// <summary>
+    /// 当前页面标识：editor 或 batch，用于高亮导航项。
+    /// </summary>
+    [Parameter]
+    public string Active { get; set; } = "";
+}
