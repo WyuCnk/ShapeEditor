@@ -17,58 +17,69 @@
 
 <div class="workspace-page">
 
-        <header class="editor-header">
+            <header class="workspace-title">
         <h1>制作路径</h1>
 
-        <div class="header-actions">
-            <button class="mini-button" @onclick="() => Store.CreateProject()">+ 新建工作区</button>
+        <div class="graph-hint">
+            提示：点击连线上的操作文字可以调整标签位置；双击工作区标签可以重命名。
+        </div>
+    </header>
+
+    <div class="workspace-body">
+
+        <div class="ws-tabrow">
+            <div class="ws-tabs">
+                @foreach (WorkspaceProject project in Store.Projects)
+                {
+                    bool active = project.Id == Store.ActiveProject?.Id;
+
+                    <div class="ws-tab @(active ? "active" : "")"
+                         @onclick="() => Store.ActivateProject(project.Id)"
+                         @ondblclick="() => BeginRename(project)">
+
+                        @if (_renamingId == project.Id)
+                        {
+                            <input @ref="_renameInput"
+                                   class="ws-tab-input"
+                                   value="@project.Name"
+                                   @oninput="e => _renameText = e.Value?.ToString() ?? string.Empty"
+                                   @onclick:stopPropagation="true"
+                                   @onblur="() => CommitRename(project)"
+                                   @onkeydown="e => OnRenameKey(e, project)" />
+                        }
+                        else
+                        {
+                            <span>@project.Name</span>
+                        }
+
+                        @if (active)
+                        {
+                            <button class="ws-tab-close"
+                                    title="删除该工作区"
+                                    @onclick:stopPropagation="true"
+                                    @onclick="() => DeleteProject(project)">
+                                ×
+                            </button>
+                        }
+                    </div>
+                }
+            </div>
+
+            <button class="ws-tab-add"
+                    title="新建工作区"
+                    @onclick="() => Store.CreateProject()">
+                +
+            </button>
+
+            <div class="ws-tabrow-spacer"></div>
 
             <label class="mini-button file-button">
                 导入工作区
                 <InputFile OnChange="ImportWorkspace" accept=".json,application/json" />
             </label>
         </div>
-    </header>
 
-    <div class="ws-tabbar">
-        <div class="ws-tabs">
-            @foreach (WorkspaceProject project in Store.Projects)
-            {
-                bool active = project.Id == Store.ActiveProject?.Id;
-
-                <div class="ws-tab @(active ? "active" : "")"
-                     @onclick="() => Store.ActivateProject(project.Id)"
-                     @ondblclick="() => BeginRename(project)">
-
-                    @if (_renamingId == project.Id)
-                    {
-                        <input @ref="_renameInput"
-                               class="ws-tab-input"
-                               value="@project.Name"
-                               @oninput="e => _renameText = e.Value?.ToString() ?? string.Empty"
-                               @onclick:stopPropagation="true"
-                               @onblur="() => CommitRename(project)"
-                               @onkeydown="e => OnRenameKey(e, project)" />
-                    }
-                    else
-                    {
-                        <span>@project.Name</span>
-                    }
-
-                    @if (active)
-                    {
-                        <button class="ws-tab-close"
-                                title="删除该工作区"
-                                @onclick:stopPropagation="true"
-                                @onclick="() => DeleteProject(project)">
-                            ×
-                        </button>
-                    }
-                </div>
-            }
-        </div>
-
-        <div class="ws-tab-tools">
+        <div class="ws-tools">
             <div class="code-format">
                 <button class="@ModeClass(CollapseMode.IncludeCycles)"
                         @onclick="() => SetMode(CollapseMode.IncludeCycles)">
@@ -105,13 +116,6 @@
                 清空画布
             </button>
         </div>
-    </div>
-
-    <div class="graph-hint">
-        提示：点击连线上的操作文字可以调整标签位置；双击工作区标签可以重命名。
-    </div>
-
-    <div class="workspace-body">
 
         <aside class="workspace-list">
             <div class="tool-title">素材</div>

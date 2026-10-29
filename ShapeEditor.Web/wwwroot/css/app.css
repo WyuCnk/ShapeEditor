@@ -1676,3 +1676,65 @@ button {
     border-bottom: none;
     align-items: flex-end;
 }
+.workspace-title {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 16px;
+    margin-bottom: 6px;
+}
+
+.graph-hint {
+    margin: 0;
+    font-size: 12px;
+    color: #6b6b76;
+}
+
+.workspace-body {
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr);
+    grid-template-areas:
+        "side tabs"
+        "side tools"
+        "side canvas";
+    gap: 10px 16px;
+    align-items: start;
+}
+
+.workspace-list { grid-area: side; max-height: 74vh; }
+
+.ws-tabrow {
+    grid-area: tabs;
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.ws-tabrow-spacer { flex: 1; }
+
+.ws-tools {
+    grid-area: tools;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.graph-canvas-wrapper {
+    grid-area: canvas;
+}
+
+.ws-tab-add {
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    margin-bottom: 3px;
+    border: 1px dashed #b9a9ee;
+    border-radius: 8px;
+    background: #ffffff;
+    color: #512bd4;
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+}
