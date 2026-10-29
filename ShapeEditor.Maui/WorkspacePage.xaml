@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage
+    x:Class="ShapeEditor.Maui.WorkspacePage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    Title="工作区">
+
+    <Grid Padding="10" RowSpacing="8">
+
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- 标签行 -->
+        <ScrollView Grid.Row="0" Orientation="Horizontal" HorizontalScrollBarVisibility="Never">
+            <HorizontalStackLayout x:Name="TabBar" Spacing="6" />
+        </ScrollView>
+
+        <!-- 工具行 -->
+        <HorizontalStackLayout Grid.Row="1" Spacing="6">
+            <Button x:Name="CycleModeButton"
+                    Text="含循环支撑"
+                    FontSize="12"
+                    HeightRequest="32"
+                    CornerRadius="8"
+                    Clicked="OnToggleMode" />
+
+            <Label Text="高度上限"
+                   FontSize="12"
+                   VerticalTextAlignment="Center" />
+
+            <Entry x:Name="MaxLayersEntry"
+                   WidthRequest="56"
+                   FontSize="12"
+                   Keyboard="Numeric"
+                   Completed="OnMaxLayersChanged" />
+
+            <Button Text="新建节点"
+                    FontSize="12"
+                    HeightRequest="32"
+                    CornerRadius="8"
+                    Clicked="OnCreateNode" />
+
+            <Button Text="清空"
+                    FontSize="12"
+                    HeightRequest="32"
+                    CornerRadius="8"
+                    Clicked="OnClear" />
+        </HorizontalStackLayout>
+
+        <Label x:Name="StatusLabel"
+               Grid.Row="2"
+               FontSize="11"
+               TextColor="#6B6B76" />
+
+        <!-- 主体 -->
+        <Grid Grid.Row="3">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="108" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <ScrollView Grid.Column="0" VerticalScrollBarVisibility="Never">
+                <VerticalStackLayout x:Name="MaterialList" Spacing="6" Padding="0,0,6,0" />
+            </ScrollView>
+
+            <ScrollView Grid.Column="1"
+                        Orientation="Both"
+                        HorizontalScrollBarVisibility="Always">
+                <AbsoluteLayout x:Name="Canvas"
+                                BackgroundColor="White" />
+            </ScrollView>
+        </Grid>
+    </Grid>
+</ContentPage>
