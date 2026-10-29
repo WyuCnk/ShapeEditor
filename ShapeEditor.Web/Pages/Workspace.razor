@@ -334,29 +334,17 @@
 
                 // 折线走在“父节点底部到子节点顶部”的空档里，
                 // 每条边占一条独立车道，标签压在车道上方
-                // 车道留在父子节点之间的空档里，并离父节点底部至少 12px，
-                // 避免标签压到父节点的按钮行
-                int lane = y1 + 40 + outIndex * 26;
-
-                if (lane > y2 - 30)
-                {
-                    lane = y2 - 30;
-                }
-
-                if (lane < y1 + 36)
-                {
-                    lane = y1 + 36;
-                }
-
+                // 直接斜线连到目标，箭头在终点按角度旋转
                 string path =
-                    $"M {x1} {y1} L {x1} {lane} L {x2} {lane} L {x2} {y2 - 4}";
+                    $"M {x1} {y1} L {x2} {y2 - 4}";
 
                 int labelX = Math.Abs(x1 - x2) < 8
                     ? x1 + 34
                     : (x1 + x2) / 2;
 
                 labelX = Math.Clamp(labelX, 70, CanvasWidth - 70);
-                int labelY = lane - 12;
+
+                int labelY = (y1 + y2) / 2 - 8;
 
                 views.Add(new EdgeView(path, edge.Label, labelX, labelY));
             }

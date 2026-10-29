@@ -1244,6 +1244,23 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
         return Math.round((index - (count - 1) / 2) * step);
     }
 
+    function arrowHeadAt(x1, y1, x2, y2, color) {
+        const angle = Math.atan2(y2 - y1, x2 - x1);
+        const size = 10;
+
+        ctx.save();
+        ctx.translate(x2, y2);
+        ctx.rotate(angle);
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(-size, -size * 0.55);
+        ctx.lineTo(-size, size * 0.55);
+        ctx.closePath();
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.restore();
+    }
+
     function arrowHead(x, y, dashed) {
         ctx.beginPath();
         ctx.moveTo(x - 5, y - 9);
@@ -1304,26 +1321,16 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
         const y1 = nodeTop(from) + NODE_H;
         const y2 = nodeTop(to);
 
-        let midY = y1 + 40 + outIndex[i] * 26;
-
-        if (midY > y2 - 30) {
-            midY = y2 - 30;
-        }
-
-        if (midY < y1 + 36) {
-            midY = y1 + 36;
-        }
-
         ctx.strokeStyle = "#512BD4";
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(x1, y1);
-        ctx.lineTo(x1, midY);
-        ctx.lineTo(x2, midY);
         ctx.lineTo(x2, y2 - 4);
         ctx.stroke();
 
-        arrowHead(x2, y2, false);
+        arrowHeadAt(x1, y1, x2, y2, "#512BD4");
+
+        const midY = (y1 + y2) / 2;
 
         // 标签加白底，避免压线
         ctx.font = '400 12px "Microsoft YaHei", sans-serif';
