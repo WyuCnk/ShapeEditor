@@ -60,7 +60,7 @@ public sealed class ShapePreviewDrawable : IDrawable
                         cell * 0.84f);
 
                     // 格子够大时用字母标注：C 晶体 / S 形状 / P 顶针
-                    if (cell >= 14)
+                    if (cell >= 11)
                     {
                         canvas.FontColor = Colors.White;
                         canvas.FontSize = (float)(cell * 0.52);

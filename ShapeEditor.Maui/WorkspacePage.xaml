@@ -11,6 +11,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -57,7 +58,33 @@
                TextColor="#6B6B76" />
 
         <!-- 主体 -->
-        <Grid Grid.Row="3">
+        <HorizontalStackLayout Grid.Row="3" Spacing="12" Margin="0,0,0,6">
+
+            <HorizontalStackLayout Spacing="4">
+                <BoxView WidthRequest="12" HeightRequest="12" CornerRadius="2"
+                         Color="#2B2B2B" VerticalOptions="Center" />
+                <Label Text="S 形状" FontSize="11" TextColor="#6B6B76" VerticalTextAlignment="Center" />
+            </HorizontalStackLayout>
+
+            <HorizontalStackLayout Spacing="4">
+                <BoxView WidthRequest="12" HeightRequest="12" CornerRadius="2"
+                         Color="#FF2D55" VerticalOptions="Center" />
+                <Label Text="C 晶体" FontSize="11" TextColor="#6B6B76" VerticalTextAlignment="Center" />
+            </HorizontalStackLayout>
+
+            <HorizontalStackLayout Spacing="4">
+                <BoxView WidthRequest="12" HeightRequest="12" CornerRadius="2"
+                         Color="#1A1A1A" VerticalOptions="Center" />
+                <Label Text="P 顶针" FontSize="11" TextColor="#6B6B76" VerticalTextAlignment="Center" />
+            </HorizontalStackLayout>
+
+            <HorizontalStackLayout Spacing="4">
+                <BoxView WidthRequest="12" HeightRequest="12" CornerRadius="2"
+                         Color="#4A90D9" VerticalOptions="Center" />
+                <Label Text="带颜色" FontSize="11" TextColor="#6B6B76" VerticalTextAlignment="Center" />
+            </HorizontalStackLayout>
+        </HorizontalStackLayout>
+<Grid Grid.Row="4">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="108" />
                 <ColumnDefinition Width="*" />

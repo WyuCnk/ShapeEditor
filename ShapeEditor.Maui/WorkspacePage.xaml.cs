@@ -147,7 +147,7 @@ public partial class WorkspacePage : ContentPage
         {
             var preview = new GraphicsView
             {
-                HeightRequest = 64,
+                HeightRequest = 72,
                 WidthRequest = 96,
                 InputTransparent = true,
                 Drawable = PreviewOf(item.Code, item.Format, item.Layers, item.Parts)
@@ -263,7 +263,7 @@ public partial class WorkspacePage : ContentPage
                 header,
                 new GraphicsView
                 {
-                    HeightRequest = 64,
+                    HeightRequest = 80,
                     InputTransparent = true,
                     Drawable = NodePreview(node)
                 }
