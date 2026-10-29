@@ -1508,3 +1508,21 @@ button {
 .graph-preview {
     height: 120px;
 }
+.graph-edge-label-html {
+    z-index: 4;
+    border-radius: 3px;
+}
+.ref-actions {
+    display: flex;
+    gap: 4px;
+}
+
+.ref-actions .mini-button {
+    flex: 1;
+    white-space: nowrap;
+}
+
+.ref-compute {
+    padding: 6px 10px;
+    font-size: 13px;
+}

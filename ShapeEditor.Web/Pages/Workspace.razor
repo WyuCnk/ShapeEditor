@@ -140,26 +140,26 @@
                         @if (node.Kind == "ref")
                         {
 
-                            @if (_selectedMaterial is not null && !node.HasShape)
-                            {
-                                <button class="secondary-button"
+                            <div class="ref-actions">
+                                <button class="mini-button"
+                                        disabled="@(_selectedMaterial is null || node.HasShape)"
                                         @onclick="() => ImportMaterialIntoRef(node)">
-                                    导入所选素材
+                                    导入素材
                                 </button>
-                            }
 
-                            <button class="secondary-button"
-                                    disabled="@(Store.SelectedNode is null || Store.SelectedNode.Id == node.BaseId || !Store.SelectedNode.HasShape)"
-                                    @onclick="() => ReferenceSelected(node)">
-                                引用所选节点
-                            </button>
+                                <button class="mini-button"
+                                        disabled="@(Store.SelectedNode is null || Store.SelectedNode.Id == node.BaseId || !Store.SelectedNode.HasShape)"
+                                        @onclick="() => ReferenceSelected(node)">
+                                    引用所选
+                                </button>
+                            </div>
 
                             @if (Store.FindNode(node.TargetId) is WorkspaceNode target)
                             {
                                 <div class="ws-meta">引用 #@target.Seq</div>
                             }
 
-                            <button class="primary-button"
+                            <button class="primary-button ref-compute"
                                     disabled="@(ResolveSlot(node) is null)"
                                     @onclick="() => ComputeStack(node)">
                                 计算
@@ -325,23 +325,23 @@
 
                 // 折线走在“父节点底部到子节点顶部”的空档里，
                 // 每条边占一条独立车道，标签压在车道上方
-                int lane = y1 + 14 + outIndex * 18;
+                int lane = y1 + 16 + outIndex * 20;
 
-                if (lane > y2 - 18)
+                if (lane > y2 - 20)
                 {
-                    lane = y2 - 18;
+                    lane = y2 - 20;
                 }
 
-                if (lane < y1 + 12)
+                if (lane < y1 + 14)
                 {
-                    lane = y1 + 12;
+                    lane = y1 + 14;
                 }
 
                 string path =
                     $"M {x1} {y1} L {x1} {lane} L {x2} {lane} L {x2} {y2 - 4}";
 
                 int labelX = Math.Clamp((x1 + x2) / 2, 70, CanvasWidth - 70);
-                int labelY = Math.Max(y1 + 10, lane - 10);
+                int labelY = Math.Max(y1 + 12, lane - 12);
 
                 views.Add(new EdgeView(path, edge.Label, labelX, labelY));
             }
@@ -440,6 +440,17 @@
 
     private void DoImport(WorkspaceNode node, WorkspaceItem material)
     {
+        /*
+         * 导入画布上的第一个图形时，把全局高度上限对齐到它的层数，
+         * 避免默认 100 层把结果撑得很高。
+         */
+        bool isFirstShape = !Store.Nodes.Any(entry => entry.HasShape);
+
+        if (isFirstShape)
+        {
+            Store.SetMaxLayers(material.Layers);
+        }
+
         if (node.Kind == "ref")
         {
             Store.SetSlotShape(
