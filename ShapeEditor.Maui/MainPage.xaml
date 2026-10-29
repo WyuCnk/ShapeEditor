@@ -1,4 +1,4 @@
-﻿<ContentPage
+<ContentPage
     x:Class="ShapeEditor.Maui.MainPage"
     xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
     xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
@@ -209,11 +209,16 @@
         <Grid
     Grid.Row="0"
     Padding="10,4,10,2"
-    ColumnDefinitions="*,Auto,Auto,Auto"
+    ColumnDefinitions="Auto,Auto,Auto,Auto,*"
     ColumnSpacing="4">
 
             <Button
-        x:Name="UndoButton"
+        Text="加入工作区"
+        Grid.Column="0"
+        Style="{StaticResource CompactButtonStyle}"
+        Clicked="AddToWorkspaceButton_Clicked"/>
+
+            <Button x:Name="UndoButton"
         Grid.Column="1"
         Text="撤销"
         Style="{StaticResource CompactButtonStyle}"

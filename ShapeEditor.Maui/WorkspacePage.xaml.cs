@@ -17,7 +17,7 @@ public partial class WorkspacePage : ContentPage
 
     private const double CellWidth = 150;
 
-    private const double CellHeight = 200;
+    private const double CellHeight = 260;
 
     private static readonly Color Accent = Color.FromArgb("#512BD4");
 
@@ -34,14 +34,13 @@ public partial class WorkspacePage : ContentPage
         InitializeComponent();
     }
 
-    private string StorePath =>
-        Path.Combine(FileSystem.AppDataDirectory, "workspaces.json");
+
 
     protected override void OnAppearing()
     {
         base.OnAppearing();
 
-        _store ??= new WorkspaceStore(StorePath);
+        _store ??= AppServices.Workspace;
 
         _store.Changed += Render;
 
@@ -212,7 +211,7 @@ public partial class WorkspacePage : ContentPage
 
             AbsoluteLayout.SetLayoutBounds(
                 card,
-                new Rect(12 + node.Col * CellWidth, 12 + node.Row * CellHeight, NodeWidth, NodeHeight));
+                new Rect(12 + node.Col * CellWidth, 12 + node.Row * CellHeight, NodeWidth, AbsoluteLayout.AutoSize));
 
             Canvas.Add(card);
         }

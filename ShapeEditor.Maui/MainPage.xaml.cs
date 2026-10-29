@@ -1,4 +1,4 @@
-﻿using Microsoft.Maui.Controls;
+using Microsoft.Maui.Controls;
 using Microsoft.Maui.Graphics;
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Services;
@@ -1375,6 +1375,30 @@ public partial class MainPage : ContentPage
 
     #region 撤销和重做按钮
 
+    private async void AddToWorkspaceButton_Clicked(
+        object? sender,
+        EventArgs e)
+    {
+        string code = _exporter.Export(_document, omitTopEmptyLayers: true);
+
+        Core.Workspaces.WorkspaceAddResult result = AppServices.Workspace.AddMaterial(
+            code,
+            ShortCodeFormat.Full,
+            _document.LayerCount,
+            _document.PartCount,
+            "editor");
+
+        await DisplayAlert(
+            "加入工作区",
+            result switch
+            {
+                Core.Workspaces.WorkspaceAddResult.Added => "已加入工作区素材库。",
+                Core.Workspaces.WorkspaceAddResult.Duplicate => "素材库里已经有相同的图形。",
+                Core.Workspaces.WorkspaceAddResult.Full => "素材库已满 200 条。",
+                _ => "当前图形无法加入素材库。"
+            },
+            "好");
+    }
     private void UndoButton_Clicked(
         object? sender,
         EventArgs e)
