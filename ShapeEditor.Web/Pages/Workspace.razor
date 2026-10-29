@@ -297,7 +297,18 @@
         {
             var views = new List<EdgeView>();
 
-            foreach (WorkspaceEdge edge in Store.Edges)
+            List<WorkspaceEdge> edges = Store.Edges.ToList();
+
+            // 每个节点的出入边序号，用来把主干错开，避免多条线重叠
+            var outgoing = edges
+                .GroupBy(edge => edge.FromId)
+                .ToDictionary(group => group.Key, group => group.ToList());
+
+            var incoming = edges
+                .GroupBy(edge => edge.ToId)
+                .ToDictionary(group => group.Key, group => group.ToList());
+
+            foreach (WorkspaceEdge edge in edges)
             {
                 WorkspaceNode? from = Store.FindNode(edge.FromId);
                 WorkspaceNode? to = Store.FindNode(edge.ToId);
@@ -307,23 +318,53 @@
                     continue;
                 }
 
-                int x1 = NodeCenterX(from);
+                int outIndex = outgoing[edge.FromId].IndexOf(edge);
+                int outCount = outgoing[edge.FromId].Count;
+
+                int inIndex = incoming[edge.ToId].IndexOf(edge);
+                int inCount = incoming[edge.ToId].Count;
+
+                int x1 = NodeCenterX(from) + Spread(outIndex, outCount, 30);
+                int x2 = NodeCenterX(to) + Spread(inIndex, inCount, 30);
+
                 int y1 = NodeBottom(from);
-                int x2 = NodeCenterX(to);
                 int y2 = NodeTop(to);
 
-                int midY = y1 + Math.Max(20, (y2 - y1) / 2);
+                int midY = y1 + 26 + outIndex * 16;
 
-                string path = $"M {x1} {y1} L {x1} {midY} L {x2} {midY} L {x2} {y2 - 4}";
+                if (midY > y2 - 30)
+                {
+                    midY = y2 - 30;
+                }
 
-                int labelX = Math.Clamp(x2, 70, CanvasWidth - 70);
-                int labelY = y2 - 36;
+                if (midY < y1 + 10)
+                {
+                    midY = y1 + 10;
+                }
+
+                string path =
+                    $"M {x1} {y1} L {x1} {midY} L {x2} {midY} L {x2} {y2 - 4}";
+
+                int labelX = Math.Clamp((x1 + x2) / 2, 70, CanvasWidth - 70);
+                int labelY = midY - 8;
 
                 views.Add(new EdgeView(path, edge.Label, labelX, labelY));
             }
 
             return views;
         }
+    }
+
+    private static int Spread(int index, int count, int step)
+    {
+        if (count <= 1)
+        {
+            return 0;
+        }
+
+        double centered = index - (count - 1) / 2.0;
+
+        return (int)Math.Round(centered * step);
     }
 
     private string NodeTitle(WorkspaceNode node) =>
