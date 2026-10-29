@@ -236,8 +236,8 @@
 
 @code {
     private const int CellWidth = 250;
-    private const int CellHeight = 330;
-    private const int NodeHeight = 250;
+    private const int CellHeight = 360;
+    private const int NodeHeight = 280;
     private const int NodeWidth = 210;
 
     private CollapseMode _mode = CollapseMode.IncludeCycles;
@@ -334,16 +334,18 @@
 
                 // 折线走在“父节点底部到子节点顶部”的空档里，
                 // 每条边占一条独立车道，标签压在车道上方
-                int lane = y1 + 16 + outIndex * 20;
+                // 车道留在父子节点之间的空档里，并离父节点底部至少 12px，
+                // 避免标签压到父节点的按钮行
+                int lane = y1 + 24 + outIndex * 20;
 
-                if (lane > y2 - 20)
+                if (lane > y2 - 22)
                 {
-                    lane = y2 - 20;
+                    lane = y2 - 22;
                 }
 
-                if (lane < y1 + 14)
+                if (lane < y1 + 22)
                 {
-                    lane = y1 + 14;
+                    lane = y1 + 22;
                 }
 
                 string path =
@@ -354,7 +356,7 @@
                     : (x1 + x2) / 2;
 
                 labelX = Math.Clamp(labelX, 70, CanvasWidth - 70);
-                int labelY = Math.Max(y1 + 12, lane - 12);
+                int labelY = Math.Max(y1 + 14, lane - 10);
 
                 views.Add(new EdgeView(path, edge.Label, labelX, labelY));
             }
