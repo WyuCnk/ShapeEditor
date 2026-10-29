@@ -6,9 +6,23 @@
     xmlns:local="clr-namespace:ShapeEditor.Maui"
     Title="ShapeEditor.Maui">
 
-    <ShellContent
-        Title="Home"
-        ContentTemplate="{DataTemplate local:MainPage}"
-        Route="MainPage" />
+    <TabBar>
+
+        <ShellContent
+            Title="编辑器"
+            ContentTemplate="{DataTemplate local:MainPage}"
+            Route="MainPage" />
+
+        <ShellContent
+            Title="批量查看"
+            ContentTemplate="{DataTemplate local:BatchPage}"
+            Route="BatchPage" />
+
+        <ShellContent
+            Title="工作区"
+            ContentTemplate="{DataTemplate local:WorkspacePage}"
+            Route="WorkspacePage" />
+
+    </TabBar>
 
 </Shell>
