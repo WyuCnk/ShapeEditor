@@ -74,7 +74,7 @@ public sealed class WorkspaceProject
 
     public List<WorkspaceEdge> Edges { get; set; } = new();
 
-    public int MaxLayers { get; set; } = 100;
+    public int MaxLayers { get; set; } = 4;
 
     public CollapseMode Mode { get; set; } = CollapseMode.IncludeCycles;
 

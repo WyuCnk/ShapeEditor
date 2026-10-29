@@ -21,7 +21,8 @@
         </ScrollView>
 
         <!-- 工具行 -->
-        <HorizontalStackLayout Grid.Row="1" Spacing="6">
+        <ScrollView Grid.Row="1" Orientation="Horizontal" HorizontalScrollBarVisibility="Never">
+        <HorizontalStackLayout Spacing="6">
             <Button x:Name="CycleModeButton"
                     Text="含循环支撑"
                     FontSize="12"
@@ -57,6 +58,7 @@
                     CornerRadius="8"
                     Clicked="OnClear" />
         </HorizontalStackLayout>
+        </ScrollView>
 
         <Label x:Name="StatusLabel"
                Grid.Row="2"

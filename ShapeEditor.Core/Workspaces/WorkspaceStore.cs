@@ -240,10 +240,7 @@ public sealed class WorkspaceStore
             return;
         }
 
-        int value = Math.Clamp(
-            layers,
-            ShapeRules.MinLayerCount,
-            ShapeRules.MaxLayerCount);
+        int value = Math.Clamp(layers, 4, ShapeRules.MaxLayerCount);
 
         if (value == _active.MaxLayers)
         {
@@ -1153,7 +1150,7 @@ public sealed class WorkspaceStore
                     : payload.Name,
                 Nodes = payload.Nodes,
                 Edges = payload.Edges ?? new List<WorkspaceEdge>(),
-                MaxLayers = Math.Clamp(payload.MaxLayers, 1, 100)
+                MaxLayers = Math.Clamp(payload.MaxLayers, 4, 100)
             };
 
             _projects.Add(project);

@@ -36,7 +36,7 @@ public sealed partial class WorkspaceStore
     /// <summary>
     /// 全局图形高度上限，所有运算结果都会被截断到这个层数。
     /// </summary>
-    public int MaxLayers { get; private set; } = 100;
+    public int MaxLayers { get; private set; } = 4;
 
     /// <summary>
     /// 当前工作区的下落规则。
@@ -60,7 +60,7 @@ public sealed partial class WorkspaceStore
 
     public void SetMaxLayers(int layers)
     {
-        int value = Math.Clamp(layers, ShapeRules.MinLayerCount, ShapeRules.MaxLayerCount);
+        int value = Math.Clamp(layers, 4, ShapeRules.MaxLayerCount);
 
         if (value == MaxLayers)
         {
