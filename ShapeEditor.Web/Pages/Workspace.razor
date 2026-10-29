@@ -5,6 +5,7 @@
 @using ShapeEditor.Core.Services
 @using ShapeEditor.Web.Models
 @using ShapeEditor.Web.Services
+@using Microsoft.AspNetCore.Components.Forms
 @implements IDisposable
 @inject WorkspaceStore Store
 @inject NavigationManager Nav
@@ -18,6 +19,31 @@
 
     <header class="editor-header">
         <h1>制作路径</h1>
+
+        <div class="workspace-switcher">
+            <select class="graph-select"
+                    value="@Store.ActiveProject?.Id"
+                    @onchange='e => Store.ActivateProject(e.Value?.ToString() ?? "")'>
+                @foreach (WorkspaceProject project in Store.Projects)
+                {
+                    <option value="@project.Id">@project.Name</option>
+                }
+            </select>
+
+            <input class="ws-name-input"
+                   value="@Store.ActiveName"
+                   title="重命名当前工作区"
+                   @onchange="e => RenameActive(e.Value?.ToString())" />
+
+            <button class="mini-button" @onclick="() => Store.CreateProject()">新建</button>
+            <button class="mini-button danger" @onclick="DeleteActive">删除</button>
+            <button class="mini-button" @onclick="ExportWorkspace">导出</button>
+
+            <label class="mini-button file-button">
+                导入
+                <InputFile OnChange="ImportWorkspace" accept=".json,application/json" />
+            </label>
+        </div>
 
         <div class="header-actions">
             <div class="code-format">
@@ -711,6 +737,59 @@
         _dialogTitle = "";
         _dialogMessage = "";
         _dialogConfirm = null;
+    }
+
+    private void RenameActive(string? name)
+    {
+        if (Store.ActiveProject is WorkspaceProject project)
+        {
+            Store.RenameProject(project.Id, name);
+        }
+    }
+
+    private void DeleteActive()
+    {
+        if (Store.ActiveProject is not WorkspaceProject project)
+        {
+            return;
+        }
+
+        ShowConfirm(
+            "删除工作区",
+            $"将删除工作区「{project.Name}」及其中的全部节点，素材列表不受影响。",
+            () => Store.DeleteProject(project.Id));
+    }
+
+    private async Task ExportWorkspace()
+    {
+        string json = Store.ExportActiveProject();
+
+        await JS.InvokeVoidAsync(
+            "shapeStorage.downloadText",
+            $"workspace-{DateTime.Now:yyyyMMdd-HHmmss}.json",
+            json,
+            "application/json;charset=utf-8");
+    }
+
+    private async Task ImportWorkspace(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            await using Stream stream = e.File.OpenReadStream(5 * 1024 * 1024);
+
+            using var reader = new StreamReader(stream);
+
+            string json = await reader.ReadToEndAsync();
+
+            if (!Store.ImportProject(json, out string? error))
+            {
+                ShowDialog("导入失败", error ?? "未知错误。");
+            }
+        }
+        catch (Exception exception)
+        {
+            ShowDialog("导入失败", exception.Message);
+        }
     }
 
     private void OnMaxLayersChanged(string? value)

@@ -20,9 +20,9 @@ public sealed partial class WorkspaceStore
 {
     private const string GraphKey = "shape-workspace-graph-v1";
 
-    private readonly List<WorkspaceNode> _nodes = new();
+    private List<WorkspaceNode> _nodes = new();
 
-    private readonly List<WorkspaceEdge> _edges = new();
+    private List<WorkspaceEdge> _edges = new();
 
     private readonly Dictionary<string, ShapeDocument> _nodeCache = new();
 
@@ -914,47 +914,99 @@ public sealed partial class WorkspaceStore
                 "shapeStorage.load",
                 GraphKey);
 
-            if (string.IsNullOrWhiteSpace(json))
+            if (!string.IsNullOrWhiteSpace(json))
             {
-                return;
+                var payload = JsonSerializer.Deserialize<GraphPayload>(
+                    json,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                if (payload?.Projects is { Count: > 0 })
+                {
+                    _projects.Clear();
+                    _projects.AddRange(payload.Projects);
+
+                    _active = _projects.FirstOrDefault(
+                                 project => project.Id == payload.ActiveId)
+                             ?? _projects[0];
+                }
+                else if (payload?.Nodes is { Count: > 0 } ||
+                         payload?.Edges is { Count: > 0 })
+                {
+                    // 旧版单画布数据：迁移成一个工作区
+                    var legacy = new WorkspaceProject
+                    {
+                        Name = "默认工作区",
+                        Nodes = payload.Nodes ?? new List<WorkspaceNode>(),
+                        Edges = payload.Edges ?? new List<WorkspaceEdge>(),
+                        MaxLayers = Math.Clamp(
+                            payload.MaxLayers <= 0 ? 100 : payload.MaxLayers,
+                            ShapeRules.MinLayerCount,
+                            ShapeRules.MaxLayerCount)
+                    };
+
+                    _projects.Clear();
+                    _projects.Add(legacy);
+
+                    _active = legacy;
+                }
             }
 
-            var payload = JsonSerializer.Deserialize<GraphPayload>(
-                json,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-
-            if (payload?.Nodes is null)
-            {
-                return;
-            }
-
-            _nodes.Clear();
-            _edges.Clear();
-            _nodeCache.Clear();
-
-            _nodes.AddRange(payload.Nodes);
-            _edges.AddRange(payload.Edges ?? new List<WorkspaceEdge>());
-
-            if (payload.MaxLayers > 0)
-            {
-                MaxLayers = Math.Clamp(
-                    payload.MaxLayers,
-                    ShapeRules.MinLayerCount,
-                    ShapeRules.MaxLayerCount);
-            }
+            EnsureProject();
         }
         catch
         {
-            /*
-             * 旧数据损坏时忽略。
-             */
+            EnsureProject();
         }
 
         Changed?.Invoke();
     }
 
+    private void EnsureProject()
+    {
+        if (_projects.Count == 0)
+        {
+            _projects.Add(new WorkspaceProject
+            {
+                Name = "工作区 1",
+                MaxLayers = 100
+            });
+        }
+
+        _active ??= _projects[0];
+
+        LoadFromActive();
+    }
+
+    private void LoadFromActive()
+    {
+        if (_active is null)
+        {
+            return;
+        }
+
+        _nodes = _active.Nodes;
+        _edges = _active.Edges;
+        MaxLayers = _active.MaxLayers;
+
+        _nodeCache.Clear();
+    }
+
+    private void SnapshotActive()
+    {
+        if (_active is null)
+        {
+            return;
+        }
+
+        _active.Nodes = _nodes;
+        _active.Edges = _edges;
+        _active.MaxLayers = MaxLayers;
+    }
+
     private void PersistGraph()
     {
+        SnapshotActive();
+
         _ = PersistGraphAsync();
     }
 
@@ -964,9 +1016,8 @@ public sealed partial class WorkspaceStore
         {
             string json = JsonSerializer.Serialize(new GraphPayload
             {
-                Nodes = _nodes.ToList(),
-                Edges = _edges.ToList(),
-                MaxLayers = MaxLayers
+                Projects = _projects.ToList(),
+                ActiveId = _active?.Id
             });
 
             await _js.InvokeVoidAsync(
@@ -981,6 +1032,10 @@ public sealed partial class WorkspaceStore
 
     private sealed class GraphPayload
     {
+        public List<WorkspaceProject>? Projects { get; set; }
+
+        public string? ActiveId { get; set; }
+
         public List<WorkspaceNode>? Nodes { get; set; }
 
         public List<WorkspaceEdge>? Edges { get; set; }

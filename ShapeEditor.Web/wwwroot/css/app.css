@@ -1531,3 +1531,21 @@ button {
     border: 1px solid #ece9f7;
     background: #ffffff;
 }
+.workspace-switcher {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.ws-name-input {
+    width: 150px;
+    padding: 6px 8px;
+    border: 1px solid #c5c5c5;
+    border-radius: 8px;
+    font-size: 13px;
+}
+
+.file-button input[type="file"] {
+    display: none;
+}
