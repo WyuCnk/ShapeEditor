@@ -1176,7 +1176,7 @@ window.shapeGrid.downloadComposition = async function (sections, fileName, opera
  */
 window.shapeGrid.downloadGraph = async function (payload, fileName) {
     const CELL_W = 250;
-    const CELL_H = 360;
+    const CELL_H = 400;
     const NODE_W = 210;
     const NODE_H = 280;
     const PAD = 24;
@@ -1304,14 +1304,14 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
         const y1 = nodeTop(from) + NODE_H;
         const y2 = nodeTop(to);
 
-        let midY = y1 + 24 + outIndex[i] * 20;
+        let midY = y1 + 40 + outIndex[i] * 26;
 
-        if (midY > y2 - 22) {
-            midY = y2 - 22;
+        if (midY > y2 - 30) {
+            midY = y2 - 30;
         }
 
-        if (midY < y1 + 22) {
-            midY = y1 + 22;
+        if (midY < y1 + 36) {
+            midY = y1 + 36;
         }
 
         ctx.strokeStyle = "#512BD4";
@@ -1334,7 +1334,7 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
         const textWidth = ctx.measureText(edge.label).width;
 
         ctx.fillStyle = "#FFFFFF";
-        ctx.fillRect(labelX - textWidth / 2 - 4, midY - 16, textWidth + 8, 16);
+        ctx.fillRect(labelX - textWidth / 2 - 6, midY - 18, textWidth + 12, 18);
 
         ctx.fillStyle = "#4527A0";
         ctx.fillText(edge.label, labelX, midY - 8);

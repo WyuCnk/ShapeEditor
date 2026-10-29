@@ -236,7 +236,7 @@
 
 @code {
     private const int CellWidth = 250;
-    private const int CellHeight = 360;
+    private const int CellHeight = 400;
     private const int NodeHeight = 280;
     private const int NodeWidth = 210;
 
@@ -336,16 +336,16 @@
                 // 每条边占一条独立车道，标签压在车道上方
                 // 车道留在父子节点之间的空档里，并离父节点底部至少 12px，
                 // 避免标签压到父节点的按钮行
-                int lane = y1 + 24 + outIndex * 20;
+                int lane = y1 + 40 + outIndex * 26;
 
-                if (lane > y2 - 22)
+                if (lane > y2 - 30)
                 {
-                    lane = y2 - 22;
+                    lane = y2 - 30;
                 }
 
-                if (lane < y1 + 22)
+                if (lane < y1 + 36)
                 {
-                    lane = y1 + 22;
+                    lane = y1 + 36;
                 }
 
                 string path =
@@ -356,7 +356,7 @@
                     : (x1 + x2) / 2;
 
                 labelX = Math.Clamp(labelX, 70, CanvasWidth - 70);
-                int labelY = Math.Max(y1 + 14, lane - 10);
+                int labelY = lane - 12;
 
                 views.Add(new EdgeView(path, edge.Label, labelX, labelY));
             }
