@@ -1738,3 +1738,38 @@ button {
     line-height: 1;
     cursor: pointer;
 }
+/* 素材卡片：缩略图放大，改为上下布局 */
+.workspace-body {
+    grid-template-columns: 260px minmax(0, 1fr);
+}
+
+.ws-card {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    padding: 10px;
+}
+
+.ws-thumb {
+    width: 100%;
+    height: 132px;
+    background: #ffffff;
+    border: 1px solid #f0eef7;
+}
+
+.ws-preview {
+    width: 100%;
+    height: 132px;
+}
+
+.ws-info {
+    width: 100%;
+}
+
+.ws-name-plain {
+    font-size: 13px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
