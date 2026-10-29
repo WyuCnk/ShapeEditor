@@ -8,6 +8,7 @@
 @implements IDisposable
 @inject WorkspaceStore Store
 @inject NavigationManager Nav
+@inject IJSRuntime JS
 
 <PageTitle>图形工作区</PageTitle>
 
@@ -219,6 +220,13 @@
                             </button>
                         </div>
                     </div>
+
+                    <button class="secondary-button"
+                            @onclick="ExportImage"
+                            title="把输入与切割产物拼成一张图导出"
+                            style="margin-top:10px;">
+                        导出图片
+                    </button>
                 </div>
             }
             else if (_result is not null)
@@ -232,10 +240,18 @@
                         @_result.LayerCount 层 × @_result.PartCount 象限
                     </p>
 
-                    <button class="primary-button"
-                            @onclick="() => AddResult(_result, _operation)">
-                        加入工作区
-                    </button>
+                    <div class="ws-result-actions">
+                        <button class="primary-button"
+                                @onclick="() => AddResult(_result, _operation)">
+                            加入工作区
+                        </button>
+
+                        <button class="secondary-button"
+                                @onclick="ExportImage"
+                                title="把输入与产物拼成一张图导出">
+                            导出图片
+                        </button>
+                    </div>
                 </div>
             }
 
@@ -315,7 +331,7 @@
     {
         Store.PendingLoad = item;
 
-        Nav.NavigateTo("/");
+        Nav.NavigateTo(Nav.BaseUri);
     }
 
     private void ClearAll()
@@ -516,8 +532,125 @@
         _result = result.Document;
     }
 
-    private void AddResult(ShapeDocument document, string operation)
+    /// <summary>
+    /// 把“输入 → 产物”拼成一张图导出，仅在已有产物时可用。
+    /// </summary>
+    private async Task ExportImage()
     {
+        var sections = new List<object>();
+
+        WorkspaceItem? first = FindSlot(_slotA);
+
+        ShapeDocument? firstDocument = first is null
+            ? null
+            : Store.GetDocument(first, out _);
+
+        if (_operation == "stack")
+        {
+            WorkspaceItem? second = FindSlot(_slotB);
+
+            ShapeDocument? secondDocument = second is null
+                ? null
+                : Store.GetDocument(second, out _);
+
+            if (firstDocument is not null)
+            {
+                sections.Add(new
+                {
+                    label = "下方图形",
+                    states = new[] { ShapeCanvasState.Create(firstDocument) },
+                    arrowBefore = false
+                });
+            }
+
+            if (secondDocument is not null)
+            {
+                sections.Add(new
+                {
+                    label = "上方图形",
+                    states = new[] { ShapeCanvasState.Create(secondDocument) },
+                    arrowBefore = false
+                });
+            }
+
+            if (_result is not null)
+            {
+                sections.Add(new
+                {
+                    label = "堆叠产物",
+                    states = new[] { ShapeCanvasState.Create(_result) },
+                    arrowBefore = true
+                });
+            }
+        }
+        else if (_operation == "cut")
+        {
+            if (firstDocument is not null)
+            {
+                sections.Add(new
+                {
+                    label = "原图形",
+                    states = new[] { ShapeCanvasState.Create(firstDocument) },
+                    arrowBefore = false
+                });
+            }
+
+            if (_west is not null && _east is not null)
+            {
+                sections.Add(new
+                {
+                    label = "切割产物（西 / 东）",
+                    states = new[]
+                    {
+                        ShapeCanvasState.Create(_west),
+                        ShapeCanvasState.Create(_east)
+                    },
+                    arrowBefore = true
+                });
+            }
+        }
+        else
+        {
+            if (firstDocument is not null)
+            {
+                sections.Add(new
+                {
+                    label = "原图形",
+                    states = new[] { ShapeCanvasState.Create(firstDocument) },
+                    arrowBefore = false
+                });
+            }
+
+            if (_result is not null)
+            {
+                sections.Add(new
+                {
+                    label = "产物",
+                    states = new[] { ShapeCanvasState.Create(_result) },
+                    arrowBefore = true
+                });
+            }
+        }
+
+        if (sections.Count < 2)
+        {
+            return;
+        }
+
+        try
+        {
+            await JS.InvokeVoidAsync(
+                "shapeGrid.downloadComposition",
+                sections,
+                $"shape-editor-{DateTime.Now:yyyyMMdd-HHmmss}.png");
+        }
+        catch (Exception exception)
+        {
+            _error = $"导出图片失败：{exception.Message}";
+        }
+    }
+
+    private void AddResult(ShapeDocument document, string operation)    {
         string code = Exporter.Export(document, omitTopEmptyLayers: true);
 
         WorkspaceAddResult result = Store.TryAdd(

@@ -853,3 +853,131 @@ function canvasToBlob(canvas) {
         }, "image/png");
     });
 }
+/*
+ * 合成导出：把若干竖式图按“输入 → 产物”的横向流程拼成一张图。
+ *
+ * sections: [{ label, states: [ShapeCanvasState], arrowBefore: bool }]
+ * 同一 section 内多张图纵向排列（切割的东西两半用得到）。
+ */
+window.shapeGrid.downloadComposition = async function (sections, fileName) {
+    const padding = 28;
+    const labelHeight = 30;
+    const gap = 14;
+    const arrowWidth = 56;
+    const maxSide = 16000;
+
+    const rendered = [];
+
+    for (let i = 0; i < sections.length; i++) {
+        const section = sections[i];
+        const images = [];
+
+        for (let j = 0; j < section.states.length; j++) {
+            images.push(createFullImageCanvas(section.states[j]));
+        }
+
+        rendered.push({
+            label: section.label || "",
+            images: images,
+            arrowBefore: !!section.arrowBefore
+        });
+    }
+
+    const widths = rendered.map(function (section) {
+        let width = 120;
+
+        for (let i = 0; i < section.images.length; i++) {
+            width = Math.max(width, section.images[i].width);
+        }
+
+        return width;
+    });
+
+    const heights = rendered.map(function (section) {
+        let height = 0;
+
+        for (let i = 0; i < section.images.length; i++) {
+            height += section.images[i].height;
+
+            if (i < section.images.length - 1) {
+                height += gap;
+            }
+        }
+
+        return height;
+    });
+
+    let totalWidth = padding * 2;
+
+    for (let i = 0; i < rendered.length; i++) {
+        totalWidth += widths[i];
+
+        if (i > 0 && rendered[i].arrowBefore) {
+            totalWidth += arrowWidth;
+        }
+    }
+
+    const maxHeight = Math.max.apply(null, heights);
+    const totalHeight = padding * 2 + labelHeight + maxHeight;
+
+    if (totalWidth > maxSide || totalHeight > maxSide) {
+        throw new Error(`图片尺寸过大：${totalWidth} × ${totalHeight}`);
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = totalWidth;
+    canvas.height = totalHeight;
+
+    const ctx = canvas.getContext("2d");
+
+    ctx.fillStyle = "#FFFFFF";
+    ctx.fillRect(0, 0, totalWidth, totalHeight);
+
+    ctx.font = '600 16px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+    ctx.fillStyle = "#212121";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+
+    let x = padding;
+
+    for (let i = 0; i < rendered.length; i++) {
+        const section = rendered[i];
+
+        if (i > 0 && section.arrowBefore) {
+            ctx.fillText(
+                "→",
+                x + arrowWidth / 2,
+                padding + labelHeight + maxHeight / 2 - 12);
+
+            x += arrowWidth;
+        }
+
+        ctx.fillText(section.label, x + widths[i] / 2, padding);
+
+        let y = padding + labelHeight;
+
+        for (let j = 0; j < section.images.length; j++) {
+            const image = section.images[j];
+
+            ctx.drawImage(image, x + (widths[i] - image.width) / 2, y);
+
+            y += image.height + gap;
+        }
+
+        x += widths[i];
+    }
+
+    const blob = await canvasToBlob(canvas);
+    const url = URL.createObjectURL(blob);
+
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    link.style.display = "none";
+
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    URL.revokeObjectURL(url);
+};
