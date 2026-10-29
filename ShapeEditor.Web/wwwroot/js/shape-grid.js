@@ -1433,3 +1433,252 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
 
     URL.revokeObjectURL(url);
 };
+/*
+ * 路径图导出（自适应版）：节点高度按图形比例收紧，
+ * 每行高度由该行最高节点决定，行间距固定。
+ * 覆盖前面的 downloadGraph 实现。
+ */
+window.shapeGrid.downloadGraph = async function (payload, fileName) {
+    const COL_W = 250;
+    const NODE_W = 210;
+    const PAD = 24;
+    const GAP_Y = 90;
+    const HEADER_H = 46;
+    const MAX_IMAGE_W = NODE_W - 24;
+    const MAX_IMAGE_H = 170;
+    const maxSide = 16000;
+
+    const nodes = payload.nodes || [];
+    const edges = payload.edges || [];
+
+    if (nodes.length === 0) {
+        return;
+    }
+
+    const byId = {};
+
+    let maxCol = 0;
+    let maxRow = 0;
+
+    for (let i = 0; i < nodes.length; i++) {
+        const node = nodes[i];
+
+        byId[node.id] = node;
+        maxCol = Math.max(maxCol, node.col);
+        maxRow = Math.max(maxRow, node.row);
+
+        if (node.state) {
+            const image = createFullImageCanvas(node.state);
+
+            const scale = Math.min(
+                MAX_IMAGE_W / image.width,
+                MAX_IMAGE_H / image.height,
+                1);
+
+            node._image = image;
+            node._imageW = Math.max(24, Math.round(image.width * scale));
+            node._imageH = Math.max(24, Math.round(image.height * scale));
+        }
+        else {
+            node._image = null;
+            node._imageW = 0;
+            node._imageH = 0;
+        }
+
+        node._height = node._image
+            ? HEADER_H + node._imageH + 14
+            : 120;
+    }
+
+    // 行高 = 该行最高节点
+    const rowHeights = [];
+
+    for (let row = 0; row <= maxRow; row++) {
+        let height = 120;
+
+        for (let i = 0; i < nodes.length; i++) {
+            if (nodes[i].row === row) {
+                height = Math.max(height, nodes[i]._height);
+            }
+        }
+
+        rowHeights[row] = height;
+    }
+
+    const rowY = [PAD];
+
+    for (let row = 1; row <= maxRow; row++) {
+        rowY[row] = rowY[row - 1] + rowHeights[row - 1] + GAP_Y;
+    }
+
+    const width = PAD * 2 + (maxCol + 1) * COL_W - (COL_W - NODE_W);
+    const height = rowY[maxRow] + rowHeights[maxRow] + PAD;
+
+    if (width > maxSide || height > maxSide) {
+        throw new Error("图片尺寸过大：" + width + " × " + height);
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+
+    const ctx = canvas.getContext("2d");
+
+    ctx.fillStyle = "#FFFFFF";
+    ctx.fillRect(0, 0, width, height);
+
+    function nodeLeft(node) { return PAD + node.col * COL_W; }
+    function nodeTop(node) { return rowY[node.row]; }
+
+    // 出入边序号，端点错开
+    const outIndex = {};
+    const outCount = {};
+    const inIndex = {};
+    const inCount = {};
+
+    for (let i = 0; i < edges.length; i++) {
+        const edge = edges[i];
+
+        outIndex[i] = (outCount[edge.from] || 0);
+        outCount[edge.from] = (outCount[edge.from] || 0) + 1;
+        inIndex[i] = (inCount[edge.to] || 0);
+        inCount[edge.to] = (inCount[edge.to] || 0) + 1;
+    }
+
+    function spread(index, count, step) {
+        if (count <= 1) {
+            return 0;
+        }
+
+        return Math.round((index - (count - 1) / 2) * step);
+    }
+
+    function arrowHeadAt(x1, y1, x2, y2) {
+        const angle = Math.atan2(y2 - y1, x2 - x1);
+        const size = 10;
+
+        ctx.save();
+        ctx.translate(x2, y2);
+        ctx.rotate(angle);
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(-size, -size * 0.55);
+        ctx.lineTo(-size, size * 0.55);
+        ctx.closePath();
+        ctx.fillStyle = "#512BD4";
+        ctx.fill();
+        ctx.restore();
+    }
+
+    // ---- 连线 ----
+    for (let i = 0; i < edges.length; i++) {
+        const edge = edges[i];
+        const from = byId[edge.from];
+        const to = byId[edge.to];
+
+        if (!from || !to) {
+            continue;
+        }
+
+        const x1 = nodeLeft(from) + NODE_W / 2 + spread(outIndex[i], outCount[edge.from], 30);
+        const x2 = nodeLeft(to) + NODE_W / 2 + spread(inIndex[i], inCount[edge.to], 30);
+        const y1 = nodeTop(from) + from._height;
+        const y2 = nodeTop(to);
+
+        ctx.strokeStyle = "#512BD4";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2 - 4);
+        ctx.stroke();
+
+        arrowHeadAt(x1, y1, x2, y2);
+
+        const t = Math.min(0.9, Math.max(0.1, edge.labelT === undefined ? 0.5 : edge.labelT));
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const length = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+
+        let nx = -dy / length;
+        let ny = dx / length;
+
+        if (ny > 0) {
+            nx = -nx;
+            ny = -ny;
+        }
+
+        if (Math.abs(dx) < 8) {
+            nx = 1;
+            ny = 0;
+        }
+
+        const offset = Math.abs(dx) < 8 ? 42 : 18;
+        const labelX = x1 + dx * t + nx * offset;
+        const labelY = y1 + dy * t + ny * offset;
+
+        ctx.font = '400 12px "Microsoft YaHei", sans-serif';
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+
+        const textWidth = ctx.measureText(edge.label).width;
+
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillRect(labelX - textWidth / 2 - 6, labelY - 9, textWidth + 12, 18);
+
+        ctx.fillStyle = "#4527A0";
+        ctx.fillText(edge.label, labelX, labelY);
+    }
+
+    // ---- 节点 ----
+    for (let i = 0; i < nodes.length; i++) {
+        const node = nodes[i];
+
+        const x = nodeLeft(node);
+        const y = nodeTop(node);
+        const h = node._height;
+
+        ctx.fillStyle = node.isResult ? "#FAF8FF" : "#FFFFFF";
+        ctx.strokeStyle = node.isResult ? "#512BD4" : (node.isRef ? "#B9A9EE" : "#D0D0D0");
+        ctx.lineWidth = node.isResult ? 2 : 1.2;
+
+        ctx.beginPath();
+        ctx.roundRect(x, y, NODE_W, h, 12);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.font = '600 12px "Microsoft YaHei", sans-serif';
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+        ctx.fillStyle = "#6B6B76";
+        ctx.fillText("#" + node.seq + " · " + node.label, x + 10, y + 10);
+
+        if (node.refText) {
+            ctx.font = '600 12px "Microsoft YaHei", sans-serif';
+            ctx.fillStyle = "#8B7BBF";
+            ctx.fillText(node.refText, x + 10, y + 26);
+        }
+
+        if (node._image) {
+            ctx.drawImage(
+                node._image,
+                x + (NODE_W - node._imageW) / 2,
+                y + HEADER_H,
+                node._imageW,
+                node._imageH);
+        }
+    }
+
+    const blob = await canvasToBlob(canvas);
+    const url = URL.createObjectURL(blob);
+
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    link.style.display = "none";
+
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    URL.revokeObjectURL(url);
+};
