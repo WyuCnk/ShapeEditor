@@ -93,7 +93,8 @@
                     <DataTemplate>
                         <Button Style="{StaticResource TabButton}"
                                 Content="{Binding Name}"
-                                Click="OnTabClick" />
+                                Click="OnTabClick"
+                                MouseDoubleClick="OnTabDoubleClick" />
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
@@ -156,8 +157,7 @@
 
             <Button Style="{StaticResource MiniButton}"
                     Content="导出图片"
-                    IsEnabled="False"
-                    ToolTip="路径图导出即将支持"
+                    Command="{Binding ExportImageCommand}"
                     Margin="0,0,4,0" />
 
             <Button Style="{StaticResource MiniButton}"

@@ -1,0 +1,45 @@
+<Window x:Class="ShapeEditor.Wpf.Views.InputDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="重命名工作区"
+        Width="360"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        FontFamily="Microsoft YaHei UI, Segoe UI">
+
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0"
+                   Text="工作区名称"
+                   FontSize="12"
+                   Foreground="#6B6B76"
+                   Margin="0,0,0,6" />
+
+        <DockPanel Grid.Row="1">
+            <Button DockPanel.Dock="Right"
+                    Content="确定"
+                    Width="70"
+                    Height="28"
+                    Margin="8,0,0,0"
+                    IsDefault="True"
+                    Click="OnConfirm" />
+
+            <Button DockPanel.Dock="Right"
+                    Content="取消"
+                    Width="70"
+                    Height="28"
+                    IsCancel="True"
+                    Click="OnCancel" />
+
+            <TextBox x:Name="NameBox"
+                     Height="28"
+                     VerticalContentAlignment="Center"
+                     Padding="6,0" />
+        </DockPanel>
+    </Grid>
+</Window>

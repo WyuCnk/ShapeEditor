@@ -32,6 +32,29 @@ public partial class WorkspaceView : UserControl
         }
     }
 
+    private void OnTabDoubleClick(
+        object sender,
+        MouseButtonEventArgs e)
+    {
+        if (DataOf<WorkspaceTabViewModel>(sender) is not WorkspaceTabViewModel tab ||
+            ViewModel is not WorkspaceViewModel viewModel)
+        {
+            return;
+        }
+
+        var dialog = new InputDialog("重命名工作区", tab.Name)
+        {
+            Owner = Window.GetWindow(this)
+        };
+
+        if (dialog.ShowDialog() == true && dialog.Value.Length > 0)
+        {
+            viewModel.RenameProject(tab, dialog.Value);
+        }
+
+        e.Handled = true;
+    }
+
     private void OnNewProject(
         object sender,
         RoutedEventArgs e)

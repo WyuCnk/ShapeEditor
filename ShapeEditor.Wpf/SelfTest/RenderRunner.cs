@@ -7,6 +7,8 @@ using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Services;
 using ShapeEditor.Wpf.Controls;
 using ShapeEditor.Wpf.Rendering;
+using ShapeEditor.Core.Workspaces;
+using ShapeEditor.Wpf.Services;
 using ShapeEditor.Wpf.ViewModels;
 using ShapeEditor.Wpf.Views;
 
@@ -61,6 +63,9 @@ public static class RenderRunner
 
             RenderWorkspaceView(
                 Path.Combine(outputDirectory, "ui-workspace.png"));
+
+            RenderWorkspaceExport(
+                Path.Combine(outputDirectory, "workspace-export.png"));
 
             /*
              * 快捷键说明窗口用非模态 Show() 打开，
@@ -255,6 +260,34 @@ public static class RenderRunner
         };
 
         RenderElement(view, 1280, 800, path);
+    }
+
+    private static void RenderWorkspaceExport(
+        string path)
+    {
+        string storePath = Path.Combine(
+            Path.GetTempPath(),
+            $"shape-workspace-export-{Guid.NewGuid():N}.json");
+
+        var store = new WorkspaceStore(storePath);
+
+        WorkspaceNode node = store.CreateNode();
+
+        store.ReplaceNodeShape(
+            node.Id,
+            "CuCu",
+            Core.Models.ShortCodeFormat.Full,
+            1,
+            4);
+
+        store.ApplyCollapse(node.Id);
+        store.ApplyPin(node.Id);
+
+        Rendering.WorkspaceImageExporter.Export(
+            path,
+            store.Nodes,
+            store.Edges,
+            store.GetEffectiveDocument);
     }
 
     private static void RenderMainWindow(

@@ -57,6 +57,7 @@ public sealed class WorkspaceViewModel : ObservableObject
 
         NewNodeCommand = new RelayCommand(() => _store.CreateNode());
         NewProjectCommand = new RelayCommand(NewProject);
+        ExportImageCommand = new RelayCommand(ExportImage);
         ExportProjectCommand = new RelayCommand(ExportProject);
         ImportProjectCommand = new RelayCommand(ImportProject);
         ClearNodesCommand = new RelayCommand(ClearNodes);
@@ -95,6 +96,8 @@ public sealed class WorkspaceViewModel : ObservableObject
     public System.Windows.Input.ICommand CycleLabelCommand { get; }
 
     public System.Windows.Input.ICommand NewNodeCommand { get; }
+
+    public System.Windows.Input.ICommand ExportImageCommand { get; }
 
     public System.Windows.Input.ICommand NewProjectCommand { get; }
 
@@ -581,6 +584,43 @@ public sealed class WorkspaceViewModel : ObservableObject
         if (answer == MessageBoxResult.OK)
         {
             _store.DeleteProject(tab.Id);
+        }
+    }
+
+    private void ExportImage()
+    {
+        if (_store.Nodes.Count == 0)
+        {
+            MessageBox.Show("画布是空的。", "导出图片", MessageBoxButton.OK, MessageBoxImage.Information);
+
+            return;
+        }
+
+        var dialog = new SaveFileDialog
+        {
+            Title = "导出路径图",
+            Filter = "PNG 图片 (*.png)|*.png",
+            FileName = $"shape-path-{DateTime.Now:yyyyMMdd-HHmmss}.png"
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        try
+        {
+            WorkspaceImageExporter.Export(
+                dialog.FileName,
+                _store.Nodes,
+                _store.Edges,
+                _store.GetEffectiveDocument);
+
+            MessageBox.Show($"已导出：{dialog.FileName}", "导出图片", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(exception.Message, "导出失败", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 
