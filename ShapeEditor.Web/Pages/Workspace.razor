@@ -107,11 +107,12 @@
 
                 @foreach (WorkspaceNode node in Store.Nodes)
                 {
-                    <div class="graph-node @(node.IsResult ? "result" : "") @(node.Kind == "ref" ? "ref" : "")"
-                         style="@NodeStyle(node)">
+                    <div class="graph-node @(node.IsResult ? "result" : "") @(node.Kind == "ref" ? "ref" : "") @(Store.SelectedNode?.Id == node.Id ? "selected" : "")"
+                         style="@NodeStyle(node)"
+                         @onclick="() => Store.SelectNode(node)">
 
                         <div class="graph-node-head">
-                            <span class="graph-node-title">@NodeTitle(node)</span>
+                            <span class="graph-node-title">#@node.Seq · @NodeTitle(node)</span>
 
                             <button class="node-delete"
                                     title="删除该节点及其下游"
@@ -152,6 +153,17 @@
                                         @onclick="() => ImportMaterialIntoRef(node)">
                                     导入所选素材
                                 </button>
+                            }
+
+                            <button class="secondary-button"
+                                    disabled="@(Store.SelectedNode is null || Store.SelectedNode.Id == node.BaseId || !Store.SelectedNode.HasShape)"
+                                    @onclick="() => ReferenceSelected(node)">
+                                引用所选节点
+                            </button>
+
+                            @if (Store.FindNode(node.TargetId) is WorkspaceNode target)
+                            {
+                                <div class="ws-meta">引用 #@target.Seq</div>
                             }
 
                             <button class="primary-button"
@@ -222,7 +234,8 @@
 
 @code {
     private const int CellWidth = 250;
-    private const int CellHeight = 310;
+    private const int CellHeight = 430;
+    private const int NodeHeight = 340;
     private const int NodeWidth = 210;
 
     private CollapseMode _mode = CollapseMode.IncludeCycles;
@@ -271,7 +284,7 @@
         20 + node.Col * CellWidth + NodeWidth / 2;
 
     private static int NodeBottom(WorkspaceNode node) =>
-        20 + node.Row * CellHeight + 250;
+        20 + node.Row * CellHeight + NodeHeight;
 
     private static int NodeTop(WorkspaceNode node) =>
         20 + node.Row * CellHeight;
@@ -303,7 +316,10 @@
 
                 string path = $"M {x1} {y1} L {x1} {midY} L {x2} {midY} L {x2} {y2 - 4}";
 
-                views.Add(new EdgeView(path, edge.Label, (x1 + x2) / 2, midY - 6));
+                int labelX = Math.Clamp(x2, 70, CanvasWidth - 70);
+                int labelY = y2 - 36;
+
+                views.Add(new EdgeView(path, edge.Label, labelX, labelY));
             }
 
             return views;
@@ -388,12 +404,38 @@
 
     private void DoImport(WorkspaceNode node, WorkspaceItem material)
     {
+        if (node.Kind == "ref")
+        {
+            Store.SetSlotShape(
+                node.Id,
+                material.Code,
+                material.Format,
+                material.Layers,
+                material.Parts);
+
+            return;
+        }
+
         Store.ReplaceNodeShape(
             node.Id,
             material.Code,
             material.Format,
             material.Layers,
             material.Parts);
+    }
+
+    private void ReferenceSelected(WorkspaceNode slot)
+    {
+        WorkspaceNode? target = Store.SelectedNode;
+
+        if (target is null || !target.HasShape || target.Id == slot.BaseId)
+        {
+            ShowDialog("提示", "请先在画布上点选一个已有图形的节点。");
+
+            return;
+        }
+
+        Store.SetReferenceTarget(slot.Id, target.Id);
     }
 
     private void OnSelectTarget(WorkspaceNode slot, string? targetId)

@@ -47,6 +47,9 @@ public sealed class WorkspaceNode
     /// </summary>
     public bool TopInput { get; set; }
 
+    /// <summary>画布上的唯一编号，用于引用与显示。</summary>
+    public int Seq { get; set; }
+
     public int Row { get; set; }
 
     public int Col { get; set; }

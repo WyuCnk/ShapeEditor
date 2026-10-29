@@ -32,7 +32,14 @@ public sealed partial class WorkspaceStore
 
     public IReadOnlyList<WorkspaceEdge> Edges => _edges;
 
-    public WorkspaceNode? SelectedNode { get; set; }
+    public WorkspaceNode? SelectedNode { get; private set; }
+
+    public void SelectNode(WorkspaceNode node)
+    {
+        SelectedNode = node;
+
+        Changed?.Invoke();
+    }
 
     #region 查询
 
@@ -121,6 +128,7 @@ public sealed partial class WorkspaceStore
         {
             Row = row,
             Col = col,
+            Seq = NextSeq(),
             Label = "素材"
         };
 
@@ -360,6 +368,7 @@ public sealed partial class WorkspaceStore
             TopInput = currentIsTop,
             Row = row,
             Col = col,
+            Seq = NextSeq(),
             Label = currentIsTop ? "下方输入" : "上方输入"
         };
 
@@ -592,6 +601,7 @@ public sealed partial class WorkspaceStore
         {
             Row = row,
             Col = col,
+            Seq = NextSeq(),
             IsResult = true,
             OpKey = opKey,
             Label = label,
@@ -623,6 +633,40 @@ public sealed partial class WorkspaceStore
             ToId = toId,
             Label = label
         });
+    }
+
+    /// <summary>
+    /// 给引用槽位写入素材图形，但保持它是 ref 节点（这样计算按钮不会消失）。
+    /// </summary>
+    public void SetSlotShape(
+        string slotId,
+        string code,
+        ShortCodeFormat format,
+        int layers,
+        int parts)
+    {
+        WorkspaceNode? slot = FindNode(slotId);
+
+        if (slot is null || slot.Kind != "ref")
+        {
+            return;
+        }
+
+        slot.Code = code;
+        slot.Format = format;
+        slot.Layers = layers;
+        slot.Parts = parts;
+        slot.TargetId = null;
+
+        _nodeCache.Remove(slotId);
+
+        PersistGraph();
+        Changed?.Invoke();
+    }
+
+    private int NextSeq()
+    {
+        return _nodes.Count == 0 ? 1 : _nodes.Max(node => node.Seq) + 1;
     }
 
     private (int Row, int Col) FindFreeCell(int row, int col)
