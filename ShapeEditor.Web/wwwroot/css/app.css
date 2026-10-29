@@ -1654,3 +1654,25 @@ button {
     font-size: 12px;
     color: #6b6b76;
 }
+.ws-tabbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 12px;
+    flex-wrap: wrap;
+    border-bottom: 1px solid #e0e0e0;
+    margin-bottom: 4px;
+}
+
+.ws-tab-tools {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding-bottom: 6px;
+}
+
+.ws-tabs {
+    border-bottom: none;
+    align-items: flex-end;
+}
