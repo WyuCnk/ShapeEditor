@@ -16,9 +16,14 @@
 
 <SiteHeader Active="editor" />
 
-@if (!string.IsNullOrWhiteSpace(_toast))
+@if (!string.IsNullOrWhiteSpace(_dialogMessage))
 {
-    <div class="toast">@_toast</div>
+    <div class="dialog-mask">
+        <div class="dialog-box">
+            <p>@_dialogMessage</p>
+            <button class="primary-button" @onclick="CloseDialog">知道了</button>
+        </div>
+    </div>
 }
 
 <div class="editor-page">
@@ -389,6 +394,18 @@
     private const string BrowserSaveKey = "shape-editor-current-document";
 
     private string _toast = "";
+
+    private string _dialogMessage = "";
+
+    private void ShowDialog(string message)
+    {
+        _dialogMessage = message;
+    }
+
+    private void CloseDialog()
+    {
+        _dialogMessage = "";
+    }
 
     private CancellationTokenSource? _toastSource;
 
@@ -1064,7 +1081,7 @@
             Document.PartCount,
             "editor");
 
-        ShowToast(result switch
+        ShowDialog(result switch
         {
             WorkspaceAddResult.Added => "已加入工作区。",
             WorkspaceAddResult.Duplicate => "工作区里已经有相同的图形。",

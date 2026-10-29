@@ -259,10 +259,15 @@
 
     </div>
 
-    @if (!string.IsNullOrWhiteSpace(_toast))
-    {
-        <div class="toast">@_toast</div>
-    }
+    @if (!string.IsNullOrWhiteSpace(_dialogMessage))
+{
+    <div class="dialog-mask">
+        <div class="dialog-box">
+            <p>@_dialogMessage</p>
+            <button class="primary-button" @onclick="CloseDialog">知道了</button>
+        </div>
+    </div>
+}
 
 </div>
 
@@ -290,6 +295,18 @@
     private string _error = "";
 
     private string _toast = "";
+
+    private string _dialogMessage = "";
+
+    private void ShowDialog(string message)
+    {
+        _dialogMessage = message;
+    }
+
+    private void CloseDialog()
+    {
+        _dialogMessage = "";
+    }
 
     private CancellationTokenSource? _toastSource;
 
@@ -351,7 +368,7 @@
 
         if (_selectedId is null)
         {
-            ShowToast("请先在左侧选择一个图形。");
+            ShowDialog("请先在左侧选择一个图形。");
 
             return;
         }
@@ -662,7 +679,7 @@
             "operation",
             operation);
 
-        ShowToast(result switch
+        ShowDialog(result switch
         {
             WorkspaceAddResult.Added => "已加入工作区。",
             WorkspaceAddResult.Duplicate => "工作区里已有相同图形。",
