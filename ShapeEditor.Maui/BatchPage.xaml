@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage
+    x:Class="ShapeEditor.Maui.BatchPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    Title="批量查看">
+
+    <Grid Padding="12" RowSpacing="8">
+
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0"
+                Stroke="#E6E2F2"
+                StrokeThickness="1"
+                Padding="8">
+            <Editor x:Name="CodeEditor"
+                    HeightRequest="120"
+                    FontSize="13"
+                    Placeholder="每行一个短代码，例如：----:CrCr:----" />
+        </Border>
+
+        <HorizontalStackLayout Grid.Row="1" Spacing="8">
+            <Button Text="解析"
+                    Clicked="OnParse"
+                    BackgroundColor="#512BD4"
+                    TextColor="White"
+                    CornerRadius="8"
+                    HeightRequest="36" />
+
+            <Button Text="清空"
+                    Clicked="OnClear"
+                    BackgroundColor="#EFEAF9"
+                    TextColor="#512BD4"
+                    CornerRadius="8"
+                    HeightRequest="36" />
+
+            <Label x:Name="StatusLabel"
+                   VerticalTextAlignment="Center"
+                   FontSize="12"
+                   TextColor="#6B6B76" />
+        </HorizontalStackLayout>
+
+        <CollectionView x:Name="List"
+                        Grid.Row="2">
+            <CollectionView.ItemTemplate>
+                <DataTemplate>
+                    <Border Stroke="#E6E2F2"
+                            StrokeThickness="1"
+                            Padding="8"
+                            Margin="0,0,0,8">
+
+                        <Grid ColumnSpacing="10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="96" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <GraphicsView Grid.Column="0"
+                                          HeightRequest="96"
+                                          WidthRequest="96"
+                                          Drawable="{Binding Preview}" />
+
+                            <VerticalStackLayout Grid.Column="1" Spacing="4">
+                                <Label Text="{Binding Code}"
+                                       FontSize="13"
+                                       FontAttributes="Bold"
+                                       LineBreakMode="TailTruncation" />
+
+                                <Label Text="{Binding Detail}"
+                                       FontSize="12"
+                                       TextColor="#6B6B76" />
+                            </VerticalStackLayout>
+                        </Grid>
+                    </Border>
+                </DataTemplate>
+            </CollectionView.ItemTemplate>
+        </CollectionView>
+    </Grid>
+</ContentPage>
