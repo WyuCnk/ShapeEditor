@@ -453,6 +453,23 @@ public sealed class WorkspaceViewModel : ObservableObject
         if (parameter is not WorkspaceNodeViewModel node ||
             SelectedMaterial is null)
         {
+            MessageBox.Show(
+                "请先在左侧选择一个素材。",
+                "提示",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+
+            return;
+        }
+
+        if (node.IsResult)
+        {
+            MessageBox.Show(
+                "结果节点不能导入素材，只能作为其它节点的输入。",
+                "提示",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+
             return;
         }
 
@@ -624,16 +641,17 @@ public sealed class WorkspaceViewModel : ObservableObject
             document.PartCount,
             source);
 
-        if (result != WorkspaceAddResult.Added)
-        {
-            MessageBox.Show(
-                result == WorkspaceAddResult.Duplicate
-                    ? "素材库里已经有相同的图形。"
-                    : "素材库已满 200 条。",
-                "加入素材库",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
-        }
+        MessageBox.Show(
+            result switch
+            {
+                WorkspaceAddResult.Added => "已加入工作区素材库。",
+                WorkspaceAddResult.Duplicate => "素材库里已经有相同的图形。",
+                WorkspaceAddResult.Full => "素材库已满 200 条。",
+                _ => "当前图形无法加入素材库。"
+            },
+            "加入工作区",
+            MessageBoxButton.OK,
+            MessageBoxImage.Information);
     }
 
     #endregion

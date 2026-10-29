@@ -116,12 +116,20 @@
         <WrapPanel Grid.Row="1" Margin="0,8,0,6">
             <RadioButton Content="含循环支撑"
                          GroupName="mode"
+                         Height="26"
+                         FontSize="12"
+                         VerticalAlignment="Center"
+                         VerticalContentAlignment="Center"
                          Margin="0,0,4,0"
                          IsChecked="{Binding IsCycleMode, Mode=OneWay}"
                          Click="OnModeCycle" />
 
             <RadioButton Content="仅地面"
                          GroupName="mode"
+                         Height="26"
+                         FontSize="12"
+                         VerticalAlignment="Center"
+                         VerticalContentAlignment="Center"
                          Margin="0,0,12,0"
                          IsChecked="{Binding IsFloorMode, Mode=OneWay}"
                          Click="OnModeFloor" />
@@ -347,6 +355,14 @@
                                                     BorderThickness="0"
                                                     Visibility="{Binding IsRef, Converter={StaticResource BoolToVis}}"
                                                     Click="OnComputeStack" />
+
+                                            <Button Content="导入所选"
+                                                    Margin="0,6,0,0"
+                                                    Padding="6,3"
+                                                    FontSize="12"
+                                                    Click="OnImportMaterial"
+                                                    IsEnabled="{Binding DataContext.HasSelectedMaterial, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                    Visibility="{Binding IsRef, Converter={StaticResource InverseBoolToVis}}" />
 
                                             <WrapPanel Visibility="{Binding IsRef, Converter={StaticResource InverseBoolToVis}}">
                                                 <Button Style="{StaticResource MiniButton}" Content="下落" Click="OnCollapse" />
