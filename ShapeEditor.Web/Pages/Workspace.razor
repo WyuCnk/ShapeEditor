@@ -29,73 +29,49 @@
         </div>
     </header>
 
-    @if (!string.IsNullOrWhiteSpace(_message))
-    {
-        <div class="error-message">@_message</div>
-    }
-
     <div class="workspace-body">
 
-        <section class="workspace-list">
+        <!-- 左：窄列表 -->
+        <aside class="workspace-list">
 
             @if (Store.Items.Count == 0)
             {
                 <div class="batch-empty">
-                    工作区还是空的：在编辑器点「加入工作区」，或在批量查看里导入。
+                    工作区是空的。到编辑器点「加入工作区」，或在批量查看里导入。
                 </div>
             }
 
             @foreach (WorkspaceItem item in Store.Items)
             {
-                <div class="@GetCardClass(item)"
-                     @onclick="() => Store.ToggleSelect(item.Id)">
+                <div class="ws-card @(_selectedId == item.Id ? "selected" : "")"
+                     @onclick="() => Select(item)">
 
-                    <div class="workspace-card-head">
-                        <span class="workspace-order">@GetOrder(item.Id)</span>
-                        <span class="workspace-name">@item.Name</span>
-                        <span class="workspace-source">@item.SourceText</span>
-                    </div>
-
-                    <div class="workspace-thumb">
+                    <div class="ws-thumb">
                         @if (GetDocument(item) is ShapeDocument document)
                         {
-                            <ShapePreview Document="document"
-                                          CssClass="workspace-preview" />
+                            <ShapePreview Document="document" CssClass="ws-preview" />
                         }
                         else
                         {
-                            <span class="batch-thumb-error">解析失败</span>
+                            <span class="batch-thumb-error">失败</span>
                         }
                     </div>
 
-                    <div class="workspace-meta">
-                        <span>@item.DimensionText</span>
-                        <code title="@item.Code">@ShortCode(item)</code>
+                    <div class="ws-info">
+                        <input class="ws-name"
+                               value="@item.Name"
+                               title="点击可重命名"
+                               @onclick:stopPropagation="true"
+                               @onchange="e => Rename(item, e.Value?.ToString())" />
+
+                        <div class="ws-meta">@item.DimensionText · @item.SourceText</div>
                     </div>
 
-                    <div class="workspace-actions">
+                    <div class="ws-actions">
                         <button class="mini-button"
                                 @onclick:stopPropagation="true"
                                 @onclick="() => LoadIntoEditor(item)">
-                            载入编辑器
-                        </button>
-
-                        <button class="mini-button"
-                                @onclick:stopPropagation="true"
-                                @onclick='() => Quick(item, "collapse")'>
-                            下落
-                        </button>
-
-                        <button class="mini-button"
-                                @onclick:stopPropagation="true"
-                                @onclick='() => Quick(item, "pin")'>
-                            顶针
-                        </button>
-
-                        <button class="mini-button"
-                                @onclick:stopPropagation="true"
-                                @onclick='() => Quick(item, "cut")'>
-                            切割
+                            编辑
                         </button>
 
                         <button class="mini-button danger"
@@ -107,33 +83,82 @@
                 </div>
             }
 
-        </section>
+        </aside>
 
-        <aside class="workspace-panel">
+        <!-- 右：操作区 -->
+        <section class="workspace-work">
 
             <div class="mode-tabs">
-                <button class="@OperationClass("collapse")"
-                        @onclick='() => SetOperation("collapse")'>
-                    下落
-                </button>
-                <button class="@OperationClass("stack")"
-                        @onclick='() => SetOperation("stack")'>
-                    堆叠
-                </button>
-                <button class="@OperationClass("pin")"
-                        @onclick='() => SetOperation("pin")'>
-                    顶针
-                </button>
-                <button class="@OperationClass("cut")"
-                        @onclick='() => SetOperation("cut")'>
-                    切割
-                </button>
+                <button class="@OperationClass("collapse")" @onclick='() => SetOperation("collapse")'>下落</button>
+                <button class="@OperationClass("stack")" @onclick='() => SetOperation("stack")'>堆叠</button>
+                <button class="@OperationClass("pin")" @onclick='() => SetOperation("pin")'>顶针</button>
+                <button class="@OperationClass("cut")" @onclick='() => SetOperation("cut")'>切割</button>
             </div>
 
-            <div class="tool-panel">
+            <div class="ws-slots">
 
-                <div class="tool-title">规则</div>
+                <div class="ws-slot">
+                    <div class="ws-slot-title">@(_operation == "stack" ? "下方图形" : "图形")</div>
 
+                    <div class="ws-slot-body">
+                        @if (FindSlot(_slotA) is WorkspaceItem itemA &&
+                             GetDocument(itemA) is ShapeDocument documentA)
+                        {
+                            <ShapePreview Document="documentA" CssClass="ws-slot-preview" />
+                            <span class="batch-hint">@itemA.DimensionText</span>
+                        }
+                        else
+                        {
+                            <span class="ws-slot-empty">空</span>
+                        }
+                    </div>
+
+                    <div class="ws-slot-actions">
+                        <button class="secondary-button" @onclick="() => AssignSlot(false)">
+                            导入所选
+                        </button>
+
+                        @if (_slotA is not null)
+                        {
+                            <button class="mini-button" @onclick="() => ClearSlot(false)">清空</button>
+                        }
+                    </div>
+                </div>
+
+                @if (_operation == "stack")
+                {
+                    <div class="ws-slot">
+                        <div class="ws-slot-title">上方图形</div>
+
+                        <div class="ws-slot-body">
+                            @if (FindSlot(_slotB) is WorkspaceItem itemB &&
+                                 GetDocument(itemB) is ShapeDocument documentB)
+                            {
+                                <ShapePreview Document="documentB" CssClass="ws-slot-preview" />
+                                <span class="batch-hint">@itemB.DimensionText</span>
+                            }
+                            else
+                            {
+                                <span class="ws-slot-empty">空</span>
+                            }
+                        </div>
+
+                        <div class="ws-slot-actions">
+                            <button class="secondary-button" @onclick="() => AssignSlot(true)">
+                                导入所选
+                            </button>
+
+                            @if (_slotB is not null)
+                            {
+                                <button class="mini-button" @onclick="() => ClearSlot(true)">清空</button>
+                            }
+                        </div>
+                    </div>
+                }
+
+            </div>
+
+            <div class="ws-params">
                 <div class="code-format">
                     <button class="@ModeClass(CollapseMode.IncludeCycles)"
                             @onclick="() => SetMode(CollapseMode.IncludeCycles)">
@@ -147,31 +172,7 @@
 
                 @if (_operation == "stack")
                 {
-                    <div class="tool-title">堆叠参数</div>
-
-                    <label class="workspace-field">
-                        下方图形
-                        <select @bind="_bottomId">
-                            <option value="">请选择</option>
-                            @foreach (WorkspaceItem item in Store.Items)
-                            {
-                                <option value="@item.Id">@item.DimensionText · @item.SourceText</option>
-                            }
-                        </select>
-                    </label>
-
-                    <label class="workspace-field">
-                        上方图形
-                        <select @bind="_topId">
-                            <option value="">请选择</option>
-                            @foreach (WorkspaceItem item in Store.Items)
-                            {
-                                <option value="@item.Id">@item.DimensionText · @item.SourceText</option>
-                            }
-                        </select>
-                    </label>
-
-                    <label class="workspace-field">
+                    <label class="workspace-field ws-inline-field">
                         层数上限
                         <input type="number"
                                min="1"
@@ -181,50 +182,39 @@
                 }
                 else if (_operation == "pin")
                 {
-                    <p class="batch-hint">
-                        顶针使用该图形现有层数作为上限；超过上限的顶层会先碎晶再删除。
-                    </p>
+                    <span class="batch-hint">顶针使用该图形自身层数作为上限。</span>
                 }
                 else if (_operation == "cut")
                 {
-                    <p class="batch-hint">
-                        切割沿中线分成东西两半，两半都会输出；跨中线的晶体会整块破碎。
-                    </p>
+                    <span class="batch-hint">沿中线分成东西两半，两半都会输出。</span>
                 }
 
-                <button class="primary-button"
-                        @onclick="Compute">
-                    计算
-                </button>
-
-                @if (!string.IsNullOrWhiteSpace(_error))
-                {
-                    <div class="error-message">@_error</div>
-                }
+                <button class="primary-button" @onclick="Compute">计算</button>
             </div>
+
+            @if (!string.IsNullOrWhiteSpace(_error))
+            {
+                <div class="error-message">@_error</div>
+            }
 
             @if (_west is not null && _east is not null)
             {
                 <div class="workspace-result">
                     <div class="tool-title">切割结果</div>
 
-                    <div class="workspace-result-pair">
-                        <div class="workspace-result-block">
+                    <div class="ws-result-pair">
+                        <div class="ws-result-block">
                             <span class="batch-hint">西半</span>
-                            <ShapePreview Document="_west"
-                                          CssClass="workspace-preview" />
-                            <button class="secondary-button"
-                                    @onclick='() => AddResult(_west, "cut")'>
+                            <ShapePreview Document="_west" CssClass="ws-result-preview" />
+                            <button class="secondary-button" @onclick='() => AddResult(_west, "cut")'>
                                 加入工作区
                             </button>
                         </div>
 
-                        <div class="workspace-result-block">
+                        <div class="ws-result-block">
                             <span class="batch-hint">东半</span>
-                            <ShapePreview Document="_east"
-                                          CssClass="workspace-preview" />
-                            <button class="secondary-button"
-                                    @onclick='() => AddResult(_east, "cut")'>
+                            <ShapePreview Document="_east" CssClass="ws-result-preview" />
+                            <button class="secondary-button" @onclick='() => AddResult(_east, "cut")'>
                                 加入工作区
                             </button>
                         </div>
@@ -236,8 +226,7 @@
                 <div class="workspace-result">
                     <div class="tool-title">结果</div>
 
-                    <ShapePreview Document="_result"
-                                  CssClass="workspace-preview" />
+                    <ShapePreview Document="_result" CssClass="ws-result-preview" />
 
                     <p class="batch-hint">
                         @_result.LayerCount 层 × @_result.PartCount 象限
@@ -250,9 +239,14 @@
                 </div>
             }
 
-        </aside>
+        </section>
 
     </div>
+
+    @if (!string.IsNullOrWhiteSpace(_toast))
+    {
+        <div class="toast">@_toast</div>
+    }
 
 </div>
 
@@ -263,9 +257,11 @@
 
     private CollapseMode _mode = CollapseMode.IncludeCycles;
 
-    private string? _bottomId;
+    private string? _selectedId;
 
-    private string? _topId;
+    private string? _slotA;
+
+    private string? _slotB;
 
     private int _heightLimit = 4;
 
@@ -277,7 +273,9 @@
 
     private string _error = "";
 
-    private string _message = "";
+    private string _toast = "";
+
+    private CancellationTokenSource? _toastSource;
 
     protected override async Task OnInitializedAsync()
     {
@@ -294,27 +292,13 @@
     public void Dispose()
     {
         Store.Changed -= OnStoreChanged;
+
+        _toastSource?.Cancel();
     }
 
-    private bool IsSelected(string id) => Store.SelectedIds.Contains(id);
-
-    private string GetCardClass(WorkspaceItem item)
+    private void Select(WorkspaceItem item)
     {
-        return IsSelected(item.Id)
-            ? "workspace-card selected"
-            : "workspace-card";
-    }
-
-    private string GetOrder(string id)
-    {
-        int index = Store.SelectedIds.IndexOf(id);
-
-        return index switch
-        {
-            0 => "①",
-            1 => "②",
-            _ => ""
-        };
+        _selectedId = item.Id;
     }
 
     private ShapeDocument? GetDocument(WorkspaceItem item)
@@ -322,257 +306,9 @@
         return Store.GetDocument(item, out _);
     }
 
-    private string ShortCode(WorkspaceItem item)
+    private void Rename(WorkspaceItem item, string? name)
     {
-        return item.Code.Length <= 28
-            ? item.Code
-            : item.Code[..28] + "…";
-    }
-
-    private string OperationClass(string operation)
-    {
-        return _operation == operation
-            ? "mode-button selected"
-            : "mode-button";
-    }
-
-    private string ModeClass(CollapseMode mode)
-    {
-        return _mode == mode
-            ? "format-button active"
-            : "format-button";
-    }
-
-    private void SetOperation(string operation)
-    {
-        _operation = operation;
-
-        _error = "";
-        _result = null;
-        _west = null;
-        _east = null;
-
-        if (operation == "stack")
-        {
-            PrepareStackSelection();
-        }
-    }
-
-    private void PrepareStackSelection()
-    {
-        if (Store.SelectedIds.Count < 2)
-        {
-            return;
-        }
-
-        _bottomId = Store.SelectedIds[0];
-        _topId = Store.SelectedIds[1];
-
-        WorkspaceItem? bottom = FindItem(_bottomId);
-        WorkspaceItem? top = FindItem(_topId);
-
-        if (bottom is not null && top is not null)
-        {
-            _heightLimit = Math.Min(
-                100,
-                bottom.Layers + 1 + top.Layers);
-        }
-    }
-
-    private void SetMode(CollapseMode mode)
-    {
-        _mode = mode;
-    }
-
-    private WorkspaceItem? FindItem(string? id)
-    {
-        return id is null
-            ? null
-            : Store.Items.FirstOrDefault(item => item.Id == id);
-    }
-
-    private WorkspaceItem? SingleOperand()
-    {
-        return FindItem(Store.SelectedIds.LastOrDefault());
-    }
-
-    private void Quick(WorkspaceItem item, string operation)
-    {
-        Store.SelectedIds.Clear();
-        Store.SelectedIds.Add(item.Id);
-
-        _operation = operation;
-
-        _result = null;
-        _west = null;
-        _east = null;
-
-        Compute();
-    }
-
-    private void Compute()
-    {
-        _error = "";
-        _result = null;
-        _west = null;
-        _east = null;
-        _message = "";
-
-        switch (_operation)
-        {
-            case "stack":
-                ComputeStack();
-                break;
-
-            case "cut":
-                ComputeCut();
-                break;
-
-            case "pin":
-                ComputeSingle(document => ShapePhysics.Pin(document, _mode));
-                break;
-
-            default:
-                ComputeSingle(document => ShapePhysics.Collapse(document, _mode));
-                break;
-        }
-    }
-
-    private void ComputeSingle(Func<ShapeDocument, PhysicsResult> operation)
-    {
-        WorkspaceItem? item = SingleOperand();
-
-        if (item is null)
-        {
-            _error = "请先选择一个图形。";
-
-            return;
-        }
-
-        ShapeDocument? document = Store.GetDocument(item, out string? parseError);
-
-        if (document is null)
-        {
-            _error = parseError ?? "解析失败。";
-
-            return;
-        }
-
-        PhysicsResult result = operation(document);
-
-        if (!result.Success)
-        {
-            _error = result.Error ?? "操作失败。";
-
-            return;
-        }
-
-        _result = result.Document;
-    }
-
-    private void ComputeStack()
-    {
-        WorkspaceItem? bottom = FindItem(_bottomId);
-        WorkspaceItem? top = FindItem(_topId);
-
-        if (bottom is null || top is null)
-        {
-            _error = "请选择下方图形与上方图形。";
-
-            return;
-        }
-
-        ShapeDocument? bottomDocument = Store.GetDocument(bottom, out string? bottomError);
-
-        if (bottomDocument is null)
-        {
-            _error = bottomError ?? "下方图形解析失败。";
-
-            return;
-        }
-
-        ShapeDocument? topDocument = Store.GetDocument(top, out string? topError);
-
-        if (topDocument is null)
-        {
-            _error = topError ?? "上方图形解析失败。";
-
-            return;
-        }
-
-        PhysicsResult result = ShapePhysics.Stack(
-            bottomDocument,
-            topDocument,
-            _heightLimit,
-            _mode);
-
-        if (!result.Success)
-        {
-            _error = result.Error ?? "堆叠失败。";
-
-            return;
-        }
-
-        _result = result.Document;
-    }
-
-    private void ComputeCut()
-    {
-        WorkspaceItem? item = SingleOperand();
-
-        if (item is null)
-        {
-            _error = "请先选择一个图形。";
-
-            return;
-        }
-
-        ShapeDocument? document = Store.GetDocument(item, out string? parseError);
-
-        if (document is null)
-        {
-            _error = parseError ?? "解析失败。";
-
-            return;
-        }
-
-        CutResult result = ShapePhysics.Cut(document, _mode);
-
-        if (!result.Success)
-        {
-            _error = result.Error ?? "切割失败。";
-
-            return;
-        }
-
-        _west = result.West;
-        _east = result.East;
-    }
-
-    private void AddResult(
-        ShapeDocument document,
-        string operation)
-    {
-        string code = Exporter.Export(
-            document,
-            omitTopEmptyLayers: true);
-
-        WorkspaceAddResult result = Store.TryAdd(
-            code,
-            ShortCodeFormat.Full,
-            document.LayerCount,
-            document.PartCount,
-            "operation",
-            operation,
-            Store.SelectedIds.ToArray());
-
-        _message = result switch
-        {
-            WorkspaceAddResult.Added => "已加入工作区。",
-            WorkspaceAddResult.Duplicate => "工作区里已经有相同的图形。",
-            WorkspaceAddResult.Full => "工作区已满 200 条，请先清理。",
-            _ => "结果不是合法图形。"
-        };
+        Store.Rename(item.Id, name ?? item.Code);
     }
 
     private void LoadIntoEditor(WorkspaceItem item)
@@ -586,8 +322,240 @@
     {
         Store.Clear();
 
+        _slotA = null;
+        _slotB = null;
+        _selectedId = null;
+
+        ResetResult();
+    }
+
+    private void AssignSlot(bool second)
+    {
+        _error = "";
+
+        if (_selectedId is null)
+        {
+            ShowToast("请先在左侧选择一个图形。");
+
+            return;
+        }
+
+        if (second)
+        {
+            _slotB = _selectedId;
+        }
+        else
+        {
+            _slotA = _selectedId;
+        }
+
+        ResetResult();
+
+        if (_operation == "stack")
+        {
+            RefreshHeightLimit();
+        }
+    }
+
+    private void ClearSlot(bool second)
+    {
+        if (second)
+        {
+            _slotB = null;
+        }
+        else
+        {
+            _slotA = null;
+        }
+
+        ResetResult();
+    }
+
+    private WorkspaceItem? FindSlot(string? id)
+    {
+        return id is null
+            ? null
+            : Store.Items.FirstOrDefault(item => item.Id == id);
+    }
+
+    private void RefreshHeightLimit()
+    {
+        WorkspaceItem? bottom = FindSlot(_slotA);
+        WorkspaceItem? top = FindSlot(_slotB);
+
+        if (bottom is not null && top is not null)
+        {
+            _heightLimit = Math.Min(100, bottom.Layers + 1 + top.Layers);
+        }
+    }
+
+    private string OperationClass(string operation)
+    {
+        return _operation == operation ? "mode-button selected" : "mode-button";
+    }
+
+    private string ModeClass(CollapseMode mode)
+    {
+        return _mode == mode ? "format-button active" : "format-button";
+    }
+
+    private void SetOperation(string operation)
+    {
+        _operation = operation;
+
+        if (operation != "stack")
+        {
+            _slotB = null;
+        }
+
+        ResetResult();
+    }
+
+    private void SetMode(CollapseMode mode)
+    {
+        _mode = mode;
+    }
+
+    private void ResetResult()
+    {
+        _error = "";
         _result = null;
         _west = null;
         _east = null;
+    }
+
+    private void Compute()
+    {
+        ResetResult();
+
+        WorkspaceItem? first = FindSlot(_slotA);
+
+        if (first is null)
+        {
+            _error = "请先给图形框导入一个图形。";
+
+            return;
+        }
+
+        ShapeDocument? firstDocument = Store.GetDocument(first, out string? firstError);
+
+        if (firstDocument is null)
+        {
+            _error = firstError ?? "图形解析失败。";
+
+            return;
+        }
+
+        switch (_operation)
+        {
+            case "stack":
+                ComputeStack(firstDocument);
+                break;
+
+            case "cut":
+                ComputeCut(firstDocument);
+                break;
+
+            case "pin":
+                Apply(ShapePhysics.Pin(firstDocument, _mode));
+                break;
+
+            default:
+                Apply(ShapePhysics.Collapse(firstDocument, _mode));
+                break;
+        }
+    }
+
+    private void ComputeStack(ShapeDocument baseDocument)
+    {
+        WorkspaceItem? topItem = FindSlot(_slotB);
+
+        if (topItem is null)
+        {
+            _error = "堆叠需要上方图形。";
+
+            return;
+        }
+
+        ShapeDocument? topDocument = Store.GetDocument(topItem, out string? topError);
+
+        if (topDocument is null)
+        {
+            _error = topError ?? "上方图形解析失败。";
+
+            return;
+        }
+
+        Apply(ShapePhysics.Stack(baseDocument, topDocument, _heightLimit, _mode));
+    }
+
+    private void ComputeCut(ShapeDocument document)
+    {
+        CutResult result = ShapePhysics.Cut(document, _mode);
+
+        if (!result.Success)
+        {
+            _error = result.Error ?? "切割失败。";
+
+            return;
+        }
+
+        _west = result.West;
+        _east = result.East;
+    }
+
+    private void Apply(PhysicsResult result)
+    {
+        if (!result.Success)
+        {
+            _error = result.Error ?? "操作失败。";
+
+            return;
+        }
+
+        _result = result.Document;
+    }
+
+    private void AddResult(ShapeDocument document, string operation)
+    {
+        string code = Exporter.Export(document, omitTopEmptyLayers: true);
+
+        WorkspaceAddResult result = Store.TryAdd(
+            code,
+            ShortCodeFormat.Full,
+            document.LayerCount,
+            document.PartCount,
+            "operation",
+            operation);
+
+        ShowToast(result switch
+        {
+            WorkspaceAddResult.Added => "已加入工作区。",
+            WorkspaceAddResult.Duplicate => "工作区里已有相同图形。",
+            WorkspaceAddResult.Full => "工作区已满 200 条。",
+            _ => "结果不是合法图形。"
+        });
+    }
+
+    private async void ShowToast(string message)
+    {
+        _toast = message;
+
+        await InvokeAsync(StateHasChanged);
+
+        _toastSource?.Cancel();
+        _toastSource = new CancellationTokenSource();
+
+        try
+        {
+            await Task.Delay(2500, _toastSource.Token);
+
+            _toast = "";
+
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (TaskCanceledException)
+        {
+        }
     }
 }

@@ -1161,3 +1161,183 @@ button {
     flex-direction: column;
     gap: 6px;
 }
+/* ==================== 工作区（槽位版） ==================== */
+
+.workspace-body {
+    grid-template-columns: 270px minmax(0, 1fr);
+    align-items: start;
+}
+
+.workspace-list {
+    max-height: 72vh;
+}
+
+.ws-card {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 8px;
+    border: 1px solid #e0e0e0;
+    border-radius: 10px;
+    background: #ffffff;
+    cursor: pointer;
+}
+
+.ws-card.selected {
+    border-color: #512bd4;
+    box-shadow: 0 0 0 2px rgba(81, 43, 212, 0.15);
+}
+
+.ws-thumb {
+    width: 64px;
+    height: 48px;
+    flex: 0 0 auto;
+    overflow: hidden;
+    border-radius: 6px;
+    background: #ffffff;
+}
+
+.ws-preview {
+    display: block;
+    width: 64px;
+    height: 48px;
+}
+
+.ws-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.ws-name {
+    width: 100%;
+    padding: 2px 4px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.ws-name:hover,
+.ws-name:focus {
+    border-color: #c5c5c5;
+    background: #ffffff;
+    outline: none;
+}
+
+.ws-meta {
+    font-size: 11px;
+    color: #6b6b76;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ws-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.ws-slots {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin: 12px 0;
+}
+
+.ws-slot {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+    border: 1px dashed #c5c5c5;
+    border-radius: 12px;
+    background: #ffffff;
+}
+
+.ws-slot-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #6b6b76;
+}
+
+.ws-slot-body {
+    height: 170px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+
+.ws-slot-preview {
+    display: block;
+    width: 100%;
+    height: 140px;
+}
+
+.ws-slot-empty {
+    color: #b0b0b8;
+    font-size: 13px;
+}
+
+.ws-slot-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+}
+
+.ws-params {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+}
+
+.ws-inline-field {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+}
+
+.ws-inline-field input {
+    width: 90px;
+}
+
+.ws-result-pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.ws-result-block {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+}
+
+.ws-result-preview {
+    display: block;
+    width: 100%;
+    height: 200px;
+}
+
+.toast {
+    position: fixed;
+    top: 70px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 10px 18px;
+    border-radius: 999px;
+    background: #212121;
+    color: #ffffff;
+    font-size: 13px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+    z-index: 999;
+}

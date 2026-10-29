@@ -16,6 +16,11 @@
 
 <SiteHeader Active="editor" />
 
+@if (!string.IsNullOrWhiteSpace(_toast))
+{
+    <div class="toast">@_toast</div>
+}
+
 <div class="editor-page">
 
     <header class="editor-header">
@@ -382,6 +387,32 @@
     }
 
     private const string BrowserSaveKey = "shape-editor-current-document";
+
+    private string _toast = "";
+
+    private CancellationTokenSource? _toastSource;
+
+    private async void ShowToast(string message)
+    {
+        _toast = message;
+
+        await InvokeAsync(StateHasChanged);
+
+        _toastSource?.Cancel();
+        _toastSource = new CancellationTokenSource();
+
+        try
+        {
+            await Task.Delay(2500, _toastSource.Token);
+
+            _toast = "";
+
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (TaskCanceledException)
+        {
+        }
+    }
 
     #region 存档模型
 
@@ -1033,13 +1064,13 @@
             Document.PartCount,
             "editor");
 
-        ErrorMessage = result switch
+        ShowToast(result switch
         {
+            WorkspaceAddResult.Added => "已加入工作区。",
             WorkspaceAddResult.Duplicate => "工作区里已经有相同的图形。",
             WorkspaceAddResult.Full => "工作区已满 200 条，请先清理。",
-            WorkspaceAddResult.Invalid => "当前图形无法加入工作区。",
-            _ => ""
-        };
+            _ => "当前图形无法加入工作区。"
+        });
     }
 
     private async Task LoadPendingWorkspaceItemAsync()
