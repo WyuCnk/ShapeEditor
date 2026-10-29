@@ -123,6 +123,7 @@ public sealed class WorkspaceStore
 
         var item = new WorkspaceItem
         {
+            Name = code.Length <= 24 ? code : code[..24] + '…',
             Code = code,
             Format = format,
             Layers = layers,
@@ -146,6 +147,26 @@ public sealed class WorkspaceStore
         Changed?.Invoke();
 
         return WorkspaceAddResult.Added;
+    }
+
+    public void Rename(
+        string id,
+        string name)
+    {
+        WorkspaceItem? item = _items.FirstOrDefault(entry => entry.Id == id);
+
+        if (item is null)
+        {
+            return;
+        }
+
+        item.Name = string.IsNullOrWhiteSpace(name)
+            ? item.Code
+            : name.Trim();
+
+        Persist();
+
+        Changed?.Invoke();
     }
 
     public void ToggleSelect(

@@ -1,6 +1,7 @@
 using ShapeEditor.Core;
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Physics;
+using ShapeEditor.Core.Services;
 
 namespace ShapeEditor.Tests;
 
@@ -88,6 +89,47 @@ internal static class PhysicsTests
                     twice[layer, part].Type);
             }
         }
+    }
+
+    public static void CycleSupportKeepsFloatingShape()
+    {
+        var parser = new ShortCodeParser();
+
+        ParseResult parsed = parser.Parse(
+            "------Cu:--------:----Cucr:----P-cr:----Cucr",
+            5,
+            4);
+
+        Assert.True(parsed.Success, parsed.Error ?? "解析失败");
+
+        ShapeDocument document = parsed.Document!;
+
+        ShapeDocument withCycles = ShapePhysics
+            .Collapse(document, CollapseMode.IncludeCycles)
+            .Document!;
+
+        ShapeDocument floorOnly = ShapePhysics
+            .Collapse(document, CollapseMode.FloorOnly)
+            .Document!;
+
+        bool differs = false;
+
+        for (int layer = 0; layer < document.LayerCount; layer++)
+        {
+            for (int part = 0; part < document.PartCount; part++)
+            {
+                if (withCycles[layer, part].Type !=
+                    floorOnly[layer, part].Type)
+                {
+                    differs = true;
+                }
+            }
+        }
+
+        Assert.True(differs, "含环规则与仅地面规则应当给出不同结果");
+
+        // 环结构整体悬空：第 2 层右侧的晶体不应掉到地面
+        Assert.Equal(CellType.Crystal, withCycles[2, 3].Type);
     }
 
     #endregion
