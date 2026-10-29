@@ -1,3 +1,4 @@
+using ShapeEditor.Core.Workspaces;
 using System.Text.Json;
 using ShapeEditor.Web.Models;
 

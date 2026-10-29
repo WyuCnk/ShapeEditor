@@ -3,6 +3,7 @@ using Microsoft.JSInterop;
 using ShapeEditor.Core;
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Physics;
+using ShapeEditor.Core.Workspaces;
 using ShapeEditor.Core.Services;
 using ShapeEditor.Web.Models;
 

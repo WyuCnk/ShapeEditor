@@ -1,6 +1,6 @@
-using ShapeEditor.Core.Models;
+using ShapeEditor.Core.Physics;
 
-namespace ShapeEditor.Web.Models;
+namespace ShapeEditor.Core.Workspaces;
 
 /// <summary>
 /// 画布上的一个节点。
@@ -16,35 +16,20 @@ public sealed class WorkspaceNode
 
     public string Code { get; set; } = "";
 
-    public ShortCodeFormat Format { get; set; } = ShortCodeFormat.Full;
+    public Models.ShortCodeFormat Format { get; set; } = Models.ShortCodeFormat.Full;
 
     public int Layers { get; set; }
 
     public int Parts { get; set; }
 
-    /// <summary>
-    /// 运算结果节点：不可从素材导入，但可以继续参与运算。
-    /// </summary>
     public bool IsResult { get; set; }
 
-    /// <summary>
-    /// 运算键，用于重复点击时定位而不是重建。
-    /// </summary>
     public string? OpKey { get; set; }
 
-    /// <summary>
-    /// kind=ref 时指向的节点。
-    /// </summary>
     public string? TargetId { get; set; }
 
-    /// <summary>
-    /// ref 节点所属的堆叠底节点。
-    /// </summary>
     public string? BaseId { get; set; }
 
-    /// <summary>
-    /// 该槽位代表堆叠的上方输入还是下方输入。
-    /// </summary>
     public bool TopInput { get; set; }
 
     /// <summary>画布上的唯一编号，用于引用与显示。</summary>
@@ -71,8 +56,27 @@ public sealed class WorkspaceEdge
 
     public string Label { get; set; } = "";
 
-    /// <summary>
-    /// 标签在连线上的位置比例（0~1），点击标签可以轮换。
-    /// </summary>
+    /// <summary>标签在连线上的位置比例（0~1）。</summary>
     public double LabelT { get; set; } = 0.5;
+}
+
+/// <summary>
+/// 一个工作区：独立的画布（节点与连线）+ 自己的高度上限与下落规则。
+/// 素材库是全局共享的，不属于工作区。
+/// </summary>
+public sealed class WorkspaceProject
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+
+    public string Name { get; set; } = "工作区";
+
+    public List<WorkspaceNode> Nodes { get; set; } = new();
+
+    public List<WorkspaceEdge> Edges { get; set; } = new();
+
+    public int MaxLayers { get; set; } = 100;
+
+    public CollapseMode Mode { get; set; } = CollapseMode.IncludeCycles;
+
+    public DateTime CreatedAt { get; set; } = DateTime.Now;
 }
