@@ -21,10 +21,7 @@ public sealed class AutoSaveService
         string? directoryPath = null)
     {
         string root = directoryPath ??
-            Path.Combine(
-                Environment.GetFolderPath(
-                    Environment.SpecialFolder.LocalApplicationData),
-                "ShapeEditor");
+            StoragePaths.Root;
 
         DirectoryPath = root;
 
@@ -34,6 +31,9 @@ public sealed class AutoSaveService
     public string DirectoryPath { get; }
 
     public string FilePath { get; }
+
+    /// <summary>最近一次保存失败的原因，供界面提示。</summary>
+    public string? LastError { get; private set; }
 
     public void Save(
         ShapeDocument document)
@@ -48,11 +48,12 @@ public sealed class AutoSaveService
                 FilePath,
                 _files.Serialize(file, indented: false));
         }
-        catch
+        catch (Exception exception)
         {
             /*
-             * 自动保存失败不能打断编辑。
+             * 自动保存失败不能打断编辑，但要记下原因。
              */
+            LastError = exception.Message;
         }
     }
 

@@ -50,15 +50,15 @@ public sealed class WorkspaceStore
     public WorkspaceStore(
         string? filePath = null)
     {
-        _filePath = filePath ?? Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "ShapeEditor",
-            "workspaces.json");
+        _filePath = filePath ?? StoragePaths.WorkspaceFile;
 
         Load();
     }
 
     public event Action? Changed;
+
+    /// <summary>最近一次保存失败的原因。</summary>
+    public string? LastError { get; private set; }
 
     /// <summary>
     /// 全局素材库，所有工作区共享。
@@ -1245,11 +1245,9 @@ public sealed class WorkspaceStore
                     ActiveId = _active?.Id
                 }, new JsonSerializerOptions { WriteIndented = true }));
         }
-        catch
+        catch (Exception exception)
         {
-            /*
-             * 保存失败不影响当前会话。
-             */
+            LastError = exception.Message;
         }
     }
 

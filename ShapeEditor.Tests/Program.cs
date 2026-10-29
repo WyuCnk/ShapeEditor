@@ -85,6 +85,8 @@ internal static class Program
             ("物理:下落消晶", PhysicsTests.FallingCrystalDisappears),
             ("物理:坍塌幂等", PhysicsTests.CollapseIsIdempotent),
             ("物理:循环支撑悬空", PhysicsTests.CycleSupportKeepsFloatingShape),
+            ("工作区:保存后可重新加载", WorkspaceStorePersistenceTests.SaveAndReloadKeepsData),
+            ("工作区:素材跨工作区共享", WorkspaceStorePersistenceTests.MaterialSurvivesNewProject),
             ("物理:堆叠拒绝不同象限数", PhysicsTests.StackRejectsDifferentPartCount),
             ("物理:堆叠清晶并使用上限", PhysicsTests.StackClearsTopCrystalsAndUsesLimit),
             ("物理:堆叠超限截断", PhysicsTests.StackTruncatesAboveLimit),

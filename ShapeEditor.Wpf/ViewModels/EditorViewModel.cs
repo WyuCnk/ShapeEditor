@@ -60,6 +60,8 @@ public sealed class EditorViewModel : ObservableObject
 
     private bool _strokeStarted;
 
+    private bool _storageErrorShown;
+
     private ShapeDocument _document;
 
     private int _layerCount = MinimumDimension;
@@ -1265,6 +1267,17 @@ public sealed class EditorViewModel : ObservableObject
         _autoSaveTimer.Stop();
 
         _autoSave.Save(Document);
+
+        if (_autoSave.LastError is not null && !_storageErrorShown)
+        {
+            _storageErrorShown = true;
+
+            MessageBox.Show(
+                $"自动保存失败，数据可能无法恢复。\n\n路径：{_autoSave.FilePath}\n原因：{_autoSave.LastError}",
+                "存储失败",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
     }
 
     private static string GetShapeName(

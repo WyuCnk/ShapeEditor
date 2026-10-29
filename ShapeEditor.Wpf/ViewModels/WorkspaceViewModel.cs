@@ -34,6 +34,8 @@ public sealed class WorkspaceViewModel : ObservableObject
 
     private double _canvasHeight = 600;
 
+    private bool _storageErrorShown;
+
     public WorkspaceViewModel(
         WorkspaceStore? store = null)
     {
@@ -190,6 +192,9 @@ public sealed class WorkspaceViewModel : ObservableObject
 
     public string StatusText { get; private set; } = "";
 
+    /// <summary>数据实际保存的位置，便于排查。</summary>
+    public string StoragePath => StoragePaths.Root;
+
     #region 模式
 
     public void SetMode(
@@ -230,6 +235,17 @@ public sealed class WorkspaceViewModel : ObservableObject
 
     public void Refresh()
     {
+        if (_store.LastError is not null && !_storageErrorShown)
+        {
+            _storageErrorShown = true;
+
+            MessageBox.Show(
+                $"工作区保存失败，数据可能无法恢复。\n原因：{_store.LastError}",
+                "存储失败",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+
         Tabs.Clear();
 
         foreach (WorkspaceProject project in _store.Projects)

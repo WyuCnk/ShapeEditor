@@ -163,8 +163,10 @@
         <TextBlock Grid.Row="2"
                    Margin="2,0,0,8"
                    FontSize="12"
-                   Foreground="#6B6B76"
-                   Text="提示：双击标签重命名；点击连线上的操作文字可以调整标签位置。" />
+                   Foreground="#6B6B76">
+            <Run Text="提示：点击连线上的操作文字可以调整标签位置。数据目录：" />
+            <Run Text="{Binding StoragePath, Mode=OneWay}" />
+        </TextBlock>
 
         <!-- 主体 -->
         <Grid Grid.Row="3">
