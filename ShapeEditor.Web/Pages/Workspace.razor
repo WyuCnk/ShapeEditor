@@ -631,54 +631,51 @@
             return;
         }
 
-        var nodes = Store.Nodes
-            .Select(node => new
+        var payload = new GraphExportPayload();
+
+        foreach (WorkspaceNode node in Store.Nodes)
+        {
+            payload.Nodes.Add(new GraphExportNode
             {
-                id = node.Id,
-                seq = node.Seq,
-                row = node.Row,
-                col = node.Col,
-                label = NodeTitle(node),
-                isResult = node.IsResult,
-                isRef = node.Kind == "ref",
-                refText = node.TargetId is not null &&
+                Id = node.Id,
+                Seq = node.Seq,
+                Row = node.Row,
+                Col = node.Col,
+                Label = NodeTitle(node),
+                IsResult = node.IsResult,
+                IsRef = node.Kind == "ref",
+                RefText = node.TargetId is not null &&
                           Store.FindNode(node.TargetId) is WorkspaceNode reference
                     ? $"引用 #{reference.Seq}"
                     : "",
-                state = NodeDocument(node) is ShapeDocument document
+                State = NodeDocument(node) is ShapeDocument document
                     ? ShapeCanvasState.Create(document)
                     : null
-            })
-            .ToList();
-
-        var edges = new List<object>();
+            });
+        }
 
         foreach (WorkspaceEdge edge in Store.Edges)
         {
-            WorkspaceNode? from = Store.FindNode(edge.FromId);
-            WorkspaceNode? to = Store.FindNode(edge.ToId);
-
-            if (from is null || to is null)
+            if (Store.FindNode(edge.FromId) is null ||
+                Store.FindNode(edge.ToId) is null)
             {
                 continue;
             }
 
-            edges.Add(new
+            payload.Edges.Add(new GraphExportEdge
             {
-                from = from.Id,
-                to = to.Id,
-                label = edge.Label,
-                labelT = edge.LabelT,
-                kind = "flow"
+                From = edge.FromId,
+                To = edge.ToId,
+                Label = edge.Label,
+                LabelT = edge.LabelT
             });
         }
-
 
         try
         {
             await JS.InvokeVoidAsync(
                 "shapeGrid.downloadGraph",
-                new { nodes, edges },
+                payload,
                 $"shape-path-{DateTime.Now:yyyyMMdd-HHmmss}.png");
         }
         catch (Exception exception)
