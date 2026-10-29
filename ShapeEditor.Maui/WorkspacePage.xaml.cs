@@ -11,13 +11,13 @@ namespace ShapeEditor.Maui;
 /// </summary>
 public partial class WorkspacePage : ContentPage
 {
-    private const double NodeWidth = 128;
+    private const double NodeWidth = 168;
 
     private const double NodeHeight = 150;
 
-    private const double CellWidth = 150;
+    private const double CellWidth = 190;
 
-    private const double CellHeight = 260;
+    private const double CellHeight = 300;
 
     private static readonly Color Accent = Color.FromArgb("#512BD4");
 
@@ -346,7 +346,9 @@ public partial class WorkspacePage : ContentPage
                 Text = text,
                 FontSize = 10,
                 HeightRequest = 26,
-                Padding = new Thickness(6, 0),
+                WidthRequest = 46,
+                Padding = 0,
+                MinimumWidthRequest = 0,
                 CornerRadius = 6,
                 BackgroundColor = Color.FromArgb("#F2F0F8"),
                 TextColor = Accent

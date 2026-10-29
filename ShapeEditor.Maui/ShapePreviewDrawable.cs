@@ -43,8 +43,11 @@ public sealed class ShapePreviewDrawable : IDrawable
             {
                 ShapeCell shape = _document[layer, part];
 
+                // 第 0 层在最下面，和编辑器保持一致
+                int row = layers - 1 - layer;
+
                 float x = offsetX + part * cell;
-                float y = offsetY + layer * cell;
+                float y = offsetY + row * cell;
 
                 if (shape.Type != CellType.Empty)
                 {
