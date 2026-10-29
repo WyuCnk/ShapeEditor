@@ -1,3 +1,5 @@
+using ShapeEditor.Core.Physics;
+
 namespace ShapeEditor.Web.Models;
 
 /// <summary>
@@ -15,6 +17,11 @@ public sealed class WorkspaceProject
     public List<WorkspaceEdge> Edges { get; set; } = new();
 
     public int MaxLayers { get; set; } = 100;
+
+    /// <summary>
+    /// 该工作区使用的下落规则。
+    /// </summary>
+    public CollapseMode Mode { get; set; } = CollapseMode.IncludeCycles;
 
     public DateTime CreatedAt { get; set; } = DateTime.Now;
 }

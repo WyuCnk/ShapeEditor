@@ -20,23 +20,38 @@
     <header class="editor-header">
         <h1>制作路径</h1>
 
-        <div class="workspace-switcher">
-            <select class="graph-select"
-                    value="@Store.ActiveProject?.Id"
-                    @onchange='e => Store.ActivateProject(e.Value?.ToString() ?? "")'>
-                @foreach (WorkspaceProject project in Store.Projects)
-                {
-                    <option value="@project.Id">@project.Name</option>
-                }
-            </select>
+        <div class="ws-tabs">
+            @foreach (WorkspaceProject project in Store.Projects)
+            {
+                bool active = project.Id == Store.ActiveProject?.Id;
 
-            <input class="ws-name-input"
-                   value="@Store.ActiveName"
-                   title="重命名当前工作区"
-                   @onchange="e => RenameActive(e.Value?.ToString())" />
+                <div class="ws-tab @(active ? "active" : "")"
+                     @onclick="() => Store.ActivateProject(project.Id)">
 
-            <button class="mini-button" @onclick="() => Store.CreateProject()">新建</button>
-            <button class="mini-button danger" @onclick="DeleteActive">删除</button>
+                    @if (active)
+                    {
+                        <input class="ws-tab-input"
+                               value="@project.Name"
+                               title="重命名工作区"
+                               @onclick:stopPropagation="true"
+                               @onchange="e => RenameProject(project, e.Value?.ToString())" />
+
+                        <button class="ws-tab-close"
+                                title="删除该工作区"
+                                @onclick:stopPropagation="true"
+                                @onclick="() => DeleteProject(project)">
+                            ×
+                        </button>
+                    }
+                    else
+                    {
+                        <span>@project.Name</span>
+                    }
+                </div>
+            }
+
+            <button class="ws-tab-add" @onclick="() => Store.CreateProject()">+ 新建</button>
+
             <button class="mini-button" @onclick="ExportWorkspace">导出</button>
 
             <label class="mini-button file-button">
@@ -267,8 +282,6 @@
     private const int CellHeight = 400;
     private const int NodeHeight = 280;
     private const int NodeWidth = 210;
-
-    private CollapseMode _mode = CollapseMode.IncludeCycles;
 
     private WorkspaceItem? _selectedMaterial;
 
@@ -598,7 +611,7 @@
 
     private void ComputeStack(WorkspaceNode slot)
     {
-        NodeActionResult result = Store.ComputeStack(slot.Id, _mode);
+        NodeActionResult result = Store.ComputeStack(slot.Id, Store.Mode);
 
         ShowDialog("堆叠", result.Message);
     }
@@ -614,9 +627,9 @@
 
         NodeActionResult result = operation switch
         {
-            "pin" => Store.ApplyPin(node.Id, _mode),
-            "cut" => Store.ApplyCut(node.Id, _mode),
-            _ => Store.ApplyCollapse(node.Id, _mode)
+            "pin" => Store.ApplyPin(node.Id, Store.Mode),
+            "cut" => Store.ApplyCut(node.Id, Store.Mode),
+            _ => Store.ApplyCollapse(node.Id, Store.Mode)
         };
 
         if (!result.Created)
@@ -739,21 +752,13 @@
         _dialogConfirm = null;
     }
 
-    private void RenameActive(string? name)
+    private void RenameProject(WorkspaceProject project, string? name)
     {
-        if (Store.ActiveProject is WorkspaceProject project)
-        {
-            Store.RenameProject(project.Id, name);
-        }
+        Store.RenameProject(project.Id, name);
     }
 
-    private void DeleteActive()
+    private void DeleteProject(WorkspaceProject project)
     {
-        if (Store.ActiveProject is not WorkspaceProject project)
-        {
-            return;
-        }
-
         ShowConfirm(
             "删除工作区",
             $"将删除工作区「{project.Name}」及其中的全部节点，素材列表不受影响。",
@@ -801,7 +806,7 @@
 
         Store.SetMaxLayers(layers);
 
-        (int updated, int failed) = Store.RecomputeAll(_mode);
+        (int updated, int failed) = Store.RecomputeAll(Store.Mode);
 
         if (failed > 0)
         {
@@ -813,14 +818,14 @@
 
     private void SetMode(CollapseMode mode)
     {
-        if (_mode == mode)
+        if (Store.Mode == mode)
         {
             return;
         }
 
-        _mode = mode;
+        Store.SetMode(mode);
 
-        (int updated, int failed) = Store.RecomputeAll(mode);
+        (int updated, int failed) = Store.RecomputeAll(Store.Mode);
 
         if (failed > 0)
         {
@@ -831,5 +836,5 @@
     }
 
     private string ModeClass(CollapseMode mode) =>
-        _mode == mode ? "format-button active" : "format-button";
+        Store.Mode == mode ? "format-button active" : "format-button";
 }

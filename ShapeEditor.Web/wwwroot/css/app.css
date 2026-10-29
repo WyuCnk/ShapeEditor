@@ -1549,3 +1549,59 @@ button {
 .file-button input[type="file"] {
     display: none;
 }
+.ws-tabs {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.ws-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 12px;
+    border: 1px solid #d8d4e8;
+    border-radius: 999px;
+    background: #f7f5fc;
+    color: #4a4a55;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.ws-tab.active {
+    background: #512bd4;
+    border-color: #512bd4;
+    color: #ffffff;
+}
+
+.ws-tab-input {
+    width: 110px;
+    padding: 0 2px;
+    border: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.6);
+    background: transparent;
+    color: inherit;
+    font-size: 13px;
+    outline: none;
+}
+
+.ws-tab-close {
+    border: none;
+    background: transparent;
+    color: inherit;
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0.75;
+}
+
+.ws-tab-add {
+    padding: 6px 12px;
+    border: 1px dashed #b9a9ee;
+    border-radius: 999px;
+    background: #ffffff;
+    color: #512bd4;
+    font-size: 13px;
+    cursor: pointer;
+}

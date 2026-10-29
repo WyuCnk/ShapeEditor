@@ -102,6 +102,7 @@ public sealed partial class WorkspaceStore
         _nodes = project.Nodes;
         _edges = project.Edges;
         MaxLayers = project.MaxLayers;
+        Mode = project.Mode;
 
         _nodeCache.Clear();
         SelectedNode = null;

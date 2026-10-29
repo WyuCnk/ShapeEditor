@@ -37,6 +37,26 @@ public sealed partial class WorkspaceStore
     /// </summary>
     public int MaxLayers { get; private set; } = 100;
 
+    /// <summary>
+    /// 当前工作区的下落规则。
+    /// </summary>
+    public CollapseMode Mode { get; private set; } = CollapseMode.IncludeCycles;
+
+    public void SetMode(CollapseMode mode)
+    {
+        if (Mode == mode)
+        {
+            return;
+        }
+
+        Mode = mode;
+
+        SnapshotActive();
+
+        PersistGraph();
+        Changed?.Invoke();
+    }
+
     public void SetMaxLayers(int layers)
     {
         int value = Math.Clamp(layers, ShapeRules.MinLayerCount, ShapeRules.MaxLayerCount);
@@ -1001,6 +1021,7 @@ public sealed partial class WorkspaceStore
         _active.Nodes = _nodes;
         _active.Edges = _edges;
         _active.MaxLayers = MaxLayers;
+        _active.Mode = Mode;
     }
 
     private void PersistGraph()
