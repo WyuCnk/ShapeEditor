@@ -17,7 +17,7 @@ public partial class WorkspacePage : ContentPage
 
     private const double CellWidth = 190;
 
-    private const double CellHeight = 300;
+    private const double CellHeight = 400;
 
     private static readonly Color Accent = Color.FromArgb("#512BD4");
 
@@ -657,6 +657,50 @@ public partial class WorkspacePage : ContentPage
         EventArgs e)
     {
         _store!.ClearNodes();
+    }
+
+    private async void OnExportImage(
+        object? sender,
+        EventArgs e)
+    {
+        if (_store is null || _store.Nodes.Count == 0)
+        {
+            Show("画布是空的。");
+
+            return;
+        }
+
+        try
+        {
+            IScreenshotResult? shot = await Canvas.CaptureAsync();
+
+            if (shot is null)
+            {
+                Show("无法截取画布。");
+
+                return;
+            }
+
+            string path = Path.Combine(
+                FileSystem.CacheDirectory,
+                $"shape-path-{DateTime.Now:yyyyMMdd-HHmmss}.png");
+
+            await using (Stream source = await shot.OpenReadAsync(ScreenshotFormat.Png))
+            await using (FileStream target = File.Create(path))
+            {
+                await source.CopyToAsync(target);
+            }
+
+            await Share.Default.RequestAsync(new ShareFileRequest
+            {
+                Title = "导出路径图",
+                File = new ShareFile(path)
+            });
+        }
+        catch (Exception exception)
+        {
+            Show("导出失败：" + exception.Message);
+        }
     }
 
     private async Task ExportProjectAsync()

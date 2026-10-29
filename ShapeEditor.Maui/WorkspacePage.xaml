@@ -45,6 +45,12 @@
                     CornerRadius="8"
                     Clicked="OnCreateNode" />
 
+            <Button Text="导出图片"
+                    FontSize="12"
+                    HeightRequest="32"
+                    CornerRadius="8"
+                    Clicked="OnExportImage" />
+
             <Button Text="清空"
                     FontSize="12"
                     HeightRequest="32"
