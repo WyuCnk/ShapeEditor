@@ -58,6 +58,22 @@ public sealed class ShapePreviewDrawable : IDrawable
                         y + cell * 0.08f,
                         cell * 0.84f,
                         cell * 0.84f);
+
+                    // 格子够大时用字母标注：C 晶体 / S 形状 / P 顶针
+                    if (cell >= 14)
+                    {
+                        canvas.FontColor = Colors.White;
+                        canvas.FontSize = (float)(cell * 0.52);
+
+                        canvas.DrawString(
+                            LetterOf(shape),
+                            x,
+                            y,
+                            cell,
+                            cell,
+                            HorizontalAlignment.Center,
+                            VerticalAlignment.Center);
+                    }
                 }
 
                 canvas.StrokeColor = Color.FromArgb("#E6E2F2");
@@ -66,6 +82,17 @@ public sealed class ShapePreviewDrawable : IDrawable
                 canvas.DrawRectangle(x, y, cell, cell);
             }
         }
+    }
+
+    private static string LetterOf(
+        ShapeCell shape)
+    {
+        return shape.Type switch
+        {
+            CellType.Crystal => "C",
+            CellType.Pin => "P",
+            _ => "S"
+        };
     }
 
     private static Color ColorFor(

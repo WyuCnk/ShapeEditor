@@ -149,6 +149,7 @@ public partial class WorkspacePage : ContentPage
             {
                 HeightRequest = 64,
                 WidthRequest = 96,
+                InputTransparent = true,
                 Drawable = PreviewOf(item.Code, item.Format, item.Layers, item.Parts)
             };
 
@@ -263,6 +264,7 @@ public partial class WorkspacePage : ContentPage
                 new GraphicsView
                 {
                     HeightRequest = 64,
+                    InputTransparent = true,
                     Drawable = NodePreview(node)
                 }
             }
