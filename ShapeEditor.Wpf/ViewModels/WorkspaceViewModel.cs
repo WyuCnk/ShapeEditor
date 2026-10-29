@@ -10,6 +10,7 @@ using ShapeEditor.Core.Services;
 using ShapeEditor.Core.Workspaces;
 using ShapeEditor.Wpf.Rendering;
 using ShapeEditor.Wpf.Services;
+using ShapeEditor.Core.Workspaces;
 
 namespace ShapeEditor.Wpf.ViewModels;
 

@@ -4,9 +4,8 @@ using ShapeEditor.Core;
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Physics;
 using ShapeEditor.Core.Services;
-using ShapeEditor.Core.Workspaces;
 
-namespace ShapeEditor.Wpf.Services;
+namespace ShapeEditor.Core.Workspaces;
 
 public enum WorkspaceAddResult
 {
@@ -50,12 +49,20 @@ public sealed class WorkspaceStore
     public WorkspaceStore(
         string? filePath = null)
     {
-        _filePath = filePath ?? StoragePaths.WorkspaceFile;
+        _filePath = filePath ?? DefaultPath();
 
         Load();
     }
 
     public event Action? Changed;
+
+    private static string DefaultPath()
+    {
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "ShapeEditor",
+            "workspaces.json");
+    }
 
     /// <summary>最近一次保存失败的原因。</summary>
     public string? LastError { get; private set; }

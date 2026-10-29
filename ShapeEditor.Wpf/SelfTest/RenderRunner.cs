@@ -250,7 +250,7 @@ public static class RenderRunner
             Path.GetTempPath(),
             $"shape-workspace-render-{Guid.NewGuid():N}.json");
 
-        var viewModel = new WorkspaceViewModel(new Services.WorkspaceStore(storePath));
+        var viewModel = new WorkspaceViewModel(new WorkspaceStore(storePath));
 
         var view = new WorkspaceView
         {

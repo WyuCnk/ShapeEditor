@@ -1,6 +1,7 @@
-﻿using System.IO;
+using System.IO;
 using ShapeEditor.Core.Models;
 using ShapeEditor.Wpf.Services;
+using ShapeEditor.Core.Workspaces;
 
 namespace ShapeEditor.Tests;
 
