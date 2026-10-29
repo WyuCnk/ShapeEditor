@@ -70,6 +70,21 @@ public sealed partial class WorkspaceStore
             : _nodes.FirstOrDefault(node => node.Id == id);
     }
 
+    /// <summary>
+    /// 取节点实际参与运算的图形：引用槽会解析到它引用的节点。
+    /// </summary>
+    public ShapeDocument? GetEffectiveDocument(WorkspaceNode node)
+    {
+        if (node.Kind == "ref" && node.TargetId is not null)
+        {
+            WorkspaceNode? target = FindNode(node.TargetId);
+
+            return target is null ? null : GetNodeDocument(target);
+        }
+
+        return GetNodeDocument(node);
+    }
+
     public ShapeDocument? GetNodeDocument(WorkspaceNode node)
     {
         if (!node.HasShape)
@@ -492,13 +507,20 @@ public sealed partial class WorkspaceStore
             "堆叠结果",
             colOffset: 0);
 
+        /*
+         * 连线从槽位节点出发，而不是从被引用的节点出发：
+         * 槽位自己写着「引用 #N」，读者顺着它去看目标即可。
+         */
+        WorkspaceNode bottomSource = slot.TopInput ? slot : baseNode;
+        WorkspaceNode topSource = slot.TopInput ? baseNode : slot;
+
         AddEdge(
-            bottomId,
+            bottomSource.Id,
             created.Id,
             "在下方堆叠");
 
         AddEdge(
-            topId,
+            topSource.Id,
             created.Id,
             "在上方堆叠");
 
@@ -681,10 +703,10 @@ public sealed partial class WorkspaceStore
                 }
 
                 ShapeDocument? bottomDocument =
-                    bottom is null ? null : GetNodeDocument(bottom);
+                    bottom is null ? null : GetEffectiveDocument(bottom);
 
                 ShapeDocument? topDocument =
-                    top is null ? null : GetNodeDocument(top);
+                    top is null ? null : GetEffectiveDocument(top);
 
                 if (bottomDocument is null || topDocument is null)
                 {
