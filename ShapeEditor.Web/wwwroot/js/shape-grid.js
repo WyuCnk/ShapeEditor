@@ -1682,3 +1682,12 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
 
     URL.revokeObjectURL(url);
 };
+window.shapeUi = {
+    focus: function (element) {
+        try {
+            element.focus();
+            element.select();
+        } catch (e) {
+        }
+    }
+};

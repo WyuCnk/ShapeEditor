@@ -26,26 +26,32 @@
                 bool active = project.Id == Store.ActiveProject?.Id;
 
                 <div class="ws-tab @(active ? "active" : "")"
-                     @onclick="() => Store.ActivateProject(project.Id)">
+                     @onclick="() => Store.ActivateProject(project.Id)"
+                     @ondblclick="() => BeginRename(project)">
+
+                    @if (_renamingId == project.Id)
+                    {
+                        <input @ref="_renameInput"
+                               class="ws-tab-input"
+                               value="@project.Name"
+                               @oninput="e => _renameText = e.Value?.ToString() ?? string.Empty"
+                               @onclick:stopPropagation="true"
+                               @onblur="() => CommitRename(project)"
+                               @onkeydown="e => OnRenameKey(e, project)" />
+                    }
+                    else
+                    {
+                        <span>@project.Name</span>
+                    }
 
                     @if (active)
                     {
-                        <input class="ws-tab-input"
-                               value="@project.Name"
-                               title="重命名工作区"
-                               @onclick:stopPropagation="true"
-                               @onchange="e => RenameProject(project, e.Value?.ToString())" />
-
                         <button class="ws-tab-close"
                                 title="删除该工作区"
                                 @onclick:stopPropagation="true"
                                 @onclick="() => DeleteProject(project)">
                             ×
                         </button>
-                    }
-                    else
-                    {
-                        <span>@project.Name</span>
                     }
                 </div>
             }
@@ -94,6 +100,10 @@
             </button>
         </div>
     </header>
+
+    <div class="graph-hint">
+        提示：点击连线上的操作文字可以调整标签位置；双击工作区标签可以重命名。
+    </div>
 
     <div class="workspace-body">
 
@@ -284,6 +294,12 @@
     private const int NodeWidth = 210;
 
     private WorkspaceItem? _selectedMaterial;
+
+    private string? _renamingId;
+
+    private string _renameText = "";
+
+    private ElementReference _renameInput;
 
     private string _dialogTitle = "";
 
@@ -752,9 +768,55 @@
         _dialogConfirm = null;
     }
 
-    private void RenameProject(WorkspaceProject project, string? name)
+    private async Task BeginRename(WorkspaceProject project)
     {
-        Store.RenameProject(project.Id, name);
+        _renamingId = project.Id;
+        _renameText = project.Name;
+
+        StateHasChanged();
+
+        await Task.Delay(20);
+
+        try
+        {
+            await JS.InvokeVoidAsync("shapeUi.focus", _renameInput);
+        }
+        catch
+        {
+        }
+    }
+
+    private void CommitRename(WorkspaceProject project)
+    {
+        if (_renamingId != project.Id)
+        {
+            return;
+        }
+
+        _renamingId = null;
+
+        if (string.IsNullOrWhiteSpace(_renameText))
+        {
+            return;
+        }
+
+        Store.RenameProject(project.Id, _renameText);
+    }
+
+    private void OnRenameKey(KeyboardEventArgs e, WorkspaceProject project)
+    {
+        if (e.Key == "Enter")
+        {
+            CommitRename(project);
+
+            StateHasChanged();
+        }
+        else if (e.Key == "Escape")
+        {
+            _renamingId = null;
+
+            StateHasChanged();
+        }
     }
 
     private void DeleteProject(WorkspaceProject project)
