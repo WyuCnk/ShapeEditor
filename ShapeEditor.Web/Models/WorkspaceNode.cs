@@ -70,4 +70,9 @@ public sealed class WorkspaceEdge
     public string ToId { get; set; } = "";
 
     public string Label { get; set; } = "";
+
+    /// <summary>
+    /// 标签在连线上的位置比例（0~1），点击标签可以轮换。
+    /// </summary>
+    public double LabelT { get; set; } = 0.5;
 }

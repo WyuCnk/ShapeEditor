@@ -595,6 +595,30 @@ public sealed partial class WorkspaceStore
         return cascade.Count;
     }
 
+    /// <summary>
+    /// 点标签时在 0.5 / 0.75 / 0.25 之间轮换，微调标签位置。
+    /// </summary>
+    public void CycleEdgeLabel(string fromId, string toId)
+    {
+        WorkspaceEdge? edge = _edges.FirstOrDefault(
+            entry => entry.FromId == fromId && entry.ToId == toId);
+
+        if (edge is null)
+        {
+            return;
+        }
+
+        edge.LabelT = edge.LabelT switch
+        {
+            < 0.4 => 0.5,
+            < 0.6 => 0.75,
+            _ => 0.25
+        };
+
+        PersistGraph();
+        Changed?.Invoke();
+    }
+
     public void ClearGraph()
     {
         _nodes.Clear();

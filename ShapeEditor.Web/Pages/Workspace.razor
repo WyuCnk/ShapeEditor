@@ -110,7 +110,9 @@
                 @foreach (EdgeView edge in EdgeViews)
                 {
                     <div class="graph-edge-label-html"
-                         style="left:@(edge.LabelX)px;top:@(edge.LabelY)px;">
+                         style="left:@(edge.LabelX)px;top:@(edge.LabelY)px;"
+                         title="点击调整标签位置"
+                         @onclick="() => Store.CycleEdgeLabel(edge.FromId, edge.ToId)">
                         @edge.Label
                     </div>
                 }
@@ -291,7 +293,13 @@
     private static int NodeTop(WorkspaceNode node) =>
         20 + node.Row * CellHeight;
 
-    private sealed record EdgeView(string Path, string Label, int LabelX, int LabelY);
+    private sealed record EdgeView(
+        string FromId,
+        string ToId,
+        string Path,
+        string Label,
+        int LabelX,
+        int LabelY);
 
     private List<EdgeView> EdgeViews
     {
@@ -338,15 +346,49 @@
                 string path =
                     $"M {x1} {y1} L {x2} {y2 - 4}";
 
-                int labelX = Math.Abs(x1 - x2) < 8
-                    ? x1 + 34
-                    : (x1 + x2) / 2;
+                // 标签按比例落在线上，再沿法线推到线的一侧，
+                // 点击标签可以在 0.5 / 0.75 / 0.25 之间轮换
+                double t = Math.Clamp(edge.LabelT, 0.1, 0.9);
+
+                double dx = x2 - x1;
+                double dy = y2 - y1;
+
+                double length = Math.Sqrt(dx * dx + dy * dy);
+
+                if (length < 1)
+                {
+                    length = 1;
+                }
+
+                double nx = -dy / length;
+                double ny = dx / length;
+
+                if (ny > 0)
+                {
+                    nx = -nx;
+                    ny = -ny;
+                }
+
+                if (Math.Abs(dx) < 8)
+                {
+                    nx = 1;
+                    ny = 0;
+                }
+
+                double offset = Math.Abs(dx) < 8 ? 42 : 18;
+
+                int labelX = (int)Math.Round(x1 + dx * t + nx * offset);
+                int labelY = (int)Math.Round(y1 + dy * t + ny * offset);
 
                 labelX = Math.Clamp(labelX, 70, CanvasWidth - 70);
 
-                int labelY = (y1 + y2) / 2 - 8;
-
-                views.Add(new EdgeView(path, edge.Label, labelX, labelY));
+                views.Add(new EdgeView(
+                    edge.FromId,
+                    edge.ToId,
+                    path,
+                    edge.Label,
+                    labelX,
+                    labelY));
             }
 
             return views;
@@ -626,6 +668,7 @@
                 from = from.Id,
                 to = to.Id,
                 label = edge.Label,
+                labelT = edge.LabelT,
                 kind = "flow"
             });
         }

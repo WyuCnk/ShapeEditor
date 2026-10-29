@@ -1330,21 +1330,42 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
 
         arrowHeadAt(x1, y1, x2, y2, "#512BD4");
 
-        const midY = (y1 + y2) / 2;
+        const t = Math.min(0.9, Math.max(0.1, edge.labelT === undefined ? 0.5 : edge.labelT));
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const length = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+
+        let nx = -dy / length;
+        let ny = dx / length;
+
+        if (ny > 0) {
+            nx = -nx;
+            ny = -ny;
+        }
+
+        if (Math.abs(dx) < 8) {
+            nx = 1;
+            ny = 0;
+        }
+
+        const offset = Math.abs(dx) < 8 ? 42 : 18;
+
+        const midX = x1 + dx * t + nx * offset;
+        const midY = y1 + dy * t + ny * offset;
 
         // 标签加白底，避免压线
         ctx.font = '400 12px "Microsoft YaHei", sans-serif';
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
 
-        const labelX = Math.abs(x1 - x2) < 8 ? x1 + 34 : (x1 + x2) / 2;
+        const labelX = midX;
         const textWidth = ctx.measureText(edge.label).width;
 
         ctx.fillStyle = "#FFFFFF";
-        ctx.fillRect(labelX - textWidth / 2 - 6, midY - 18, textWidth + 12, 18);
+        ctx.fillRect(labelX - textWidth / 2 - 6, midY - 9, textWidth + 12, 18);
 
         ctx.fillStyle = "#4527A0";
-        ctx.fillText(edge.label, labelX, midY - 8);
+        ctx.fillText(edge.label, labelX, midY);
     }
 
     // ---- 节点 ----
