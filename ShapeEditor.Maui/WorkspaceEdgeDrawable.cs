@@ -22,29 +22,7 @@ public sealed class WorkspaceEdgeDrawable : IDrawable
 
             DrawArrow(canvas, edge.X1, edge.Y1, edge.X2, edge.Y2);
 
-            canvas.FontSize = 11;
 
-            float width = edge.Label.Length * 12f + 10;
-
-            canvas.FillColor = Colors.White;
-
-            canvas.FillRoundedRectangle(
-                edge.LabelX - width / 2,
-                edge.LabelY - 9,
-                width,
-                18,
-                4);
-
-            canvas.FontColor = Color.FromArgb("#4527A0");
-
-            canvas.DrawString(
-                edge.Label,
-                edge.LabelX - width / 2,
-                edge.LabelY - 9,
-                width,
-                18,
-                HorizontalAlignment.Center,
-                VerticalAlignment.Center);
         }
     }
 

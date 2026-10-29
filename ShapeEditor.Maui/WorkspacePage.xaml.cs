@@ -27,6 +27,8 @@ public partial class WorkspacePage : ContentPage
 
     private WorkspaceNode? _selectedNode;
 
+    private bool _exporting;
+
     private WorkspaceItem? _selectedMaterial;
 
     public WorkspacePage()
@@ -383,6 +385,42 @@ public partial class WorkspacePage : ContentPage
             }
         };
 
+        if (_exporting)
+        {
+            return new Border
+            {
+                Stroke = Color.FromArgb("#D0D0D0"),
+                StrokeThickness = 1,
+                BackgroundColor = Colors.White,
+                Padding = 6,
+                Content = new VerticalStackLayout
+                {
+                    Spacing = 4,
+                    Children =
+                    {
+                        new Label
+                        {
+                            Text = $"#{node.Seq} {TitleOf(node)}",
+                            FontSize = 10,
+                            TextColor = Muted
+                        },
+                        new GraphicsView
+                        {
+                            HeightRequest = 70,
+                            InputTransparent = true,
+                            Drawable = NodePreview(node)
+                        },
+                        new Label
+                        {
+                            Text = node.IsResult ? node.Label : "",
+                            FontSize = 10,
+                            TextColor = Muted
+                        }
+                    }
+                }
+            };
+        }
+
         if (node.Kind == "ref")
         {
             if (node.TargetId is not null &&
@@ -672,7 +710,17 @@ public partial class WorkspacePage : ContentPage
 
         try
         {
+            _exporting = true;
+
+            Render();
+
+            await Task.Delay(120);
+
             IScreenshotResult? shot = await Canvas.CaptureAsync();
+
+            _exporting = false;
+
+            Render();
 
             if (shot is null)
             {
