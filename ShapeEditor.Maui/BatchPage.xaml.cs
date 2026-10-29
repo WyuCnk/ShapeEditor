@@ -16,7 +16,7 @@ public partial class BatchPage : ContentPage
     }
 
     private void OnParse(
-        object sender,
+        object? sender,
         EventArgs e)
     {
         var items = new List<BatchItem>();
@@ -77,7 +77,7 @@ public partial class BatchPage : ContentPage
     }
 
     private void OnClear(
-        object sender,
+        object? sender,
         EventArgs e)
     {
         CodeEditor.Text = "";
