@@ -78,7 +78,7 @@
                    TextColor="#6B6B76"
                    VerticalTextAlignment="Center" />
 
-            <Label Text="C 晶体"
+            <Label Text="c 晶体"
                    FontSize="11"
                    TextColor="#6B6B76"
                    VerticalTextAlignment="Center" />
@@ -88,7 +88,7 @@
                    TextColor="#6B6B76"
                    VerticalTextAlignment="Center" />
 
-            <Label Text="色块 = 部件颜色（灰 = 无颜色）"
+            <Label Text="- 空位　色块 = 部件颜色（灰 = 无颜色）"
                    FontSize="11"
                    TextColor="#6B6B76"
                    VerticalTextAlignment="Center" />
