@@ -37,6 +37,15 @@
                 导出图片
             </button>
 
+            <label class="workspace-field ws-inline-field">
+                高度上限
+                <input type="number"
+                       min="1"
+                       max="100"
+                       value="@Store.MaxLayers"
+                       @onchange="e => OnMaxLayersChanged(e.Value?.ToString())" />
+            </label>
+
             <button class="secondary-button"
                     disabled="@(Store.Nodes.Count == 0)"
                     @onclick="ConfirmClear">
@@ -340,7 +349,11 @@
                 string path =
                     $"M {x1} {y1} L {x1} {lane} L {x2} {lane} L {x2} {y2 - 4}";
 
-                int labelX = Math.Clamp((x1 + x2) / 2, 70, CanvasWidth - 70);
+                int labelX = Math.Abs(x1 - x2) < 8
+                    ? x1 + 34
+                    : (x1 + x2) / 2;
+
+                labelX = Math.Clamp(labelX, 70, CanvasWidth - 70);
                 int labelY = Math.Max(y1 + 12, lane - 12);
 
                 views.Add(new EdgeView(path, edge.Label, labelX, labelY));
@@ -578,6 +591,10 @@
                 label = NodeTitle(node),
                 isResult = node.IsResult,
                 isRef = node.Kind == "ref",
+                refText = node.TargetId is not null &&
+                          Store.FindNode(node.TargetId) is WorkspaceNode reference
+                    ? $"引用 #{reference.Seq}"
+                    : "",
                 state = NodeDocument(node) is ShapeDocument document
                     ? ShapeCanvasState.Create(document)
                     : null
@@ -605,24 +622,6 @@
             });
         }
 
-        foreach (WorkspaceNode slot in Store.Nodes.Where(
-                     node => node.Kind == "ref" && node.TargetId is not null))
-        {
-            WorkspaceNode? target = Store.FindNode(slot.TargetId);
-
-            if (target is null)
-            {
-                continue;
-            }
-
-            edges.Add(new
-            {
-                from = target.Id,
-                to = slot.Id,
-                label = $"引用 #{target.Seq}",
-                kind = "ref"
-            });
-        }
 
         try
         {

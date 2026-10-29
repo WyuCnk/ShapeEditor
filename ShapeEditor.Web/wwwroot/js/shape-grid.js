@@ -1330,7 +1330,7 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
 
-        const labelX = (x1 + x2) / 2;
+        const labelX = Math.abs(x1 - x2) < 8 ? x1 + 34 : (x1 + x2) / 2;
         const textWidth = ctx.measureText(edge.label).width;
 
         ctx.fillStyle = "#FFFFFF";
@@ -1362,6 +1362,12 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
         ctx.textBaseline = "top";
         ctx.fillStyle = "#6B6B76";
         ctx.fillText("#" + node.seq + " · " + node.label, x + 10, y + 10);
+
+        if (node.refText) {
+            ctx.font = '600 12px "Microsoft YaHei", sans-serif';
+            ctx.fillStyle = "#8B7BBF";
+            ctx.fillText(node.refText, x + 10, y + 26);
+        }
 
         // 缩略图
         if (node.state) {
