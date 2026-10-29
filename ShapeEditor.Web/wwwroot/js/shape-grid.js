@@ -968,6 +968,7 @@ window.shapeGrid.downloadComposition = async function (sections, fileName) {
     }
 
     const blob = await canvasToBlob(canvas);
+    if (await window.shapeGridTryShare(blob, fileName)) { return; }
     const url = URL.createObjectURL(blob);
 
     const link = document.createElement("a");
@@ -1157,6 +1158,7 @@ window.shapeGrid.downloadComposition = async function (sections, fileName, opera
     }
 
     const blob = await canvasToBlob(canvas);
+    if (await window.shapeGridTryShare(blob, fileName)) { return; }
     const url = URL.createObjectURL(blob);
 
     const link = document.createElement("a");
@@ -1420,6 +1422,7 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
     }
 
     const blob = await canvasToBlob(canvas);
+    if (await window.shapeGridTryShare(blob, fileName)) { return; }
     const url = URL.createObjectURL(blob);
 
     const link = document.createElement("a");
@@ -1669,6 +1672,7 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
     }
 
     const blob = await canvasToBlob(canvas);
+    if (await window.shapeGridTryShare(blob, fileName)) { return; }
     const url = URL.createObjectURL(blob);
 
     const link = document.createElement("a");
@@ -1720,4 +1724,29 @@ window.shapeGridSaveOrShare = async function (link, fileName) {
     }
 
     link.click();
+};
+/*
+ * 直接拿现有 blob 调系统分享：不再 fetch，避免丢失用户手势
+ * 导致 navigator.share 抛 NotAllowedError 后回落成下载。
+ */
+window.shapeGridTryShare = async function (blob, fileName) {
+    try {
+        if (!navigator.canShare || !blob) {
+            return false;
+        }
+
+        const file = new File([blob], fileName, {
+            type: blob.type || "image/png"
+        });
+
+        if (!navigator.canShare({ files: [file] })) {
+            return false;
+        }
+
+        await navigator.share({ files: [file], title: fileName });
+
+        return true;
+    } catch (error) {
+        return false;
+    }
 };

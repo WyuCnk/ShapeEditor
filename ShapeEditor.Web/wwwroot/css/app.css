@@ -1773,3 +1773,32 @@ button {
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+@media (max-width: 820px) {
+    .workspace-body {
+        grid-template-columns: 1fr;
+        grid-template-areas:
+            "tabs"
+            "tools"
+            "side"
+            "canvas";
+    }
+
+    .workspace-list {
+        max-height: 200px;
+        overflow-y: auto;
+    }
+
+    .ws-tabs {
+        flex-wrap: wrap;
+    }
+
+    .ws-tab {
+        font-size: 12px;
+        padding: 6px 10px;
+    }
+
+    .ws-tabrow {
+        flex-wrap: wrap;
+        gap: 4px;
+    }
+}
