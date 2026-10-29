@@ -1170,3 +1170,228 @@ window.shapeGrid.downloadComposition = async function (sections, fileName, opera
 
     URL.revokeObjectURL(url);
 };
+/*
+ * 路径图导出：按节点 row/col 重绘整张制作路径。
+ * 主数据流用实线 + 操作标签；引用关系用虚线 + #编号（远距离只标编号）。
+ */
+window.shapeGrid.downloadGraph = async function (payload, fileName) {
+    const CELL_W = 250;
+    const CELL_H = 430;
+    const NODE_W = 210;
+    const NODE_H = 340;
+    const PAD = 24;
+    const maxSide = 16000;
+
+    const nodes = payload.nodes || [];
+    const edges = payload.edges || [];
+
+    if (nodes.length === 0) {
+        return;
+    }
+
+    const byId = {};
+
+    let maxCol = 0;
+    let maxRow = 0;
+
+    for (let i = 0; i < nodes.length; i++) {
+        const node = nodes[i];
+
+        byId[node.id] = node;
+        maxCol = Math.max(maxCol, node.col);
+        maxRow = Math.max(maxRow, node.row);
+    }
+
+    const width = PAD * 2 + (maxCol + 1) * CELL_W + (NODE_W - CELL_W);
+    const height = PAD * 2 + (maxRow + 1) * CELL_H + (NODE_H - CELL_H);
+
+    if (width > maxSide || height > maxSide) {
+        throw new Error("图片尺寸过大：" + width + " × " + height);
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+
+    const ctx = canvas.getContext("2d");
+
+    ctx.fillStyle = "#FFFFFF";
+    ctx.fillRect(0, 0, width, height);
+
+    function nodeLeft(node) { return PAD + node.col * CELL_W; }
+    function nodeTop(node) { return PAD + node.row * CELL_H; }
+
+    // ---- 连线 ----
+    const outIndex = {};
+    const outCount = {};
+    const inIndex = {};
+    const inCount = {};
+
+    for (let i = 0; i < edges.length; i++) {
+        const edge = edges[i];
+
+        outIndex[i] = (outCount[edge.from] || 0);
+        outCount[edge.from] = (outCount[edge.from] || 0) + 1;
+        inIndex[i] = (inCount[edge.to] || 0);
+        inCount[edge.to] = (inCount[edge.to] || 0) + 1;
+    }
+
+    function spread(index, count, step) {
+        if (count <= 1) {
+            return 0;
+        }
+
+        return Math.round((index - (count - 1) / 2) * step);
+    }
+
+    function arrowHead(x, y, dashed) {
+        ctx.beginPath();
+        ctx.moveTo(x - 5, y - 9);
+        ctx.lineTo(x + 5, y - 9);
+        ctx.lineTo(x, y);
+        ctx.closePath();
+        ctx.fillStyle = dashed ? "#8B7BBF" : "#512BD4";
+        ctx.fill();
+    }
+
+    for (let i = 0; i < edges.length; i++) {
+        const edge = edges[i];
+        const from = byId[edge.from];
+        const to = byId[edge.to];
+
+        if (!from || !to) {
+            continue;
+        }
+
+        if (edge.kind === "ref") {
+            const far = Math.abs(from.row - to.row) > 2 || Math.abs(from.col - to.col) > 2;
+
+            if (far) {
+                // 远距离引用只标编号，不画长线
+                ctx.font = '600 12px "Microsoft YaHei", sans-serif';
+                ctx.fillStyle = "#8B7BBF";
+                ctx.textAlign = "right";
+                ctx.textBaseline = "top";
+                ctx.fillText(edge.label, nodeLeft(to) + NODE_W - 6, nodeTop(to) + 6);
+
+                continue;
+            }
+
+            const x1 = nodeLeft(from) + NODE_W / 2;
+            const y1 = nodeTop(from) + NODE_H;
+            const x2 = nodeLeft(to) + NODE_W / 2;
+
+            ctx.save();
+            ctx.setLineDash([6, 5]);
+            ctx.strokeStyle = "#8B7BBF";
+            ctx.lineWidth = 1.6;
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x1, y1 + 24);
+            ctx.lineTo(x2, y1 + 24);
+            ctx.lineTo(x2, nodeTop(to) - 6);
+            ctx.stroke();
+            ctx.restore();
+
+            arrowHead(x2, nodeTop(to), true);
+
+            continue;
+        }
+
+        const x1 = nodeLeft(from) + NODE_W / 2 + spread(outIndex[i], outCount[edge.from], 30);
+        const x2 = nodeLeft(to) + NODE_W / 2 + spread(inIndex[i], inCount[edge.to], 30);
+
+        const y1 = nodeTop(from) + NODE_H;
+        const y2 = nodeTop(to);
+
+        let midY = y1 + 26 + outIndex[i] * 16;
+
+        if (midY > y2 - 30) {
+            midY = y2 - 30;
+        }
+
+        ctx.strokeStyle = "#512BD4";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x1, midY);
+        ctx.lineTo(x2, midY);
+        ctx.lineTo(x2, y2 - 4);
+        ctx.stroke();
+
+        arrowHead(x2, y2, false);
+
+        // 标签加白底，避免压线
+        ctx.font = '400 12px "Microsoft YaHei", sans-serif';
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+
+        const labelX = (x1 + x2) / 2;
+        const textWidth = ctx.measureText(edge.label).width;
+
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillRect(labelX - textWidth / 2 - 4, midY - 16, textWidth + 8, 16);
+
+        ctx.fillStyle = "#4527A0";
+        ctx.fillText(edge.label, labelX, midY - 8);
+    }
+
+    // ---- 节点 ----
+    for (let i = 0; i < nodes.length; i++) {
+        const node = nodes[i];
+
+        const x = nodeLeft(node);
+        const y = nodeTop(node);
+
+        ctx.fillStyle = node.isResult ? "#FAF8FF" : "#FFFFFF";
+        ctx.strokeStyle = node.isResult ? "#512BD4" : (node.isRef ? "#B9A9EE" : "#D0D0D0");
+        ctx.lineWidth = node.isResult ? 2 : 1.2;
+
+        ctx.beginPath();
+        ctx.roundRect(x, y, NODE_W, NODE_H, 12);
+        ctx.fill();
+        ctx.stroke();
+
+        // 标题
+        ctx.font = '600 12px "Microsoft YaHei", sans-serif';
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+        ctx.fillStyle = "#6B6B76";
+        ctx.fillText("#" + node.seq + " · " + node.label, x + 10, y + 10);
+
+        // 缩略图
+        if (node.state) {
+            const image = createFullImageCanvas(node.state);
+
+            const boxX = x + 10;
+            const boxY = y + 40;
+            const boxW = NODE_W - 20;
+            const boxH = 170;
+
+            const scale = Math.min(boxW / image.width, boxH / image.height);
+            const drawW = image.width * scale;
+            const drawH = image.height * scale;
+
+            ctx.drawImage(
+                image,
+                boxX + (boxW - drawW) / 2,
+                boxY + (boxH - drawH) / 2,
+                drawW,
+                drawH);
+        }
+    }
+
+    const blob = await canvasToBlob(canvas);
+    const url = URL.createObjectURL(blob);
+
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    link.style.display = "none";
+
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    URL.revokeObjectURL(url);
+};

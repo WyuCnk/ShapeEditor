@@ -8,6 +8,7 @@
 @implements IDisposable
 @inject WorkspaceStore Store
 @inject NavigationManager Nav
+@inject IJSRuntime JS
 
 <PageTitle>图形工作区</PageTitle>
 
@@ -138,14 +139,6 @@
 
                         @if (node.Kind == "ref")
                         {
-                            <select class="graph-select"
-                                    @onchange="e => OnSelectTarget(node, e.Value?.ToString())">
-                                <option value="">选择已有节点</option>
-                                @foreach (WorkspaceNode candidate in TargetCandidates(node))
-                                {
-                                    <option value="@candidate.Id">@NodeTitle(candidate) · @candidate.Layers 层</option>
-                                }
-                            </select>
 
                             @if (_selectedMaterial is not null && !node.HasShape)
                             {
@@ -555,11 +548,80 @@
             () => Store.ClearGraph());
     }
 
-    private Task ExportGraph()
+    private async Task ExportGraph()
     {
-        ShowDialog("导出图片", "路径图导出正在接入，稍后可用。");
+        if (Store.Nodes.Count == 0)
+        {
+            return;
+        }
 
-        return Task.CompletedTask;
+        var nodes = Store.Nodes
+            .Select(node => new
+            {
+                id = node.Id,
+                seq = node.Seq,
+                row = node.Row,
+                col = node.Col,
+                label = NodeTitle(node),
+                isResult = node.IsResult,
+                isRef = node.Kind == "ref",
+                state = NodeDocument(node) is ShapeDocument document
+                    ? ShapeCanvasState.Create(document)
+                    : null
+            })
+            .ToList();
+
+        var edges = new List<object>();
+
+        foreach (WorkspaceEdge edge in Store.Edges)
+        {
+            WorkspaceNode? from = Store.FindNode(edge.FromId);
+            WorkspaceNode? to = Store.FindNode(edge.ToId);
+
+            if (from is null || to is null)
+            {
+                continue;
+            }
+
+            edges.Add(new
+            {
+                from = from.Id,
+                to = to.Id,
+                label = edge.Label,
+                kind = "flow"
+            });
+        }
+
+        foreach (WorkspaceNode slot in Store.Nodes.Where(
+                     node => node.Kind == "ref" && node.TargetId is not null))
+        {
+            WorkspaceNode? target = Store.FindNode(slot.TargetId);
+
+            if (target is null)
+            {
+                continue;
+            }
+
+            edges.Add(new
+            {
+                from = target.Id,
+                to = slot.Id,
+                label = $"引用 #{target.Seq}",
+                kind = "ref"
+            });
+        }
+
+        try
+        {
+            await JS.InvokeVoidAsync(
+                "shapeGrid.downloadGraph",
+                new { nodes, edges },
+                $"shape-path-{DateTime.Now:yyyyMMdd-HHmmss}.png");
+        }
+        catch (Exception exception)
+        {
+            ShowDialog("导出失败", exception.Message);
+        }
     }
 
     private void ShowDialog(string title, string message)
