@@ -1,4 +1,5 @@
 using ShapeEditor.Core.Models;
+using ShapeEditor.Core.Theme;
 
 namespace ShapeEditor.Maui;
 
@@ -95,14 +96,18 @@ public sealed class ShapePreviewDrawable : IDrawable
         };
     }
 
+    /// <summary>
+    /// 颜色表示部件颜色，字母表示类型：S 形状 / C 晶体 / P 顶针。
+    /// 没有颜色时用统一的灰色。
+    /// </summary>
     private static Color ColorFor(
         ShapeCell shape)
     {
-        return shape.Type switch
+        if (shape.HasColor && shape.ColorCode is char code)
         {
-            CellType.Crystal => Color.FromArgb("#FF2D55"),
-            CellType.Shape when shape.HasColor => Color.FromArgb("#4A90D9"),
-            _ => Color.FromArgb("#2B2B2B")
-        };
+            return Color.FromUint(ShapePalette.FromCode(code));
+        }
+
+        return Color.FromArgb("#9E9E9E");
     }
 }
