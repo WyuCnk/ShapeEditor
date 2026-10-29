@@ -24,6 +24,12 @@
             <StackPanel Orientation="Horizontal"
                         HorizontalAlignment="Right"
                         VerticalAlignment="Center">
+                <Button Content="加入工作区"
+                        Command="{Binding AddToWorkspaceCommand}"
+                        Style="{StaticResource Button.Secondary}"
+                        ToolTip="把当前图形加入工作区的素材库"
+                        Margin="0,0,8,0" />
+
                 <Button Content="撤销"
                         Command="{Binding UndoCommand}"
                         IsEnabled="{Binding CanUndo}"

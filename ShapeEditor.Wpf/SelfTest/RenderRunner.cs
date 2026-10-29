@@ -59,6 +59,9 @@ public static class RenderRunner
             RenderMainWindow(
                 Path.Combine(outputDirectory, "ui-mainwindow.png"));
 
+            RenderWorkspaceView(
+                Path.Combine(outputDirectory, "ui-workspace.png"));
+
             /*
              * 快捷键说明窗口用非模态 Show() 打开，
              * 这里验证「关闭」按钮确实能关掉窗口。
@@ -226,6 +229,25 @@ public static class RenderRunner
         viewModel.ParseEntries();
 
         var view = new BatchView
+        {
+            DataContext = viewModel,
+            Width = 1280,
+            Height = 800
+        };
+
+        RenderElement(view, 1280, 800, path);
+    }
+
+    private static void RenderWorkspaceView(
+        string path)
+    {
+        string storePath = Path.Combine(
+            Path.GetTempPath(),
+            $"shape-workspace-render-{Guid.NewGuid():N}.json");
+
+        var viewModel = new WorkspaceViewModel(new Services.WorkspaceStore(storePath));
+
+        var view = new WorkspaceView
         {
             DataContext = viewModel,
             Width = 1280,

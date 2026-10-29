@@ -48,6 +48,12 @@
                     <RadioButton Content="批量查看"
                                  IsChecked="{Binding IsBatchTab, Mode=TwoWay}"
                                  Style="{StaticResource Toggle.Mode}"
+                                 Padding="16,6"
+                                 Margin="0,0,6,0" />
+
+                    <RadioButton Content="工作区"
+                                 IsChecked="{Binding IsWorkspaceTab, Mode=TwoWay}"
+                                 Style="{StaticResource Toggle.Mode}"
                                  Padding="16,6" />
                 </StackPanel>
 
@@ -70,6 +76,9 @@
 
             <views:BatchView DataContext="{Binding Batch}"
                              Visibility="{Binding DataContext.IsBatchVisible, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}" />
+
+            <views:WorkspaceView DataContext="{Binding Workspace}"
+                                 Visibility="{Binding DataContext.IsWorkspaceVisible, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}" />
         </Grid>
 
         <!-- 状态栏 -->

@@ -152,6 +152,7 @@ public sealed class EditorViewModel : ObservableObject
         MoveLeftCommand = new RelayCommand(MoveLeft);
         MoveRightCommand = new RelayCommand(MoveRight);
         ClearCellCommand = new RelayCommand(ClearSelectedCell);
+        AddToWorkspaceCommand = new RelayCommand(AddToWorkspace);
 
         _autoSaveTimer = new DispatcherTimer
         {
@@ -205,6 +206,18 @@ public sealed class EditorViewModel : ObservableObject
     public ICommand MoveRightCommand { get; }
 
     public ICommand ClearCellCommand { get; }
+
+    public ICommand AddToWorkspaceCommand { get; }
+
+    /// <summary>
+    /// 由 MainViewModel 注入：把当前图形加入工作区素材库。
+    /// </summary>
+    public Action<ShapeDocument>? AddToWorkspaceHandler { get; set; }
+
+    private void AddToWorkspace()
+    {
+        AddToWorkspaceHandler?.Invoke(Document);
+    }
 
     public ShapeDocument Document
     {

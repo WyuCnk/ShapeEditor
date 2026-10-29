@@ -15,6 +15,10 @@ public sealed class MainViewModel : ObservableObject
 
         Batch = new BatchViewModel();
 
+        Workspace = new WorkspaceViewModel();
+
+        Editor.AddToWorkspaceHandler = document => Workspace.AddMaterial(document);
+
         VersionText = "v" +
             (Assembly.GetExecutingAssembly().GetName().Version?.ToString(3)
              ?? "1.1.0");
@@ -29,6 +33,8 @@ public sealed class MainViewModel : ObservableObject
 
     public BatchViewModel Batch { get; }
 
+    public WorkspaceViewModel Workspace { get; }
+
     public int TabIndex
     {
         get => _tabIndex;
@@ -38,8 +44,10 @@ public sealed class MainViewModel : ObservableObject
             {
                 OnPropertyChanged(nameof(IsEditorTab));
                 OnPropertyChanged(nameof(IsBatchTab));
+                OnPropertyChanged(nameof(IsWorkspaceTab));
                 OnPropertyChanged(nameof(IsEditorVisible));
                 OnPropertyChanged(nameof(IsBatchVisible));
+                OnPropertyChanged(nameof(IsWorkspaceVisible));
             }
         }
     }
@@ -47,6 +55,20 @@ public sealed class MainViewModel : ObservableObject
     public bool IsEditorVisible => TabIndex == 0;
 
     public bool IsBatchVisible => TabIndex == 1;
+
+    public bool IsWorkspaceVisible => TabIndex == 2;
+
+    public bool IsWorkspaceTab
+    {
+        get => TabIndex == 2;
+        set
+        {
+            if (value)
+            {
+                TabIndex = 2;
+            }
+        }
+    }
 
     public bool IsEditorTab
     {
