@@ -600,6 +600,7 @@ public sealed class WorkspaceViewModel : ObservableObject
         {
             Title = "导出路径图",
             Filter = "PNG 图片 (*.png)|*.png",
+            InitialDirectory = StoragePaths.Root,
             FileName = $"shape-path-{DateTime.Now:yyyyMMdd-HHmmss}.png"
         };
 
@@ -618,6 +619,38 @@ public sealed class WorkspaceViewModel : ObservableObject
 
             MessageBox.Show($"已导出：{dialog.FileName}", "导出图片", MessageBoxButton.OK, MessageBoxImage.Information);
         }
+        catch (UnauthorizedAccessException)
+        {
+            string fallback = Path.Combine(
+                StoragePaths.Root,
+                Path.GetFileName(dialog.FileName));
+
+            MessageBoxResult answer = MessageBox.Show(
+                $"当前运行环境没有写入该目录的权限。\n\n是否改存到数据目录？\n{fallback}",
+                "导出图片",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+
+            if (answer != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            try
+            {
+                WorkspaceImageExporter.Export(
+                    fallback,
+                    _store.Nodes,
+                    _store.Edges,
+                    _store.GetEffectiveDocument);
+
+                MessageBox.Show($"已导出：{fallback}", "导出图片", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception exception)
+            {
+                MessageBox.Show(exception.Message, "导出失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
         catch (Exception exception)
         {
             MessageBox.Show(exception.Message, "导出失败", MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -632,6 +665,7 @@ public sealed class WorkspaceViewModel : ObservableObject
         {
             Title = "导出工作区",
             Filter = "工作区 JSON (*.json)|*.json",
+            InitialDirectory = StoragePaths.Root,
             FileName = $"workspace-{DateTime.Now:yyyyMMdd-HHmmss}.json"
         };
 
@@ -640,7 +674,29 @@ public sealed class WorkspaceViewModel : ObservableObject
             return;
         }
 
-        File.WriteAllText(dialog.FileName, json);
+        try
+        {
+            File.WriteAllText(dialog.FileName, json);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            string fallback = Path.Combine(
+                StoragePaths.Root,
+                Path.GetFileName(dialog.FileName));
+
+            MessageBoxResult answer = MessageBox.Show(
+                $"当前运行环境没有写入该目录的权限。\n\n是否改存到数据目录？\n{fallback}",
+                "导出工作区",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+
+            if (answer == MessageBoxResult.Yes)
+            {
+                File.WriteAllText(fallback, json);
+
+                MessageBox.Show($"已导出：{fallback}", "导出工作区", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+        }
     }
 
     private void ImportProject()
