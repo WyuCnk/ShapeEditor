@@ -323,6 +323,8 @@ public sealed class WorkspaceStore
 
         int removed = DeleteDownstream(nodeId);
 
+        AlignMaxLayersOnFirstShape(nodeId, layers);
+
         ApplyShape(node, code, format, layers, parts);
         node.IsResult = false;
         node.OpKey = null;
@@ -349,6 +351,8 @@ public sealed class WorkspaceStore
             return;
         }
 
+        AlignMaxLayersOnFirstShape(slotId, layers);
+
         ApplyShape(slot, code, format, layers, parts);
         slot.TargetId = null;
 
@@ -374,6 +378,29 @@ public sealed class WorkspaceStore
 
         Save();
         Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// 工作区里第一次出现图形时，把高度上限对齐到该图形的层数。
+    /// </summary>
+    private void AlignMaxLayersOnFirstShape(
+        string nodeId,
+        int layers)
+    {
+        WorkspaceProject project = EnsureActive();
+
+        bool hasOtherShape = project.Nodes.Any(node =>
+            node.Id != nodeId && node.HasShape);
+
+        if (hasOtherShape)
+        {
+            return;
+        }
+
+        project.MaxLayers = Math.Clamp(
+            layers,
+            ShapeRules.MinLayerCount,
+            ShapeRules.MaxLayerCount);
     }
 
     private void ApplyShape(

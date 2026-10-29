@@ -282,14 +282,15 @@
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <Border Width="210"
-                                            Background="#FFFFFF"
-                                            BorderBrush="#D0D0D0"
-                                            BorderThickness="1"
                                             CornerRadius="12"
                                             Padding="8"
                                             MouseLeftButtonDown="OnNodeClick">
                                         <Border.Style>
                                             <Style TargetType="Border">
+                                                <Setter Property="Background" Value="#FFFFFF" />
+                                                <Setter Property="BorderBrush" Value="#D0D0D0" />
+                                                <Setter Property="BorderThickness" Value="1" />
+
                                                 <Style.Triggers>
                                                     <DataTrigger Binding="{Binding IsResult}" Value="True">
                                                         <Setter Property="BorderBrush" Value="#512BD4" />
@@ -297,6 +298,7 @@
                                                     </DataTrigger>
                                                     <DataTrigger Binding="{Binding IsSelected}" Value="True">
                                                         <Setter Property="BorderBrush" Value="#512BD4" />
+                                                        <Setter Property="BorderThickness" Value="2" />
                                                     </DataTrigger>
                                                 </Style.Triggers>
                                             </Style>
