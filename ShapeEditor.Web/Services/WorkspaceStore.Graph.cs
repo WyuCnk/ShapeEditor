@@ -586,6 +586,142 @@ public sealed partial class WorkspaceStore
 
     #region 内部工具
 
+    /// <summary>
+    /// 切换下落规则后，按依赖顺序把所有结果节点重新算一遍。
+    /// </summary>
+    public (int Updated, int Failed) RecomputeAll(CollapseMode mode)
+    {
+        int updated = 0;
+        int failed = 0;
+
+        var results = _nodes
+            .Where(node => node.IsResult && node.OpKey is not null)
+            .OrderBy(node => node.Row)
+            .ThenBy(node => node.Seq)
+            .ToList();
+
+        foreach (WorkspaceNode node in results)
+        {
+            string key = node.OpKey!;
+
+            string op = key.Split(':')[0];
+
+            ShapeDocument? computed = null;
+
+            if (op == "stack")
+            {
+                WorkspaceNode? bottom = null;
+                WorkspaceNode? top = null;
+
+                foreach (WorkspaceEdge edge in _edges.Where(e => e.ToId == node.Id))
+                {
+                    WorkspaceNode? source = FindNode(edge.FromId);
+
+                    if (source is null)
+                    {
+                        continue;
+                    }
+
+                    if (edge.Label == "在下方堆叠")
+                    {
+                        bottom = source;
+                    }
+                    else if (edge.Label == "在上方堆叠")
+                    {
+                        top = source;
+                    }
+                }
+
+                ShapeDocument? bottomDocument =
+                    bottom is null ? null : GetNodeDocument(bottom);
+
+                ShapeDocument? topDocument =
+                    top is null ? null : GetNodeDocument(top);
+
+                if (bottomDocument is null || topDocument is null)
+                {
+                    failed++;
+
+                    continue;
+                }
+
+                int heightLimit = Math.Min(
+                    ShapeRules.MaxLayerCount,
+                    bottomDocument.LayerCount + 1 + topDocument.LayerCount);
+
+                PhysicsResult result = ShapePhysics.Stack(
+                    bottomDocument,
+                    topDocument,
+                    heightLimit,
+                    mode);
+
+                computed = result.Document;
+            }
+            else
+            {
+                WorkspaceEdge? incoming = _edges.FirstOrDefault(e => e.ToId == node.Id);
+
+                WorkspaceNode? parent = incoming is null
+                    ? null
+                    : FindNode(incoming.FromId);
+
+                ShapeDocument? document =
+                    parent is null ? null : GetNodeDocument(parent);
+
+                if (document is null)
+                {
+                    failed++;
+
+                    continue;
+                }
+
+                switch (op)
+                {
+                    case "pin":
+                        computed = ShapePhysics.Pin(document, mode).Document;
+                        break;
+
+                    case "cutw":
+                        computed = ShapePhysics.Cut(document, mode).West;
+                        break;
+
+                    case "cute":
+                        computed = ShapePhysics.Cut(document, mode).East;
+                        break;
+
+                    default:
+                        computed = ShapePhysics.Collapse(document, mode).Document;
+                        break;
+                }
+            }
+
+            if (computed is null)
+            {
+                failed++;
+
+                continue;
+            }
+
+            string code = _nodeExporter.Export(computed, omitTopEmptyLayers: true);
+
+            if (code != node.Code)
+            {
+                updated++;
+            }
+
+            node.Code = code;
+            node.Layers = computed.LayerCount;
+            node.Parts = computed.PartCount;
+            node.Format = ShortCodeFormat.Full;
+
+            _nodeCache[node.Id] = computed;
+        }
+
+        PersistGraph();
+        Changed?.Invoke();
+
+        return (updated, failed);
+    }
     private WorkspaceNode AddResultNode(
         WorkspaceNode parent,
         ShapeDocument document,

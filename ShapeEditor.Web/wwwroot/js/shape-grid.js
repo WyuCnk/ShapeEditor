@@ -1176,9 +1176,9 @@ window.shapeGrid.downloadComposition = async function (sections, fileName, opera
  */
 window.shapeGrid.downloadGraph = async function (payload, fileName) {
     const CELL_W = 250;
-    const CELL_H = 430;
+    const CELL_H = 330;
     const NODE_W = 210;
-    const NODE_H = 340;
+    const NODE_H = 250;
     const PAD = 24;
     const maxSide = 16000;
 
@@ -1366,7 +1366,7 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
             const boxX = x + 10;
             const boxY = y + 40;
             const boxW = NODE_W - 20;
-            const boxH = 170;
+            const boxH = 120;
 
             const scale = Math.min(boxW / image.width, boxH / image.height);
             const drawW = image.width * scale;

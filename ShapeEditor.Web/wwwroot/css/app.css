@@ -1501,3 +1501,10 @@ button {
 .graph-node.selected {
     box-shadow: 0 0 0 2px rgba(81, 43, 212, 0.45);
 }
+.graph-node-body {
+    height: 120px;
+}
+
+.graph-preview {
+    height: 120px;
+}

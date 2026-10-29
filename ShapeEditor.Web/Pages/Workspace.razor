@@ -22,11 +22,11 @@
         <div class="header-actions">
             <div class="code-format">
                 <button class="@ModeClass(CollapseMode.IncludeCycles)"
-                        @onclick="() => _mode = CollapseMode.IncludeCycles">
+                        @onclick="() => SetMode(CollapseMode.IncludeCycles)">
                     含循环支撑
                 </button>
                 <button class="@ModeClass(CollapseMode.FloorOnly)"
-                        @onclick="() => _mode = CollapseMode.FloorOnly">
+                        @onclick="() => SetMode(CollapseMode.FloorOnly)">
                     仅地面
                 </button>
             </div>
@@ -227,8 +227,8 @@
 
 @code {
     private const int CellWidth = 250;
-    private const int CellHeight = 430;
-    private const int NodeHeight = 340;
+    private const int CellHeight = 330;
+    private const int NodeHeight = 250;
     private const int NodeWidth = 210;
 
     private CollapseMode _mode = CollapseMode.IncludeCycles;
@@ -651,6 +651,25 @@
         _dialogTitle = "";
         _dialogMessage = "";
         _dialogConfirm = null;
+    }
+
+    private void SetMode(CollapseMode mode)
+    {
+        if (_mode == mode)
+        {
+            return;
+        }
+
+        _mode = mode;
+
+        (int updated, int failed) = Store.RecomputeAll(mode);
+
+        if (failed > 0)
+        {
+            ShowDialog(
+                "重新计算",
+                $"已按新规则重算 {updated} 个节点，{failed} 个节点因输入缺失被跳过。");
+        }
     }
 
     private string ModeClass(CollapseMode mode) =>
