@@ -13,7 +13,7 @@ public partial class WorkspacePage : ContentPage
 {
     private const double NodeWidth = 168;
 
-    private const double NodeHeight = 150;
+    private const double NodeHeight = 170;
 
     private const double CellWidth = 190;
 
@@ -206,6 +206,8 @@ public partial class WorkspacePage : ContentPage
         Canvas.WidthRequest = Math.Max(320, width);
         Canvas.HeightRequest = Math.Max(320, height);
 
+        DrawEdges(width, height);
+
         foreach (WorkspaceNode node in _store.Nodes)
         {
             View card = BuildNodeCard(node);
@@ -218,6 +220,117 @@ public partial class WorkspacePage : ContentPage
         }
     }
 
+    /// <summary>
+    /// 连线层：先算几何，再画线，最后叠可点的标签。
+    /// </summary>
+    private void DrawEdges(
+        double width,
+        double height)
+    {
+        WorkspaceStore store = _store!;
+
+        var outgoing = store.Edges
+            .GroupBy(edge => edge.FromId)
+            .ToDictionary(group => group.Key, group => group.ToList());
+
+        var incoming = store.Edges
+            .GroupBy(edge => edge.ToId)
+            .ToDictionary(group => group.Key, group => group.ToList());
+
+        var drawable = new WorkspaceEdgeDrawable();
+
+        var layer = new GraphicsView
+        {
+            InputTransparent = true,
+            Drawable = drawable
+        };
+
+        AbsoluteLayout.SetLayoutBounds(layer, new Rect(0, 0, width, height));
+
+        Canvas.Add(layer);
+
+        foreach (WorkspaceEdge edge in store.Edges)
+        {
+            WorkspaceNode? from = store.FindNode(edge.FromId);
+            WorkspaceNode? to = store.FindNode(edge.ToId);
+
+            if (from is null || to is null)
+            {
+                continue;
+            }
+
+            int outIndex = outgoing[edge.FromId].IndexOf(edge);
+            int inIndex = incoming[edge.ToId].IndexOf(edge);
+
+            float x1 = (float)(12 + from.Col * CellWidth + NodeWidth / 2 + Spread(outIndex, outgoing[edge.FromId].Count));
+            float y1 = (float)(12 + from.Row * CellHeight + NodeHeight);
+
+            float x2 = (float)(12 + to.Col * CellWidth + NodeWidth / 2 + Spread(inIndex, incoming[edge.ToId].Count));
+            float y2 = (float)(12 + to.Row * CellHeight);
+
+            double t = Math.Clamp(edge.LabelT, 0.1, 0.9);
+
+            double dx = x2 - x1;
+            double dy = y2 - y1;
+            double length = Math.Max(1, Math.Sqrt(dx * dx + dy * dy));
+
+            double nx = -dy / length;
+            double ny = dx / length;
+
+            if (ny > 0)
+            {
+                nx = -nx;
+                ny = -ny;
+            }
+
+            if (Math.Abs(dx) < 8)
+            {
+                nx = 1;
+                ny = 0;
+            }
+
+            double offset = Math.Abs(dx) < 8 ? 42 : 18;
+
+            float lx = (float)(x1 + dx * t + nx * offset);
+            float ly = (float)(y1 + dy * t + ny * offset);
+
+            drawable.Edges.Add(new EdgeShape(x1, y1, x2, y2, edge.Label, lx, ly));
+
+            var label = new Label
+            {
+                Text = edge.Label,
+                FontSize = 11,
+                TextColor = Color.FromArgb("#4527A0"),
+                BackgroundColor = Colors.White,
+                Padding = new Thickness(4, 1)
+            };
+
+            string fromId = edge.FromId;
+            string toId = edge.ToId;
+
+            var tap = new TapGestureRecognizer();
+
+            tap.Tapped += (_, _) => store.CycleEdgeLabel(fromId, toId);
+
+            label.GestureRecognizers.Add(tap);
+
+            AbsoluteLayout.SetLayoutBounds(
+                label,
+                new Rect(lx - 34, ly - 9, AbsoluteLayout.AutoSize, AbsoluteLayout.AutoSize));
+
+            Canvas.Add(label);
+        }
+
+    }
+
+    private static double Spread(
+        int index,
+        int count)
+    {
+        return count <= 1
+            ? 0
+            : Math.Round((index - (count - 1) / 2.0) * 30);
+    }
     private View BuildNodeCard(
         WorkspaceNode node)
     {
