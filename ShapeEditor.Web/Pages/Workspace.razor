@@ -8,7 +8,6 @@
 @implements IDisposable
 @inject WorkspaceStore Store
 @inject NavigationManager Nav
-@inject IJSRuntime JS
 
 <PageTitle>图形工作区</PageTitle>
 
@@ -17,126 +16,118 @@
 <div class="workspace-page">
 
     <header class="editor-header">
-        <h1>图形工作区</h1>
+        <h1>制作路径</h1>
 
         <div class="header-actions">
-            <span class="batch-hint">@Store.Items.Count / @WorkspaceStore.MaxItems</span>
+            <div class="code-format">
+                <button class="@ModeClass(CollapseMode.IncludeCycles)"
+                        @onclick="() => _mode = CollapseMode.IncludeCycles">
+                    含循环支撑
+                </button>
+                <button class="@ModeClass(CollapseMode.FloorOnly)"
+                        @onclick="() => _mode = CollapseMode.FloorOnly">
+                    仅地面
+                </button>
+            </div>
 
             <button class="secondary-button"
-                    disabled="@(Store.Items.Count == 0)"
-                    @onclick="ClearAll">
-                清空
+                    disabled="@(Store.Nodes.Count == 0)"
+                    @onclick="ExportGraph">
+                导出图片
+            </button>
+
+            <button class="secondary-button"
+                    disabled="@(Store.Nodes.Count == 0)"
+                    @onclick="ConfirmClear">
+                清空画布
             </button>
         </div>
     </header>
 
     <div class="workspace-body">
 
-        <!-- 左：窄列表 -->
         <aside class="workspace-list">
+            <div class="tool-title">素材</div>
 
             @if (Store.Items.Count == 0)
             {
-                <div class="batch-empty">
-                    工作区是空的。到编辑器点「加入工作区」，或在批量查看里导入。
+                <div class="batch-hint">
+                    空。到编辑器点「加入工作区」，或批量导入。
                 </div>
             }
 
             @foreach (WorkspaceItem item in Store.Items)
             {
-                <div class="ws-card @(_selectedId == item.Id ? "selected" : "")"
-                     @onclick="() => Select(item)">
+                <div class="ws-card @(_selectedMaterial?.Id == item.Id ? "selected" : "")"
+                     @onclick="() => _selectedMaterial = item">
 
                     <div class="ws-thumb">
-                        @if (GetDocument(item) is ShapeDocument document)
+                        @if (Store.GetDocument(item, out _) is ShapeDocument document)
                         {
                             <ShapePreview Document="document" CssClass="ws-preview" />
-                        }
-                        else
-                        {
-                            <span class="batch-thumb-error">失败</span>
                         }
                     </div>
 
                     <div class="ws-info">
-                        <input class="ws-name"
-                               value="@item.Name"
-                               title="点击可重命名"
-                               @onclick:stopPropagation="true"
-                               @onchange="e => Rename(item, e.Value?.ToString())" />
-
-                        <div class="ws-meta">@item.DimensionText · @item.SourceText</div>
-                    </div>
-
-                    <div class="ws-actions">
-                        <button class="mini-button"
-                                @onclick:stopPropagation="true"
-                                @onclick="() => LoadIntoEditor(item)">
-                            编辑
-                        </button>
-
-                        <button class="mini-button danger"
-                                @onclick:stopPropagation="true"
-                                @onclick="() => Store.Remove(item.Id)">
-                            删除
-                        </button>
+                        <div class="ws-name-plain">@item.Name</div>
+                        <div class="ws-meta">@item.DimensionText</div>
                     </div>
                 </div>
             }
-
         </aside>
 
-        <!-- 右：操作区 -->
-        <section class="workspace-work">
+        <section class="graph-canvas-wrapper">
+            <div class="graph-canvas" style="@CanvasStyle">
 
-            <div class="mode-tabs">
-                <button class="@OperationClass("collapse")" @onclick='() => SetOperation("collapse")'>下落</button>
-                <button class="@OperationClass("stack")" @onclick='() => SetOperation("stack")'>堆叠</button>
-                <button class="@OperationClass("pin")" @onclick='() => SetOperation("pin")'>顶针</button>
-                <button class="@OperationClass("cut")" @onclick='() => SetOperation("cut")'>切割</button>
-            </div>
+                <svg class="graph-edges" width="@CanvasWidth" height="@CanvasHeight">
+                    <defs>
+                        <marker id="arrow" markerWidth="10" markerHeight="10"
+                                refX="8" refY="3" orient="auto">
+                            <path d="M0,0 L0,6 L9,3 z" fill="#512bd4" />
+                        </marker>
+                    </defs>
 
-            <div class="ws-slots">
+                    @foreach (EdgeView edge in EdgeViews)
+                    {
+                        <path d="@edge.Path"
+                              fill="none"
+                              stroke="#512bd4"
+                              stroke-width="2"
+                              marker-end="url(#arrow)" />
+                    }
+                </svg>
 
-                <div class="ws-slot">
-                    <div class="ws-slot-title">@(_operation == "stack" ? "下方图形" : "图形")</div>
-
-                    <div class="ws-slot-body">
-                        @if (FindSlot(_slotA) is WorkspaceItem itemA &&
-                             GetDocument(itemA) is ShapeDocument documentA)
-                        {
-                            <ShapePreview Document="documentA" CssClass="ws-slot-preview" />
-                            <span class="batch-hint">@itemA.DimensionText</span>
-                        }
-                        else
-                        {
-                            <span class="ws-slot-empty">空</span>
-                        }
-                    </div>
-
-                    <div class="ws-slot-actions">
-                        <button class="secondary-button" @onclick="() => AssignSlot(false)">
-                            导入所选
-                        </button>
-
-                        @if (_slotA is not null)
-                        {
-                            <button class="mini-button" @onclick="() => ClearSlot(false)">清空</button>
-                        }
-                    </div>
-                </div>
-
-                @if (_operation == "stack")
+                @foreach (EdgeView edge in EdgeViews)
                 {
-                    <div class="ws-slot">
-                        <div class="ws-slot-title">上方图形</div>
+                    <div class="graph-edge-label-html"
+                         style="left:@(edge.LabelX)px;top:@(edge.LabelY)px;">
+                        @edge.Label
+                    </div>
+                }
 
-                        <div class="ws-slot-body">
-                            @if (FindSlot(_slotB) is WorkspaceItem itemB &&
-                                 GetDocument(itemB) is ShapeDocument documentB)
+                @foreach (WorkspaceNode node in Store.Nodes)
+                {
+                    <div class="graph-node @(node.IsResult ? "result" : "") @(node.Kind == "ref" ? "ref" : "")"
+                         style="@NodeStyle(node)">
+
+                        <div class="graph-node-head">
+                            <span class="graph-node-title">@NodeTitle(node)</span>
+
+                            <button class="node-delete"
+                                    title="删除该节点及其下游"
+                                    @onclick="() => ConfirmDelete(node)">
+                                ×
+                            </button>
+                        </div>
+
+                        <div class="graph-node-body">
+                            @if (NodeDocument(node) is ShapeDocument document)
                             {
-                                <ShapePreview Document="documentB" CssClass="ws-slot-preview" />
-                                <span class="batch-hint">@itemB.DimensionText</span>
+                                <ShapePreview Document="document" CssClass="graph-preview" />
+                            }
+                            else if (node.Kind == "ref")
+                            {
+                                <span class="ws-slot-empty">选择输入</span>
                             }
                             else
                             {
@@ -144,177 +135,112 @@
                             }
                         </div>
 
-                        <div class="ws-slot-actions">
-                            <button class="secondary-button" @onclick="() => AssignSlot(true)">
-                                导入所选
-                            </button>
+                        @if (node.Kind == "ref")
+                        {
+                            <select class="graph-select"
+                                    @onchange="e => OnSelectTarget(node, e.Value?.ToString())">
+                                <option value="">选择已有节点</option>
+                                @foreach (WorkspaceNode candidate in TargetCandidates(node))
+                                {
+                                    <option value="@candidate.Id">@NodeTitle(candidate) · @candidate.Layers 层</option>
+                                }
+                            </select>
 
-                            @if (_slotB is not null)
+                            @if (_selectedMaterial is not null && !node.HasShape)
                             {
-                                <button class="mini-button" @onclick="() => ClearSlot(true)">清空</button>
+                                <button class="secondary-button"
+                                        @onclick="() => ImportMaterialIntoRef(node)">
+                                    导入所选素材
+                                </button>
                             }
-                        </div>
-                    </div>
-                }
 
-            </div>
-
-            <div class="ws-params">
-                <div class="code-format">
-                    <button class="@ModeClass(CollapseMode.IncludeCycles)"
-                            @onclick="() => SetMode(CollapseMode.IncludeCycles)">
-                        含循环支撑
-                    </button>
-                    <button class="@ModeClass(CollapseMode.FloorOnly)"
-                            @onclick="() => SetMode(CollapseMode.FloorOnly)">
-                        仅地面
-                    </button>
-                </div>
-
-                @if (_operation == "stack")
-                {
-                    <label class="workspace-field ws-inline-field">
-                        层数上限
-                        <input type="number"
-                               min="1"
-                               max="100"
-                               @bind="_heightLimit" />
-                    </label>
-                }
-                else if (_operation == "pin")
-                {
-                    <span class="batch-hint">顶针使用该图形自身层数作为上限。</span>
-                }
-                else if (_operation == "cut")
-                {
-                    <span class="batch-hint">沿中线分成东西两半，两半都会输出。</span>
-                }
-
-                <button class="primary-button" @onclick="Compute">计算</button>
-            </div>
-
-            @if (!string.IsNullOrWhiteSpace(_error))
-            {
-                <div class="error-message">@_error</div>
-            }
-
-            @if (_west is not null && _east is not null)
-            {
-                <div class="workspace-result">
-                    <div class="tool-title">切割结果</div>
-
-                    <div class="ws-result-pair">
-                        <div class="ws-result-block">
-                            <span class="batch-hint">西半</span>
-                            <ShapePreview Document="_west" CssClass="ws-result-preview" />
-                            <button class="secondary-button" @onclick='() => AddResult(_west, "cut")'>
-                                加入工作区
+                            <button class="primary-button"
+                                    disabled="@(ResolveSlot(node) is null)"
+                                    @onclick="() => ComputeStack(node)">
+                                计算
                             </button>
-                        </div>
+                        }
+                        else
+                        {
+                            @if (!node.IsResult && _selectedMaterial is not null)
+                            {
+                                <button class="secondary-button"
+                                        @onclick="() => ImportMaterial(node)">
+                                    导入所选
+                                </button>
+                            }
 
-                        <div class="ws-result-block">
-                            <span class="batch-hint">东半</span>
-                            <ShapePreview Document="_east" CssClass="ws-result-preview" />
-                            <button class="secondary-button" @onclick='() => AddResult(_east, "cut")'>
-                                加入工作区
-                            </button>
-                        </div>
+                            <div class="node-actions">
+                                <button class="mini-button" @onclick='() => Apply(node, "collapse")'>下落</button>
+                                <button class="mini-button" @onclick='() => Apply(node, "pin")'>顶针</button>
+                                <button class="mini-button" @onclick='() => Apply(node, "cut")'>切割</button>
+                                <button class="mini-button" @onclick='() => BeginStack(node, false)'>在下方堆叠</button>
+                                <button class="mini-button" @onclick='() => BeginStack(node, true)'>在上方堆叠</button>
+                            </div>
+                        }
+                    </div>
+                }
+
+                @if (Store.Nodes.Count == 0)
+                {
+                    <div class="graph-empty">
+                        左侧选一个素材，然后新建节点并导入，开始搭制作路径。
                     </div>
 
-                    <button class="secondary-button"
-                            @onclick="ExportImage"
-                            title="把输入与切割产物拼成一张图导出"
-                            style="margin-top:10px;">
-                        导出图片
+                    <button class="primary-button graph-create"
+                            @onclick="CreateNode">
+                        新建节点
                     </button>
-                </div>
-            }
-            else if (_result is not null)
-            {
-                <div class="workspace-result">
-                    <div class="tool-title">结果</div>
-
-                    <ShapePreview Document="_result" CssClass="ws-result-preview" />
-
-                    <p class="batch-hint">
-                        @_result.LayerCount 层 × @_result.PartCount 象限
-                    </p>
-
-                    <div class="ws-result-actions">
-                        <button class="primary-button"
-                                @onclick="() => AddResult(_result, _operation)">
-                            加入工作区
-                        </button>
-
-                        <button class="secondary-button"
-                                @onclick="ExportImage"
-                                title="把输入与产物拼成一张图导出">
-                            导出图片
-                        </button>
-                    </div>
-                </div>
-            }
-
+                }
+            </div>
         </section>
-
     </div>
 
     @if (!string.IsNullOrWhiteSpace(_dialogMessage))
-{
-    <div class="dialog-mask">
-        <div class="dialog-box">
-            <p>@_dialogMessage</p>
-            <button class="primary-button" @onclick="CloseDialog">知道了</button>
+    {
+        <div class="dialog-mask">
+            <div class="dialog-box">
+                <h3>@_dialogTitle</h3>
+                <p>@_dialogMessage</p>
+
+                <div class="dialog-actions">
+                    @if (_dialogConfirm is not null)
+                    {
+                        <button class="secondary-button" @onclick="CloseDialog">取消</button>
+                        <button class="primary-button" @onclick="RunConfirm">确定</button>
+                    }
+                    else
+                    {
+                        <button class="primary-button" @onclick="CloseDialog">知道了</button>
+                    }
+                </div>
+            </div>
         </div>
-    </div>
-}
+    }
 
 </div>
 
 @code {
-    private readonly ShortCodeExporter Exporter = new();
-
-    private string _operation = "collapse";
+    private const int CellWidth = 250;
+    private const int CellHeight = 310;
+    private const int NodeWidth = 210;
 
     private CollapseMode _mode = CollapseMode.IncludeCycles;
 
-    private string? _selectedId;
+    private WorkspaceItem? _selectedMaterial;
 
-    private string? _slotA;
-
-    private string? _slotB;
-
-    private int _heightLimit = 4;
-
-    private ShapeDocument? _result;
-
-    private ShapeDocument? _west;
-
-    private ShapeDocument? _east;
-
-    private string _error = "";
-
-    private string _toast = "";
+    private string _dialogTitle = "";
 
     private string _dialogMessage = "";
 
-    private void ShowDialog(string message)
-    {
-        _dialogMessage = message;
-    }
-
-    private void CloseDialog()
-    {
-        _dialogMessage = "";
-    }
-
-    private CancellationTokenSource? _toastSource;
+    private Action? _dialogConfirm;
 
     protected override async Task OnInitializedAsync()
     {
         Store.Changed += OnStoreChanged;
 
         await Store.EnsureLoadedAsync();
+        await Store.EnsureGraphLoadedAsync();
     }
 
     private void OnStoreChanged()
@@ -325,388 +251,263 @@
     public void Dispose()
     {
         Store.Changed -= OnStoreChanged;
-
-        _toastSource?.Cancel();
     }
 
-    private void Select(WorkspaceItem item)
+    private int CanvasWidth =>
+        (Store.Nodes.Count == 0 ? 1 : Store.Nodes.Max(node => node.Col) + 1) * CellWidth + 60;
+
+    private int CanvasHeight =>
+        (Store.Nodes.Count == 0 ? 1 : Store.Nodes.Max(node => node.Row) + 1) * CellHeight + 60;
+
+    private string CanvasStyle =>
+        $"width:{CanvasWidth}px;height:{CanvasHeight}px;";
+
+    private string NodeStyle(WorkspaceNode node) =>
+        $"left:{20 + node.Col * CellWidth}px;" +
+        $"top:{20 + node.Row * CellHeight}px;" +
+        $"width:{NodeWidth}px;";
+
+    private static int NodeCenterX(WorkspaceNode node) =>
+        20 + node.Col * CellWidth + NodeWidth / 2;
+
+    private static int NodeBottom(WorkspaceNode node) =>
+        20 + node.Row * CellHeight + 250;
+
+    private static int NodeTop(WorkspaceNode node) =>
+        20 + node.Row * CellHeight;
+
+    private sealed record EdgeView(string Path, string Label, int LabelX, int LabelY);
+
+    private List<EdgeView> EdgeViews
     {
-        _selectedId = item.Id;
-    }
-
-    private ShapeDocument? GetDocument(WorkspaceItem item)
-    {
-        return Store.GetDocument(item, out _);
-    }
-
-    private void Rename(WorkspaceItem item, string? name)
-    {
-        Store.Rename(item.Id, name ?? item.Code);
-    }
-
-    private void LoadIntoEditor(WorkspaceItem item)
-    {
-        Store.PendingLoad = item;
-
-        Nav.NavigateTo(Nav.BaseUri);
-    }
-
-    private void ClearAll()
-    {
-        Store.Clear();
-
-        _slotA = null;
-        _slotB = null;
-        _selectedId = null;
-
-        ResetResult();
-    }
-
-    private void AssignSlot(bool second)
-    {
-        _error = "";
-
-        if (_selectedId is null)
+        get
         {
-            ShowDialog("请先在左侧选择一个图形。");
+            var views = new List<EdgeView>();
 
-            return;
-        }
-
-        if (second)
-        {
-            _slotB = _selectedId;
-        }
-        else
-        {
-            _slotA = _selectedId;
-        }
-
-        ResetResult();
-
-        if (_operation == "stack")
-        {
-            RefreshHeightLimit();
-        }
-    }
-
-    private void ClearSlot(bool second)
-    {
-        if (second)
-        {
-            _slotB = null;
-        }
-        else
-        {
-            _slotA = null;
-        }
-
-        ResetResult();
-    }
-
-    private WorkspaceItem? FindSlot(string? id)
-    {
-        return id is null
-            ? null
-            : Store.Items.FirstOrDefault(item => item.Id == id);
-    }
-
-    private void RefreshHeightLimit()
-    {
-        WorkspaceItem? bottom = FindSlot(_slotA);
-        WorkspaceItem? top = FindSlot(_slotB);
-
-        if (bottom is not null && top is not null)
-        {
-            _heightLimit = Math.Min(100, bottom.Layers + 1 + top.Layers);
-        }
-    }
-
-    private string OperationClass(string operation)
-    {
-        return _operation == operation ? "mode-button selected" : "mode-button";
-    }
-
-    private string ModeClass(CollapseMode mode)
-    {
-        return _mode == mode ? "format-button active" : "format-button";
-    }
-
-    private void SetOperation(string operation)
-    {
-        _operation = operation;
-
-        if (operation != "stack")
-        {
-            _slotB = null;
-        }
-
-        ResetResult();
-    }
-
-    private void SetMode(CollapseMode mode)
-    {
-        _mode = mode;
-    }
-
-    private void ResetResult()
-    {
-        _error = "";
-        _result = null;
-        _west = null;
-        _east = null;
-    }
-
-    private void Compute()
-    {
-        ResetResult();
-
-        WorkspaceItem? first = FindSlot(_slotA);
-
-        if (first is null)
-        {
-            _error = "请先给图形框导入一个图形。";
-
-            return;
-        }
-
-        ShapeDocument? firstDocument = Store.GetDocument(first, out string? firstError);
-
-        if (firstDocument is null)
-        {
-            _error = firstError ?? "图形解析失败。";
-
-            return;
-        }
-
-        switch (_operation)
-        {
-            case "stack":
-                ComputeStack(firstDocument);
-                break;
-
-            case "cut":
-                ComputeCut(firstDocument);
-                break;
-
-            case "pin":
-                Apply(ShapePhysics.Pin(firstDocument, _mode));
-                break;
-
-            default:
-                Apply(ShapePhysics.Collapse(firstDocument, _mode));
-                break;
-        }
-    }
-
-    private void ComputeStack(ShapeDocument baseDocument)
-    {
-        WorkspaceItem? topItem = FindSlot(_slotB);
-
-        if (topItem is null)
-        {
-            _error = "堆叠需要上方图形。";
-
-            return;
-        }
-
-        ShapeDocument? topDocument = Store.GetDocument(topItem, out string? topError);
-
-        if (topDocument is null)
-        {
-            _error = topError ?? "上方图形解析失败。";
-
-            return;
-        }
-
-        Apply(ShapePhysics.Stack(baseDocument, topDocument, _heightLimit, _mode));
-    }
-
-    private void ComputeCut(ShapeDocument document)
-    {
-        CutResult result = ShapePhysics.Cut(document, _mode);
-
-        if (!result.Success)
-        {
-            _error = result.Error ?? "切割失败。";
-
-            return;
-        }
-
-        _west = result.West;
-        _east = result.East;
-    }
-
-    private void Apply(PhysicsResult result)
-    {
-        if (!result.Success)
-        {
-            _error = result.Error ?? "操作失败。";
-
-            return;
-        }
-
-        _result = result.Document;
-    }
-
-    /// <summary>
-    /// 把“输入 → 产物”拼成一张图导出，仅在已有产物时可用。
-    /// </summary>
-    private async Task ExportImage()
-    {
-        var sections = new List<object>();
-
-        WorkspaceItem? first = FindSlot(_slotA);
-
-        ShapeDocument? firstDocument = first is null
-            ? null
-            : Store.GetDocument(first, out _);
-
-        if (_operation == "stack")
-        {
-            WorkspaceItem? second = FindSlot(_slotB);
-
-            ShapeDocument? secondDocument = second is null
-                ? null
-                : Store.GetDocument(second, out _);
-
-            if (firstDocument is not null)
+            foreach (WorkspaceEdge edge in Store.Edges)
             {
-                sections.Add(new
+                WorkspaceNode? from = Store.FindNode(edge.FromId);
+                WorkspaceNode? to = Store.FindNode(edge.ToId);
+
+                if (from is null || to is null)
                 {
-                    label = "下方图形",
-                    states = new[] { ShapeCanvasState.Create(firstDocument) },
-                    arrowBefore = false
-                });
+                    continue;
+                }
+
+                int x1 = NodeCenterX(from);
+                int y1 = NodeBottom(from);
+                int x2 = NodeCenterX(to);
+                int y2 = NodeTop(to);
+
+                int midY = y1 + Math.Max(20, (y2 - y1) / 2);
+
+                string path = $"M {x1} {y1} L {x1} {midY} L {x2} {midY} L {x2} {y2 - 4}";
+
+                views.Add(new EdgeView(path, edge.Label, (x1 + x2) / 2, midY - 6));
             }
 
-            if (secondDocument is not null)
-            {
-                sections.Add(new
-                {
-                    label = "上方图形",
-                    states = new[] { ShapeCanvasState.Create(secondDocument) },
-                    arrowBefore = false
-                });
-            }
-
-            if (_result is not null)
-            {
-                sections.Add(new
-                {
-                    label = "堆叠产物",
-                    states = new[] { ShapeCanvasState.Create(_result) },
-                    arrowBefore = true
-                });
-            }
+            return views;
         }
-        else if (_operation == "cut")
+    }
+
+    private string NodeTitle(WorkspaceNode node) =>
+        node.Kind == "ref"
+            ? "堆叠输入"
+            : node.IsResult
+                ? node.Label
+                : "素材节点";
+
+    private ShapeDocument? NodeDocument(WorkspaceNode node)
+    {
+        if (node.Kind == "ref")
         {
-            if (firstDocument is not null)
-            {
-                sections.Add(new
-                {
-                    label = "原图形",
-                    states = new[] { ShapeCanvasState.Create(firstDocument) },
-                    arrowBefore = false
-                });
-            }
+            WorkspaceNode? target = Store.FindNode(node.TargetId);
 
-            if (_west is not null && _east is not null)
-            {
-                sections.Add(new
-                {
-                    label = "切割产物（西 / 东）",
-                    states = new[]
-                    {
-                        ShapeCanvasState.Create(_west),
-                        ShapeCanvasState.Create(_east)
-                    },
-                    arrowBefore = true
-                });
-            }
+            return target is null
+                ? Store.GetNodeDocument(node)
+                : Store.GetNodeDocument(target);
         }
-        else
+
+        return Store.GetNodeDocument(node);
+    }
+
+    private IEnumerable<WorkspaceNode> TargetCandidates(WorkspaceNode slot)
+    {
+        return Store.Nodes.Where(node =>
+            node.Id != slot.Id &&
+            node.Kind != "ref" &&
+            node.HasShape);
+    }
+
+    private WorkspaceNode? ResolveSlot(WorkspaceNode slot) =>
+        slot.TargetId is null ? null : Store.FindNode(slot.TargetId);
+
+    private void CreateNode()
+    {
+        Store.CreateSourceNode(0, 0);
+    }
+
+    private void ImportMaterial(WorkspaceNode node)
+    {
+        if (_selectedMaterial is null)
         {
-            if (firstDocument is not null)
-            {
-                sections.Add(new
-                {
-                    label = "原图形",
-                    states = new[] { ShapeCanvasState.Create(firstDocument) },
-                    arrowBefore = false
-                });
-            }
+            ShowDialog("提示", "请先在左侧选择一个素材。");
 
-            if (_result is not null)
-            {
-                sections.Add(new
-                {
-                    label = "产物",
-                    states = new[] { ShapeCanvasState.Create(_result) },
-                    arrowBefore = true
-                });
-            }
+            return;
         }
 
-        if (sections.Count < 2)
+        ApplyImport(node, _selectedMaterial);
+    }
+
+    private void ImportMaterialIntoRef(WorkspaceNode slot)
+    {
+        if (_selectedMaterial is null)
         {
             return;
         }
 
-        try
-        {
-            await JS.InvokeVoidAsync(
-                "shapeGrid.downloadComposition",
-                sections,
-                $"shape-editor-{DateTime.Now:yyyyMMdd-HHmmss}.png",
-                _operation);
-        }
-        catch (Exception exception)
-        {
-            _error = $"导出图片失败：{exception.Message}";
-        }
+        ApplyImport(slot, _selectedMaterial);
     }
 
-    private void AddResult(ShapeDocument document, string operation)    {
-        string code = Exporter.Export(document, omitTopEmptyLayers: true);
-
-        WorkspaceAddResult result = Store.TryAdd(
-            code,
-            ShortCodeFormat.Full,
-            document.LayerCount,
-            document.PartCount,
-            "operation",
-            operation);
-
-        ShowDialog(result switch
-        {
-            WorkspaceAddResult.Added => "已加入工作区。",
-            WorkspaceAddResult.Duplicate => "工作区里已有相同图形。",
-            WorkspaceAddResult.Full => "工作区已满 200 条。",
-            _ => "结果不是合法图形。"
-        });
-    }
-
-    private async void ShowToast(string message)
+    private void ApplyImport(WorkspaceNode node, WorkspaceItem material)
     {
-        _toast = message;
+        int downstream = Store.Downstream(node.Id).Count;
 
-        await InvokeAsync(StateHasChanged);
-
-        _toastSource?.Cancel();
-        _toastSource = new CancellationTokenSource();
-
-        try
+        if (downstream > 0)
         {
-            await Task.Delay(2500, _toastSource.Token);
+            ShowConfirm(
+                "确认更换图形",
+                $"该节点有 {downstream} 个下游结果，更换图形会一并删除，继续？",
+                () => DoImport(node, material));
 
-            _toast = "";
-
-            await InvokeAsync(StateHasChanged);
+            return;
         }
-        catch (TaskCanceledException)
+
+        DoImport(node, material);
+    }
+
+    private void DoImport(WorkspaceNode node, WorkspaceItem material)
+    {
+        Store.ReplaceNodeShape(
+            node.Id,
+            material.Code,
+            material.Format,
+            material.Layers,
+            material.Parts);
+    }
+
+    private void OnSelectTarget(WorkspaceNode slot, string? targetId)
+    {
+        if (string.IsNullOrWhiteSpace(targetId))
         {
+            return;
+        }
+
+        Store.SetReferenceTarget(slot.Id, targetId);
+    }
+
+    private void BeginStack(WorkspaceNode node, bool currentIsTop)
+    {
+        if (!node.HasShape)
+        {
+            ShowDialog("提示", "该节点还没有图形。");
+
+            return;
+        }
+
+        Store.BeginStack(node.Id, currentIsTop);
+    }
+
+    private void ComputeStack(WorkspaceNode slot)
+    {
+        NodeActionResult result = Store.ComputeStack(slot.Id, _mode);
+
+        ShowDialog("堆叠", result.Message);
+    }
+
+    private void Apply(WorkspaceNode node, string operation)
+    {
+        if (!node.HasShape)
+        {
+            ShowDialog("提示", "该节点还没有图形。");
+
+            return;
+        }
+
+        NodeActionResult result = operation switch
+        {
+            "pin" => Store.ApplyPin(node.Id, _mode),
+            "cut" => Store.ApplyCut(node.Id, _mode),
+            _ => Store.ApplyCollapse(node.Id, _mode)
+        };
+
+        if (!result.Created)
+        {
+            ShowDialog("提示", result.Message);
         }
     }
+
+    private void ConfirmDelete(WorkspaceNode node)
+    {
+        int downstream = Store.Downstream(node.Id).Count;
+
+        if (downstream == 0)
+        {
+            Store.DeleteNode(node.Id);
+
+            return;
+        }
+
+        ShowConfirm(
+            "删除节点",
+            $"将删除该节点及其 {downstream} 个下游节点，继续？",
+            () => Store.DeleteNode(node.Id));
+    }
+
+    private void ConfirmClear()
+    {
+        ShowConfirm(
+            "清空画布",
+            "将删除画布上的所有节点，素材列表不受影响。",
+            () => Store.ClearGraph());
+    }
+
+    private Task ExportGraph()
+    {
+        ShowDialog("导出图片", "路径图导出正在接入，稍后可用。");
+
+        return Task.CompletedTask;
+    }
+
+    private void ShowDialog(string title, string message)
+    {
+        _dialogTitle = title;
+        _dialogMessage = message;
+        _dialogConfirm = null;
+    }
+
+    private void ShowConfirm(string title, string message, Action confirm)
+    {
+        _dialogTitle = title;
+        _dialogMessage = message;
+        _dialogConfirm = confirm;
+    }
+
+    private void RunConfirm()
+    {
+        Action? action = _dialogConfirm;
+
+        CloseDialog();
+        action?.Invoke();
+    }
+
+    private void CloseDialog()
+    {
+        _dialogTitle = "";
+        _dialogMessage = "";
+        _dialogConfirm = null;
+    }
+
+    private string ModeClass(CollapseMode mode) =>
+        _mode == mode ? "format-button active" : "format-button";
 }

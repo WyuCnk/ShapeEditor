@@ -20,7 +20,7 @@ public enum WorkspaceAddResult
 ///
 /// 页面通过 <see cref="Changed"/> 事件刷新。
 /// </summary>
-public sealed class WorkspaceStore
+public sealed partial class WorkspaceStore
 {
     public const int MaxItems = 200;
 
