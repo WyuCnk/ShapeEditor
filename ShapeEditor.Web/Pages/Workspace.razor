@@ -323,23 +323,25 @@
                 int y1 = NodeBottom(from);
                 int y2 = NodeTop(to);
 
-                int midY = y1 + 26 + outIndex * 16;
+                // 折线走在“父节点底部到子节点顶部”的空档里，
+                // 每条边占一条独立车道，标签压在车道上方
+                int lane = y1 + 14 + outIndex * 18;
 
-                if (midY > y2 - 30)
+                if (lane > y2 - 18)
                 {
-                    midY = y2 - 30;
+                    lane = y2 - 18;
                 }
 
-                if (midY < y1 + 10)
+                if (lane < y1 + 12)
                 {
-                    midY = y1 + 10;
+                    lane = y1 + 12;
                 }
 
                 string path =
-                    $"M {x1} {y1} L {x1} {midY} L {x2} {midY} L {x2} {y2 - 4}";
+                    $"M {x1} {y1} L {x1} {lane} L {x2} {lane} L {x2} {y2 - 4}";
 
                 int labelX = Math.Clamp((x1 + x2) / 2, 70, CanvasWidth - 70);
-                int labelY = midY - 8;
+                int labelY = Math.Max(y1 + 10, lane - 10);
 
                 views.Add(new EdgeView(path, edge.Label, labelX, labelY));
             }
@@ -651,6 +653,25 @@
         _dialogTitle = "";
         _dialogMessage = "";
         _dialogConfirm = null;
+    }
+
+    private void OnMaxLayersChanged(string? value)
+    {
+        if (!int.TryParse(value, out int layers))
+        {
+            return;
+        }
+
+        Store.SetMaxLayers(layers);
+
+        (int updated, int failed) = Store.RecomputeAll(_mode);
+
+        if (failed > 0)
+        {
+            ShowDialog(
+                "重新计算",
+                $"已按新上限重算 {updated} 个节点，{failed} 个节点因输入缺失被跳过。");
+        }
     }
 
     private void SetMode(CollapseMode mode)

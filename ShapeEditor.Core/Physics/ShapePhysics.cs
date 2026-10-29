@@ -32,6 +32,27 @@ public static class ShapePhysics
 
     #endregion
 
+    /// <summary>
+    /// 超上限删除：先让超出上限的晶体整块破碎，再截断。
+    /// </summary>
+    public static PhysicsResult Limit(
+        ShapeDocument document,
+        int heightLimit)
+    {
+        if (document is null)
+        {
+            return PhysicsResult.Fail("图形为空。");
+        }
+
+        if (!ShapeRules.IsValidLayerCount(heightLimit))
+        {
+            return PhysicsResult.Fail("层数上限无效。");
+        }
+
+        return PhysicsResult.Ok(
+            PhysicsGrid.Truncate(document, heightLimit));
+    }
+
     #region 堆叠
 
     /// <summary>

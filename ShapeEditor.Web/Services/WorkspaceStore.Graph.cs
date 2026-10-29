@@ -32,6 +32,26 @@ public sealed partial class WorkspaceStore
 
     public IReadOnlyList<WorkspaceEdge> Edges => _edges;
 
+    /// <summary>
+    /// 全局图形高度上限，所有运算结果都会被截断到这个层数。
+    /// </summary>
+    public int MaxLayers { get; private set; } = 100;
+
+    public void SetMaxLayers(int layers)
+    {
+        int value = Math.Clamp(layers, ShapeRules.MinLayerCount, ShapeRules.MaxLayerCount);
+
+        if (value == MaxLayers)
+        {
+            return;
+        }
+
+        MaxLayers = value;
+
+        PersistGraph();
+        Changed?.Invoke();
+    }
+
     public WorkspaceNode? SelectedNode { get; private set; }
 
     public void SelectNode(WorkspaceNode node)
@@ -317,9 +337,11 @@ public sealed partial class WorkspaceStore
             return new NodeActionResult(false, null, result.Error ?? "运算失败。");
         }
 
+        ShapeDocument limited = ApplyLimit(result.Document);
+
         WorkspaceNode created = AddResultNode(
             node,
-            result.Document,
+            limited,
             key,
             resultLabel,
             colOffset: 0);
@@ -461,9 +483,11 @@ public sealed partial class WorkspaceStore
             return new NodeActionResult(false, null, result.Error ?? "堆叠失败。");
         }
 
+        ShapeDocument limited = ApplyLimit(result.Document);
+
         WorkspaceNode created = AddResultNode(
             baseNode,
-            result.Document,
+            limited,
             key,
             "堆叠结果",
             colOffset: 0);
@@ -702,6 +726,8 @@ public sealed partial class WorkspaceStore
                 continue;
             }
 
+            computed = ApplyLimit(computed);
+
             string code = _nodeExporter.Export(computed, omitTopEmptyLayers: true);
 
             if (code != node.Code)
@@ -722,6 +748,18 @@ public sealed partial class WorkspaceStore
 
         return (updated, failed);
     }
+    private ShapeDocument ApplyLimit(ShapeDocument document)
+    {
+        if (document.LayerCount <= MaxLayers)
+        {
+            return document;
+        }
+
+        PhysicsResult limited = ShapePhysics.Limit(document, MaxLayers);
+
+        return limited.Document ?? document;
+    }
+
     private WorkspaceNode AddResultNode(
         WorkspaceNode parent,
         ShapeDocument document,
@@ -850,6 +888,14 @@ public sealed partial class WorkspaceStore
 
             _nodes.AddRange(payload.Nodes);
             _edges.AddRange(payload.Edges ?? new List<WorkspaceEdge>());
+
+            if (payload.MaxLayers > 0)
+            {
+                MaxLayers = Math.Clamp(
+                    payload.MaxLayers,
+                    ShapeRules.MinLayerCount,
+                    ShapeRules.MaxLayerCount);
+            }
         }
         catch
         {
@@ -873,7 +919,8 @@ public sealed partial class WorkspaceStore
             string json = JsonSerializer.Serialize(new GraphPayload
             {
                 Nodes = _nodes.ToList(),
-                Edges = _edges.ToList()
+                Edges = _edges.ToList(),
+                MaxLayers = MaxLayers
             });
 
             await _js.InvokeVoidAsync(
@@ -891,6 +938,8 @@ public sealed partial class WorkspaceStore
         public List<WorkspaceNode>? Nodes { get; set; }
 
         public List<WorkspaceEdge>? Edges { get; set; }
+
+        public int MaxLayers { get; set; } = 100;
     }
 
     #endregion

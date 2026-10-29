@@ -1304,10 +1304,14 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
         const y1 = nodeTop(from) + NODE_H;
         const y2 = nodeTop(to);
 
-        let midY = y1 + 26 + outIndex[i] * 16;
+        let midY = y1 + 14 + outIndex[i] * 18;
 
-        if (midY > y2 - 30) {
-            midY = y2 - 30;
+        if (midY > y2 - 18) {
+            midY = y2 - 18;
+        }
+
+        if (midY < y1 + 12) {
+            midY = y1 + 12;
         }
 
         ctx.strokeStyle = "#512BD4";
