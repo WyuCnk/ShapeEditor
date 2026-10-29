@@ -47,9 +47,13 @@ public partial class BatchPage : ContentPage
     private BatchItem ParseOne(
         string code)
     {
-        if (!ShortCodeParser.TryInferDimensions(code, out int layers, out int parts))
+        if (!ShortCodeParser.TryInferDimensions(
+                code,
+                out int layers,
+                out int parts,
+                out string? inferError))
         {
-            return new BatchItem(code, "无法推断尺寸", null);
+            return new BatchItem(code, inferError ?? "无法推断尺寸", null);
         }
 
         ParseResult result = _parser.Parse(code, layers, parts);
