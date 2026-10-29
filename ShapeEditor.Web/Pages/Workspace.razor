@@ -642,7 +642,8 @@
             await JS.InvokeVoidAsync(
                 "shapeGrid.downloadComposition",
                 sections,
-                $"shape-editor-{DateTime.Now:yyyyMMdd-HHmmss}.png");
+                $"shape-editor-{DateTime.Now:yyyyMMdd-HHmmss}.png",
+                _operation);
         }
         catch (Exception exception)
         {

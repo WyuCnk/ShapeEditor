@@ -981,3 +981,192 @@ window.shapeGrid.downloadComposition = async function (sections, fileName) {
 
     URL.revokeObjectURL(url);
 };
+/*
+ * 合成导出（布局版）：左侧一列输入，箭头，右侧一列产物。
+ * 堆叠：左侧上=上方图形、下=下方图形；右侧=产物（垂直居中）。
+ * 切割：左侧=原图形；右侧=西半(上)、东半(下)。
+ */
+window.shapeGrid.downloadComposition = async function (sections, fileName, operation) {
+    const padding = 28;
+    const titleHeight = 44;
+    const labelHeight = 26;
+    const gap = 16;
+    const arrowWidth = 64;
+    const maxSide = 16000;
+
+    const titles = {
+        stack: "堆叠",
+        cut: "切割",
+        pin: "顶针",
+        collapse: "下落"
+    };
+
+    if (!sections || sections.length < 2) {
+        return;
+    }
+
+    function toImage(section) {
+        return createFullImageCanvas(section.states[0]);
+    }
+
+    function build(section, label) {
+        return { label: label, image: toImage(section) };
+    }
+
+    let left = [];
+    let right = [];
+
+    if (operation === "stack" && sections.length >= 3) {
+        // 左侧从上到下：上方、下方
+        left = [build(sections[1], "上方图形"), build(sections[0], "下方图形")];
+        right = [build(sections[2], "堆叠产物")];
+    }
+    else if (operation === "cut" && sections.length === 2) {
+        left = [build(sections[0], "原图形")];
+
+        const states = sections[1].states;
+        right = [
+            { label: "西半", image: createFullImageCanvas(states[0]) },
+            { label: "东半", image: createFullImageCanvas(states[1]) }
+        ];
+    }
+    else {
+        left = [build(sections[0], "原图形")];
+        right = [build(sections[1], sections[1].label || "产物")];
+    }
+
+    function columnWidth(items) {
+        let width = 120;
+
+        for (let i = 0; i < items.length; i++) {
+            width = Math.max(width, items[i].image.width);
+        }
+
+        return width;
+    }
+
+    function columnHeight(items) {
+        let height = 0;
+
+        for (let i = 0; i < items.length; i++) {
+            height += items[i].image.height + labelHeight;
+
+            if (i < items.length - 1) {
+                height += gap;
+            }
+        }
+
+        return height;
+    }
+
+    const leftWidth = columnWidth(left);
+    const rightWidth = columnWidth(right);
+    const leftHeight = columnHeight(left);
+    const rightHeight = columnHeight(right);
+
+    const contentHeight = Math.max(leftHeight, rightHeight);
+    const totalWidth = padding * 2 + leftWidth + arrowWidth + rightWidth;
+    const totalHeight = padding * 2 + titleHeight + contentHeight;
+
+    if (totalWidth > maxSide || totalHeight > maxSide) {
+        throw new Error("图片尺寸过大：" + totalWidth + " × " + totalHeight);
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = totalWidth;
+    canvas.height = totalHeight;
+
+    const ctx = canvas.getContext("2d");
+
+    ctx.fillStyle = "#FFFFFF";
+    ctx.fillRect(0, 0, totalWidth, totalHeight);
+
+    ctx.fillStyle = "#212121";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+
+    ctx.font = '700 22px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+    ctx.fillText(titles[operation] || "", totalWidth / 2, padding);
+
+    function drawColumn(items, x, columnH) {
+        let y = padding + titleHeight + (contentHeight - columnH) / 2;
+
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+
+            ctx.font = '400 14px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+            ctx.fillStyle = "#6B6B76";
+            ctx.fillText(item.label, x + leftWidthOr(item), y);
+
+            ctx.drawImage(
+                item.image,
+                x + (columnWidth(items) - item.image.width) / 2,
+                y + labelHeight);
+
+            y += item.image.height + labelHeight + gap;
+        }
+    }
+
+    function leftWidthOr(item) {
+        return 0;
+    }
+
+    // 左列
+    let yLeft = padding + titleHeight + (contentHeight - leftHeight) / 2;
+
+    for (let i = 0; i < left.length; i++) {
+        const item = left[i];
+
+        ctx.font = '400 14px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+        ctx.fillStyle = "#6B6B76";
+        ctx.fillText(item.label, padding + leftWidth / 2, yLeft);
+
+        ctx.drawImage(
+            item.image,
+            padding + (leftWidth - item.image.width) / 2,
+            yLeft + labelHeight);
+
+        yLeft += item.image.height + labelHeight + gap;
+    }
+
+    // 箭头
+    const arrowX = padding + leftWidth + arrowWidth / 2;
+    const arrowY = padding + titleHeight + contentHeight / 2;
+
+    ctx.font = '700 34px "Microsoft YaHei", sans-serif';
+    ctx.fillStyle = "#512BD4";
+    ctx.fillText("→", arrowX, arrowY - 22);
+
+    // 右列
+    const rightX = padding + leftWidth + arrowWidth;
+    let yRight = padding + titleHeight + (contentHeight - rightHeight) / 2;
+
+    for (let i = 0; i < right.length; i++) {
+        const item = right[i];
+
+        ctx.font = '400 14px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+        ctx.fillStyle = "#6B6B76";
+        ctx.fillText(item.label, rightX + rightWidth / 2, yRight);
+
+        ctx.drawImage(
+            item.image,
+            rightX + (rightWidth - item.image.width) / 2,
+            yRight + labelHeight);
+
+        yRight += item.image.height + labelHeight + gap;
+    }
+
+    const blob = await canvasToBlob(canvas);
+    const url = URL.createObjectURL(blob);
+
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    link.style.display = "none";
+
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    URL.revokeObjectURL(url);
+};
