@@ -1,3 +1,4 @@
+using WorkspaceItem = ShapeEditor.Web.Models.WorkspaceItem;
 using ShapeEditor.Core.Workspaces;
 using System.Text.Json;
 using Microsoft.JSInterop;

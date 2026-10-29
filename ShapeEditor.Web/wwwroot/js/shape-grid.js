@@ -265,7 +265,7 @@ window.shapeGrid = {
             link.style.display = "none";
 
             document.body.appendChild(link);
-            link.click();
+            window.shapeGridSaveOrShare(link, fileName);
             link.remove();
 
             URL.revokeObjectURL(url);
@@ -290,7 +290,7 @@ window.shapeGrid = {
         link.style.display = "none";
 
         document.body.appendChild(link);
-        link.click();
+        window.shapeGridSaveOrShare(link, fileName);
         link.remove();
 
         URL.revokeObjectURL(url);
@@ -343,7 +343,7 @@ window.shapeGrid = {
         link.style.display = "none";
 
         document.body.appendChild(link);
-        link.click();
+        window.shapeGridSaveOrShare(link, fileName);
         link.remove();
 
         URL.revokeObjectURL(url);
@@ -976,7 +976,7 @@ window.shapeGrid.downloadComposition = async function (sections, fileName) {
     link.style.display = "none";
 
     document.body.appendChild(link);
-    link.click();
+    window.shapeGridSaveOrShare(link, fileName);
     link.remove();
 
     URL.revokeObjectURL(url);
@@ -1165,7 +1165,7 @@ window.shapeGrid.downloadComposition = async function (sections, fileName, opera
     link.style.display = "none";
 
     document.body.appendChild(link);
-    link.click();
+    window.shapeGridSaveOrShare(link, fileName);
     link.remove();
 
     URL.revokeObjectURL(url);
@@ -1428,7 +1428,7 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
     link.style.display = "none";
 
     document.body.appendChild(link);
-    link.click();
+    window.shapeGridSaveOrShare(link, fileName);
     link.remove();
 
     URL.revokeObjectURL(url);
@@ -1677,7 +1677,7 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
     link.style.display = "none";
 
     document.body.appendChild(link);
-    link.click();
+    window.shapeGridSaveOrShare(link, fileName);
     link.remove();
 
     URL.revokeObjectURL(url);
@@ -1690,4 +1690,34 @@ window.shapeUi = {
         } catch (e) {
         }
     }
+};
+/*
+ * 移动端优先调起系统分享（保存到相册/发送给应用），
+ * 不支持 Web Share 时才退回浏览器下载。
+ */
+window.shapeGridSaveOrShare = async function (link, fileName) {
+    try {
+        if (navigator.canShare &&
+            link.href &&
+            link.href.indexOf("blob:") === 0) {
+            const response = await fetch(link.href);
+            const blob = await response.blob();
+            const file = new File([blob], fileName, {
+                type: blob.type || "image/png"
+            });
+
+            if (navigator.canShare({ files: [file] })) {
+                await navigator.share({ files: [file], title: fileName });
+
+                URL.revokeObjectURL(link.href);
+                link.remove();
+
+                return;
+            }
+        }
+    } catch (error) {
+        /* 用户取消分享或环境不支持，继续走下载 */
+    }
+
+    link.click();
 };
