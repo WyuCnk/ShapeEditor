@@ -157,7 +157,7 @@
                                 </button>
 
                                 <button class="mini-button"
-                                        disabled="@(Store.SelectedNode is null || Store.SelectedNode.Id == node.BaseId || !Store.SelectedNode.HasShape)"
+                                        disabled="@(!CanReference(node))"
                                         @onclick="() => ReferenceSelected(node)">
                                     引用所选
                                 </button>
@@ -169,7 +169,7 @@
                             }
 
                             <button class="primary-button ref-compute"
-                                    disabled="@(ResolveSlot(node) is null)"
+                                    disabled="@(!SlotReady(node))"
                                     @onclick="() => ComputeStack(node)">
                                 计算
                             </button>
@@ -404,6 +404,26 @@
             node.HasShape);
     }
 
+    /// <summary>
+    /// 堆叠槽位是否已有可用输入：引用了别的节点，或者直接导入了素材。
+    /// </summary>
+    private bool SlotReady(WorkspaceNode slot) =>
+        ResolveSlot(slot) is not null || slot.HasShape;
+
+    /// <summary>
+    /// 当前选中的节点能否作为该槽位的引用目标。
+    /// </summary>
+    private bool CanReference(WorkspaceNode slot)
+    {
+        WorkspaceNode? target = Store.SelectedNode;
+
+        return target is not null &&
+               target.HasShape &&
+               target.Kind != "ref" &&
+               target.Id != slot.Id &&
+               target.Id != slot.BaseId;
+    }
+
     private WorkspaceNode? ResolveSlot(WorkspaceNode slot) =>
         slot.TargetId is null ? null : Store.FindNode(slot.TargetId);
 
@@ -486,16 +506,14 @@
 
     private void ReferenceSelected(WorkspaceNode slot)
     {
-        WorkspaceNode? target = Store.SelectedNode;
-
-        if (target is null || !target.HasShape || target.Id == slot.BaseId)
+        if (!CanReference(slot))
         {
-            ShowDialog("提示", "请先在画布上点选一个已有图形的节点。");
+            ShowDialog("提示", "请点选一个其它节点（不能引用自己、引用槽位或堆叠底节点）。");
 
             return;
         }
 
-        Store.SetReferenceTarget(slot.Id, target.Id);
+        Store.SetReferenceTarget(slot.Id, Store.SelectedNode!.Id);
     }
 
     private void OnSelectTarget(WorkspaceNode slot, string? targetId)
