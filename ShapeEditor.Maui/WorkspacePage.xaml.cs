@@ -43,6 +43,24 @@ public partial class WorkspacePage : ContentPage
 
     private double _canvasShiftY;
 
+    /// <summary>当前画布上的节点卡片，拖动时只改布局，不重建。</summary>
+    private readonly Dictionary<string, Border> _nodeCards = new();
+
+    /// <summary>节点当前的视觉矩形（已含整体平移），拖动时用来实时重算连线。</summary>
+    private readonly Dictionary<string, Rect> _nodeBounds = new();
+
+    /// <summary>拖动起点时的视觉矩形；PanUpdated 的 TotalX/TotalY 是相对起点的累计位移。</summary>
+    private readonly Dictionary<string, Rect> _dragStartBounds = new();
+
+    /// <summary>线段层与箭头层，拖动过程中只重绘这两个 Drawable。</summary>
+    private WorkspaceLineDrawable? _lineDrawable;
+
+    private WorkspaceArrowDrawable? _arrowDrawable;
+
+    private GraphicsView? _lineLayer;
+
+    private GraphicsView? _arrowLayer;
+
     public WorkspacePage()
     {
         InitializeComponent();
@@ -281,6 +299,16 @@ public partial class WorkspacePage : ContentPage
     {
         Canvas.Clear();
 
+        // 每次完整重绘都会换掉卡片与两个连线层，旧引用一并清掉
+        _nodeCards.Clear();
+        _nodeBounds.Clear();
+        _dragStartBounds.Clear();
+
+        _lineDrawable = null;
+        _arrowDrawable = null;
+        _lineLayer = null;
+        _arrowLayer = null;
+
         if (_store!.Nodes.Count == 0)
         {
             Canvas.WidthRequest = 320;
@@ -342,6 +370,10 @@ public partial class WorkspacePage : ContentPage
 
         var arrowDrawable = new WorkspaceArrowDrawable();
 
+        // 保存到字段，拖动节点时直接改这两个 Drawable 并 Invalidate
+        _lineDrawable = lineDrawable;
+        _arrowDrawable = arrowDrawable;
+
         foreach (WorkspaceEdge edge in _store.Edges)
         {
             if (!lookup.TryGetValue(edge.FromId, out WorkspaceNodeBox? from) ||
@@ -369,41 +401,46 @@ public partial class WorkspacePage : ContentPage
             lineLayer,
             new Rect(0, 0, width, height));
 
+        _lineLayer = lineLayer;
+
         Canvas.Add(lineLayer);
 
         foreach (WorkspaceNodeBox box in placed)
         {
-            View card = BuildNodeCard(
+            Border card = BuildNodeCard(
                 box.Node,
                 _store.GetEffectiveDocument(box.Node));
+
+            // 记录卡片和视觉矩形，拖动时只更新它们的布局
+            _nodeCards[box.Node.Id] = card;
+            _nodeBounds[box.Node.Id] = box.Bounds;
 
             AbsoluteLayout.SetLayoutBounds(card, box.Bounds);
 
             Canvas.Add(card);
         }
 
-        // 箭头层：在节点之上
-        if (arrowDrawable.Links.Count > 0)
+        // 箭头层：固定在节点之上；即使暂时没有箭头也保留，拖动时可以直接重绘
+        var arrowLayer = new GraphicsView
         {
-            var arrowLayer = new GraphicsView
-            {
-                InputTransparent = true,
-                Drawable = arrowDrawable
-            };
+            InputTransparent = true,
+            Drawable = arrowDrawable
+        };
 
-            AbsoluteLayout.SetLayoutBounds(
-                arrowLayer,
-                new Rect(0, 0, width, height));
+        AbsoluteLayout.SetLayoutBounds(
+            arrowLayer,
+            new Rect(0, 0, width, height));
 
-            Canvas.Add(arrowLayer);
-        }
+        _arrowLayer = arrowLayer;
+
+        Canvas.Add(arrowLayer);
     }
 
     /// <summary>
     /// 节点卡片：编号 + 标题、× 删除、竖式图预览、层数 × 象限数摘要。
     /// 卡片内不放操作按钮，也不放滚动条。
     /// </summary>
-    private View BuildNodeCard(
+    private Border BuildNodeCard(
         WorkspaceNode node,
         ShapeDocument? document)
     {
@@ -522,7 +559,153 @@ public partial class WorkspacePage : ContentPage
 
         border.GestureRecognizers.Add(tap);
 
+        /*
+         * 拖动节点：PanUpdated 里只改内存坐标和两个连线层，
+         * 松手后才调用 SetNodePosition 落盘，避免拖动过程中整页 Render。
+         */
+        var pan = new PanGestureRecognizer();
+
+        pan.PanUpdated += (_, e) => OnNodePanUpdated(
+            node.Id,
+            border,
+            e);
+
+        border.GestureRecognizers.Add(pan);
+
         return border;
+    }
+
+    /// <summary>
+    /// 拖动节点卡片。
+    ///
+    /// Running 阶段只更新节点坐标、卡片布局和线段/箭头 Drawable，不重建卡片；
+    /// Completed / Canceled 时把最终坐标交给 store，由 store 负责 10px 吸附与保存。
+    /// </summary>
+    private void OnNodePanUpdated(
+        string nodeId,
+        Border card,
+        PanUpdatedEventArgs e)
+    {
+        if (_store is null)
+        {
+            return;
+        }
+
+        // 卡片若已被整页重绘替换，旧卡片上的手势直接忽略，避免改到失效的视图
+        if (!_nodeCards.TryGetValue(nodeId, out Border? current) ||
+            !ReferenceEquals(current, card))
+        {
+            return;
+        }
+
+        switch (e.StatusType)
+        {
+            case GestureStatus.Started:
+                if (_nodeBounds.TryGetValue(nodeId, out Rect start))
+                {
+                    _dragStartBounds[nodeId] = start;
+                }
+
+                return;
+
+            case GestureStatus.Running:
+                // 个别平台可能先到 Running 再到 Started，用当前矩形兜底，保证拖动不丢
+                if (!_dragStartBounds.TryGetValue(nodeId, out Rect origin))
+                {
+                    if (!_nodeBounds.TryGetValue(nodeId, out origin))
+                    {
+                        return;
+                    }
+
+                    _dragStartBounds[nodeId] = origin;
+                }
+
+                if (_store.FindNode(nodeId) is not WorkspaceNode running)
+                {
+                    return;
+                }
+
+                /*
+                 * 左、上边界按画布外边距夹取：
+                 * 拖动过程中不重算整体平移，夹住可以避免松手重绘时画布突然跳位。
+                 */
+                double x = Math.Max(
+                    WorkspaceLayout.Margin,
+                    origin.X + e.TotalX);
+
+                double y = Math.Max(
+                    WorkspaceLayout.Margin,
+                    origin.Y + e.TotalY);
+
+                var bounds = new Rect(
+                    x,
+                    y,
+                    origin.Width,
+                    origin.Height);
+
+                _nodeBounds[nodeId] = bounds;
+
+                // 只移动卡片本身，不重建视图
+                AbsoluteLayout.SetLayoutBounds(card, bounds);
+
+                // 视觉坐标扣掉渲染时的整体平移，才是节点自由坐标
+                running.X = bounds.X - _canvasShiftX;
+                running.Y = bounds.Y - _canvasShiftY;
+
+                UpdateLinkLayers();
+
+                return;
+
+            default:
+                if (!_dragStartBounds.Remove(nodeId) ||
+                    _store.FindNode(nodeId) is not WorkspaceNode finished)
+                {
+                    return;
+                }
+
+                // 松手落盘；store 会吸附 10px 并触发一次完整重绘
+                _store.SetNodePosition(
+                    nodeId,
+                    finished.X ?? 0,
+                    finished.Y ?? 0);
+
+                return;
+        }
+    }
+
+    /// <summary>
+    /// 按当前节点矩形重算所有连线的两个端点，并只让线段层和箭头层重绘。
+    /// </summary>
+    private void UpdateLinkLayers()
+    {
+        if (_store is null ||
+            _lineDrawable is null ||
+            _arrowDrawable is null)
+        {
+            return;
+        }
+
+        _lineDrawable.Links.Clear();
+        _arrowDrawable.Links.Clear();
+
+        foreach (WorkspaceEdge edge in _store.Edges)
+        {
+            if (!_nodeBounds.TryGetValue(edge.FromId, out Rect from) ||
+                !_nodeBounds.TryGetValue(edge.ToId, out Rect to))
+            {
+                continue;
+            }
+
+            WorkspaceLink link = WorkspaceLinkGeometry.Create(
+                from,
+                to);
+
+            _lineDrawable.Links.Add(link);
+            _arrowDrawable.Links.Add(link);
+        }
+
+        _lineLayer?.Invalidate();
+        _arrowLayer?.Invalidate();
     }
 
     private ShapePreviewDrawable PreviewOf(

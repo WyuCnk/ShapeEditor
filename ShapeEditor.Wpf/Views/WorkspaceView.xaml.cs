@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Threading;
 using ShapeEditor.Wpf.ViewModels;
 
 namespace ShapeEditor.Wpf.Views;
@@ -17,9 +18,38 @@ public partial class WorkspaceView : UserControl
     public WorkspaceView()
     {
         InitializeComponent();
+
+        // 切换到工作区时把键盘焦点交给根 Grid，快捷键无需先点一下画布即可使用
+        IsVisibleChanged += OnWorkspaceVisibilityChanged;
     }
 
     private WorkspaceViewModel? ViewModel => DataContext as WorkspaceViewModel;
+
+    /// <summary>
+    /// 工作区由隐藏变为可见时，把焦点放到根 Grid。
+    /// 只移动焦点，不改动选中状态；焦点已经在文本框里时不抢。
+    /// </summary>
+    private void OnWorkspaceVisibilityChanged(
+        object sender,
+        DependencyPropertyChangedEventArgs e)
+    {
+        if (e.NewValue is not true ||
+            Keyboard.FocusedElement is TextBox)
+        {
+            return;
+        }
+
+        Dispatcher.BeginInvoke(
+            new Action(() =>
+            {
+                // 排队期间焦点可能已经进入文本框，执行前再确认一次
+                if (Keyboard.FocusedElement is not TextBox)
+                {
+                    WorkspaceRoot.Focus();
+                }
+            }),
+            DispatcherPriority.Input);
+    }
 
     private static T? DataOf<T>(object sender)
         where T : class
@@ -226,14 +256,17 @@ public partial class WorkspaceView : UserControl
     }
 
     /// <summary>
-    /// 堆叠待选时按 Esc 取消。
+    /// 工作区快捷键：
+    /// Ctrl+C 复制选中节点的图形，Ctrl+V 粘贴，Delete 删除选中节点，Esc 取消堆叠待选。
+    ///
+    /// 全部复用 ViewModel 已有的公开命令/方法，不复制实现；
+    /// 焦点在文本框时直接返回，避免影响文字输入和文本框自带的复制粘贴。
     /// </summary>
-    private void OnPreviewKeyDown(
+    private void OnWorkspaceKeyDown(
         object sender,
         KeyEventArgs e)
     {
-        if (e.Key != Key.Escape ||
-            Keyboard.FocusedElement is TextBox)
+        if (Keyboard.FocusedElement is TextBox)
         {
             return;
         }
@@ -243,8 +276,41 @@ public partial class WorkspaceView : UserControl
             return;
         }
 
-        viewModel.CancelStack();
+        bool control = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
 
-        e.Handled = true;
+        switch (e.Key)
+        {
+            case Key.C when control:
+                viewModel.CopyCommand.Execute(null);
+
+                e.Handled = true;
+
+                break;
+
+            case Key.V when control:
+                viewModel.PasteCommand.Execute(null);
+
+                e.Handled = true;
+
+                break;
+
+            case Key.Delete:
+                // 没有选中节点时不拦截按键，Delete 保持无操作
+                if (viewModel.SelectedNode is not null)
+                {
+                    viewModel.DeleteNodeCommand.Execute(viewModel.SelectedNode);
+
+                    e.Handled = true;
+                }
+
+                break;
+
+            case Key.Escape:
+                viewModel.CancelStack();
+
+                e.Handled = true;
+
+                break;
+        }
     }
 }
