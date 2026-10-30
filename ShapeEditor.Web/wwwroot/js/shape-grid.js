@@ -1524,7 +1524,12 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
     }
 
     // 行高 = 该行最高节点
-    const rowHeights = [];
+        // 与界面一致：节点高度按层数计算（最多 20 行）
+    for (const item of nodes) {
+        const layerCount = item.state && item.state.layers ? item.state.layers : 6;
+        item._height = 44 + Math.min(layerCount, 20) * 18 + 10;
+    }
+const rowHeights = [];
 
     for (let row = 0; row <= maxRow; row++) {
         let height = 120;
