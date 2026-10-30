@@ -25,7 +25,14 @@
             <header class="workspace-title">
         <h1>制作路径</h1>
 
-        <div class="graph-hint">
+                <div class="graph-legend">
+            <span>图例：</span>
+            <span class="legend-item"><b>c</b> 晶体</span>
+            <span class="legend-item"><b>S</b> 普通形状</span>
+            <span class="legend-item"><span class="legend-pin"></span> 顶针</span>
+            <span class="legend-item"><span class="legend-empty"></span> 空位</span>
+        </div>
+<div class="graph-hint">
             提示：点击连线上的操作文字可以调整标签位置；双击工作区标签可以重命名。
         </div>
     </header>
@@ -201,7 +208,6 @@
                                      style="height:@(Math.Min(document.LayerCount, 20) * 18)px">
                                     <ShapePreview Document="document" CssClass="graph-preview" />
                                 </div>
-                                <div class="ws-code-summary">@ShapeText.Summary(document)</div>
                             }
                             else if (node.Kind == "ref")
                             {
