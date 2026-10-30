@@ -1842,3 +1842,11 @@ window.shapeGridTryShare = async function (blob, fileName) {
         return false;
     }
 };
+/* 供 Blazor 回读节点的真实渲染尺寸，箭头锚点据此贴合边框 */
+window.shapeGridMeasureNodes = function () {
+    return Array.from(document.querySelectorAll(".graph-node[data-node-id]")).map(function (el) {
+        const rect = el.getBoundingClientRect();
+
+        return { id: el.getAttribute("data-node-id"), height: rect.height, width: rect.width };
+    });
+};

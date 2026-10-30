@@ -207,6 +207,7 @@
                 @foreach (WorkspaceNode node in Store.Nodes)
                 {
                     <div class="graph-node @(node.IsResult ? "result" : "") @(node.Kind == "ref" ? "ref" : "") @(Store.SelectedNode?.Id == node.Id ? "selected" : "")"
+                         data-node-id="@node.Id"
                          style="@NodeStyle(node)"
                          @onpointerdown="e => BeginDrag(node, e)"
                          @onclick="() => OnNodeClick(node)">
@@ -491,6 +492,63 @@
         Store.SelectNode(node);
     }
 
+    private readonly Dictionary<string, double> _measuredHeight = new();
+
+    private bool _measuring;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_measuring)
+        {
+            return;
+        }
+
+        _measuring = true;
+
+        try
+        {
+            var items = await JS.InvokeAsync<List<MeasuredNode>>("shapeGridMeasureNodes");
+
+            bool changed = false;
+
+            foreach (MeasuredNode item in items)
+            {
+                if (item.Height <= 0)
+                {
+                    continue;
+                }
+
+                if (!_measuredHeight.TryGetValue(item.Id, out double current) ||
+                    Math.Abs(current - item.Height) > 0.5)
+                {
+                    _measuredHeight[item.Id] = item.Height;
+                    changed = true;
+                }
+            }
+
+            if (changed)
+            {
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch
+        {
+        }
+        finally
+        {
+            _measuring = false;
+        }
+    }
+
+    private sealed class MeasuredNode
+    {
+        public string Id { get; set; } = "";
+
+        public double Height { get; set; }
+
+        public double Width { get; set; }
+    }
+
     private string? _dragMaterialId;
 
     private string? _dragId;
@@ -611,6 +669,11 @@
         if (NodeDocument(node) is ShapeDocument document)
         {
             rows = Math.Min(Math.Max(document.LayerCount, 1), 20);
+        }
+
+        if (_measuredHeight.TryGetValue(node.Id, out double measured) && measured > 20)
+        {
+            return measured;
         }
 
         return 54 + rows * 20;
