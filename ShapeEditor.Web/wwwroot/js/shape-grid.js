@@ -1782,21 +1782,46 @@ const width = bounds.maxX - bounds.minX + PAD * 2;
             ctx.fillText(node.refText, x + 10, y + 26);
         }
 
-        if (node._image) {
-            ctx.save();
+        // 与界面一致：按节点框实时绘制表格（c/S/P 字母 + 底色）
+        if (node.state && node.state.cells) {
+            const columns = node.state.columns;
+            const rows = node.state.rows;
+            const cellW = (NODE_W - 16) / columns;
+            const cellH = (h - HEADER_H - 8) / rows;
 
-            ctx.beginPath();
-            ctx.rect(x + 1, y + 1, NODE_W - 2, h - 2);
-            ctx.clip();
+            const left = x + 8;
+            const top = y + HEADER_H;
 
-            ctx.drawImage(
-                node._image,
-                x + (NODE_W - node._imageW) / 2,
-                y + HEADER_H,
-                node._imageW,
-                node._imageH);
+            for (let row = 0; row < rows; row++) {
+                for (let column = 0; column < columns; column++) {
+                    const cell = node.state.cells[row * columns + column] || {};
+                    const cx = left + column * cellW;
+                    const cy = top + row * cellH;
 
-            ctx.restore();
+                    if (cell.type && cell.type !== "empty") {
+                        ctx.fillStyle = cell.type === "crystal"
+                            ? "#FF2D55"
+                            : (cell.colorCode ? "#4A90D9" : (cell.type === "pin" ? "#1A1A1A" : "#2B2B2B"));
+
+                        ctx.fillRect(cx + cellW * 0.08, cy + cellH * 0.08, cellW * 0.84, cellH * 0.84);
+
+                        if (cellW >= 12 && cellH >= 12) {
+                            ctx.fillStyle = "#FFFFFF";
+                            ctx.font = '700 ' + Math.round(Math.min(cellW, cellH) * 0.55) + 'px "Microsoft YaHei", sans-serif';
+                            ctx.textAlign = "center";
+                            ctx.textBaseline = "middle";
+                            ctx.fillText(
+                                cell.type === "crystal" ? "c" : (cell.type === "pin" ? "P" : "S"),
+                                cx + cellW / 2,
+                                cy + cellH / 2);
+                        }
+                    }
+
+                    ctx.strokeStyle = "#E6E2F2";
+                    ctx.lineWidth = 0.6;
+                    ctx.strokeRect(cx, cy, cellW, cellH);
+                }
+            }
         }
     }
 
