@@ -232,7 +232,10 @@
                             {
                                 <div class="ws-preview-scroll @(document.LayerCount > 20 ? "scrollable" : "fixed")"
                                      style="height:@(Math.Min(document.LayerCount, 20) * 20 + 4)px">
-                                    <ShapePreview Document="document" CssClass="graph-preview" />
+                                    <div class="ws-preview-inner"
+                                         style="height:@(document.LayerCount * 20 + 4)px">
+                                        <ShapePreview Document="document" CssClass="graph-preview" />
+                                    </div>
                                 </div>
                             }
                             else if (node.Kind == "ref")

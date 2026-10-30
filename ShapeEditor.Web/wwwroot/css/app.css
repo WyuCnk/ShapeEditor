@@ -1939,3 +1939,15 @@ button {
     min-height: 0;
     height: 100%;
 }
+.ws-preview-scroll.scrollable {
+    overflow-y: auto;
+}
+
+.ws-preview-inner {
+    width: 100%;
+}
+
+.ws-preview-inner .graph-preview {
+    height: 100%;
+    min-height: 0;
+}
