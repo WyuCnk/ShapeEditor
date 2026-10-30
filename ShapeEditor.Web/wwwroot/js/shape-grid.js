@@ -1544,8 +1544,23 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
         rowY[row] = rowY[row - 1] + rowHeights[row - 1] + GAP_Y;
     }
 
-    const width = Math.max(PAD * 2 + (maxCol + 1) * COL_W - (COL_W - NODE_W), ...nodes.map(n => nodeLeft(n) + NODE_W + PAD));
-    const height = Math.max(rowY[maxRow] + rowHeights[maxRow] + PAD, ...nodes.map(n => nodeTop(n) + (n._height || 220) + PAD));
+    const bounds = (() => {
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+        for (const n of nodes) {
+            const nx = (n.x !== undefined ? n.x : n.col * COL_W);
+            const ny = (n.y !== undefined ? n.y : rowY[n.row]);
+
+            minX = Math.min(minX, nx);
+            minY = Math.min(minY, ny);
+            maxX = Math.max(maxX, nx + NODE_W);
+            maxY = Math.max(maxY, ny + (n._height || 220));
+        }
+
+        return { minX, minY, maxX, maxY };
+    })();
+const width = bounds.maxX - bounds.minX + PAD * 2;
+    const height = bounds.maxY - bounds.minY + PAD * 2;
 
     if (width > maxSide || height > maxSide) {
         throw new Error("图片尺寸过大：" + width + " × " + height);
@@ -1560,8 +1575,10 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
     ctx.fillStyle = "#FFFFFF";
     ctx.fillRect(0, 0, width, height);
 
-    function nodeLeft(node) { return PAD + (node.x !== undefined ? node.x : node.col * COL_W); }
-    function nodeTop(node) { return PAD + (node.y !== undefined ? node.y : rowY[node.row]); }
+    function rawLeft(node) { return (node.x !== undefined ? node.x : node.col * COL_W); }
+    function rawTop(node) { return (node.y !== undefined ? node.y : rowY[node.row]); }
+    function nodeLeft(node) { return PAD + rawLeft(node) - bounds.minX; }
+    function nodeTop(node) { return PAD + rawTop(node) - bounds.minY; }
     function edgeAnchor(node, other) {
         const cx = nodeLeft(node) + NODE_W / 2;
         const cy = nodeTop(node) + (node._height || 220) / 2;
