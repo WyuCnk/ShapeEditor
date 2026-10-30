@@ -528,6 +528,11 @@ public sealed partial class WorkspaceStore
             "堆叠结果",
             colOffset: 0);
 
+        WorkspaceNode topNode = slot.TopInput ? baseNode : other;
+        WorkspaceNode bottomNode = slot.TopInput ? other : baseNode;
+
+        created.Label = $"堆叠结果（上 #{topNode.Seq} / 下 #{bottomNode.Seq}）";
+
         /*
          * 连线从槽位节点出发，而不是从被引用的节点出发：
          * 槽位自己写着「引用 #N」，读者顺着它去看目标即可。
