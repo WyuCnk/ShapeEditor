@@ -1917,3 +1917,14 @@ button {
     z-index: 5;
     pointer-events: none;
 }
+/* 节点高度严格等于脚本计算值，锚点才能贴住边框 */
+.graph-node {
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.graph-node-body {
+    flex: 1;
+    overflow: auto;
+}

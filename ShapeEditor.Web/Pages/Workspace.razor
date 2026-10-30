@@ -239,44 +239,6 @@
                             }
                         </div>
 
-                        @if (node.Kind == "ref")
-                        {
-
-                            <div class="ref-actions">
-                                <button class="mini-button"
-                                        disabled="@(_selectedMaterial is null || node.HasShape)"
-                                        @onclick="() => ImportMaterialIntoRef(node)">
-                                    导入素材
-                                </button>
-
-                                <button class="mini-button"
-                                        disabled="@(!CanReference(node))"
-                                        @onclick="() => ReferenceSelected(node)">
-                                    引用所选
-                                </button>
-                            </div>
-
-                            @if (Store.FindNode(node.TargetId) is WorkspaceNode target)
-                            {
-                                <div class="ws-meta">引用 #@target.Seq</div>
-                            }
-
-                            <button class="primary-button ref-compute"
-                                    disabled="@(!SlotReady(node))"
-                                    @onclick="() => ComputeStack(node)">
-                                计算
-                            </button>
-                        }
-                        else
-                        {
-                            @if (!node.IsResult && _selectedMaterial is not null)
-                            {
-                                <button class="secondary-button"
-                                        @onclick="() => ImportMaterial(node)">
-                                    导入所选
-                                </button>
-                            }
-                        }
                     </div>
                 }
 
