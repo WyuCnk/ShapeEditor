@@ -142,6 +142,9 @@
             @foreach (WorkspaceItem item in Store.Items)
             {
                 <div class="ws-card @(_selectedMaterial?.Id == item.Id ? "selected" : "")"
+                     draggable="true"
+                     @ondragstart="() => _dragMaterialId = item.Id"
+                     @ondblclick="() => CreateFromMaterial(item)"
                      @onclick="() => _selectedMaterial = item">
 
                     <div class="ws-thumb">
@@ -161,6 +164,9 @@
 
         <section class="graph-canvas-wrapper">
             <div class="graph-canvas" style="@CanvasStyle"
+             @ondragover="OnDragOver"
+             @ondragover:preventDefault
+             @ondrop="OnCanvasDrop"
              @onpointermove="OnDragMove"
              @onpointerup="EndDrag"
              @onpointerleave="EndDrag">
@@ -275,14 +281,10 @@
                 @if (Store.Nodes.Count == 0)
                 {
                     <div class="graph-empty">
-                        左侧选一个素材，然后新建节点并导入，开始搭制作路径。
+                        把左侧素材拖进来，或双击素材，开始搭制作路径。
                     </div>
 
-                    <button class="primary-button graph-create"
-                            @onclick="CreateNode">
-                        新建节点
-                    </button>
-                }
+                    }
             </div>
         </section>
     </div>
@@ -380,7 +382,43 @@
     private static int NodeTop(WorkspaceNode node) =>
         20 + node.Row * CellHeight;
 
+    private string? _dragMaterialId;
+
     private string? _dragId;
+
+    private void CreateFromMaterial(WorkspaceItem material)
+    {
+        WorkspaceNode node = Store.CreateNodeAtPoint(60, 60);
+
+        Store.ReplaceNodeShape(node.Id, material.Code, material.Format, material.Layers, material.Parts);
+    }
+
+    private void OnDragOver()
+    {
+    }
+
+    private void OnCanvasDrop(DragEventArgs e)
+    {
+        if (_dragMaterialId is null)
+        {
+            return;
+        }
+
+        WorkspaceItem? material = Store.Items.FirstOrDefault(item => item.Id == _dragMaterialId);
+
+        _dragMaterialId = null;
+
+        if (material is null)
+        {
+            return;
+        }
+
+        WorkspaceNode node = Store.CreateNodeAtPoint(
+            Math.Max(20, e.OffsetX - NodeWidth / 2),
+            Math.Max(20, e.OffsetY - 30));
+
+        Store.ReplaceNodeShape(node.Id, material.Code, material.Format, material.Layers, material.Parts);
+    }
 
     private double _dragStartX;
     private double _dragStartY;

@@ -178,6 +178,31 @@ public sealed partial class WorkspaceStore
 
     #region 节点创建与替换
 
+    /// <summary>
+    /// 在画布指定坐标新建节点（拖放素材时用）。
+    /// </summary>
+    public WorkspaceNode CreateNodeAtPoint(
+        double x,
+        double y)
+    {
+        var node = new WorkspaceNode
+        {
+            Row = 0,
+            Col = 0,
+            X = x,
+            Y = y,
+            Seq = NextSeq(),
+            Label = "素材节点"
+        };
+
+        _nodes.Add(node);
+
+        PersistGraph();
+        Changed?.Invoke();
+
+        return node;
+    }
+
     public WorkspaceNode CreateSourceNode(int row, int col)
     {
         var node = new WorkspaceNode
