@@ -170,6 +170,12 @@ public sealed class WorkspaceViewModel : ObservableObject
 
     public bool HasSelectedNode => _selectedNode is not null;
 
+    /// <summary>
+    /// 是否正在等待堆叠的第二个输入。
+    /// 此时点击节点只用于选第二输入，视图层不要进入拖动。
+    /// </summary>
+    public bool IsStackPending => _stackFirstId is not null;
+
     public double CanvasWidth
     {
         get => _canvasWidth;
@@ -452,6 +458,134 @@ public sealed class WorkspaceViewModel : ObservableObject
         SelectedNode = node;
 
         _store.SelectNode(node.Node);
+    }
+
+    /// <summary>
+    /// 拖动过程中实时重算与当前节点相连的连线。
+    ///
+    /// 只替换受影响的 Edge 视图模型（线段和箭头都绑定它），
+    /// 不重建节点列表；松手后仍由 SetNodePosition 触发一次完整 Refresh。
+    /// </summary>
+    public void UpdateEdgesForDrag(
+        WorkspaceNodeViewModel movedNode,
+        double x,
+        double y)
+    {
+        bool affected = Edges.Any(
+            edge => edge.Edge.FromId == movedNode.Id ||
+                    edge.Edge.ToId == movedNode.Id);
+
+        if (!affected)
+        {
+            return;
+        }
+
+        var lookup = Nodes.ToDictionary(
+            node => node.Id,
+            node => node);
+
+        // 临时节点只用于算几何，不建缩略图，也不写回 Store
+        WorkspaceNodeViewModel preview = CreatePreviewNode(
+            movedNode,
+            x,
+            y);
+
+        for (int index = 0; index < Edges.Count; index++)
+        {
+            WorkspaceEdgeViewModel edge = Edges[index];
+
+            if (edge.Edge.FromId != movedNode.Id &&
+                edge.Edge.ToId != movedNode.Id)
+            {
+                continue;
+            }
+
+            WorkspaceNodeViewModel? from = edge.Edge.FromId == movedNode.Id
+                ? preview
+                : lookup.GetValueOrDefault(edge.Edge.FromId);
+
+            WorkspaceNodeViewModel? to = edge.Edge.ToId == movedNode.Id
+                ? preview
+                : lookup.GetValueOrDefault(edge.Edge.ToId);
+
+            if (from is null || to is null)
+            {
+                continue;
+            }
+
+            Edges[index] = new WorkspaceEdgeViewModel(
+                edge.Edge,
+                from,
+                to);
+        }
+    }
+
+    /// <summary>
+    /// 按拖动中的临时坐标复制一个节点视图模型。
+    /// 用 Parts/Layers 直接给出尺寸，Document 传空，避免每次移动都重画缩略图。
+    /// </summary>
+    private WorkspaceNodeViewModel CreatePreviewNode(
+        WorkspaceNodeViewModel source,
+        double x,
+        double y)
+    {
+        WorkspaceNode node = source.Node;
+
+        var preview = new WorkspaceNode
+        {
+            Id = node.Id,
+            Kind = node.Kind,
+            Code = node.Code,
+            Format = node.Format,
+            Layers = WorkspaceLayout.ResolveLayerCount(
+                node,
+                source.Document),
+            Parts = WorkspaceLayout.ResolvePartCount(
+                node,
+                source.Document,
+                FallbackParts),
+            IsResult = node.IsResult,
+            OpKey = node.OpKey,
+            TargetId = node.TargetId,
+            BaseId = node.BaseId,
+            InputAId = node.InputAId,
+            InputBId = node.InputBId,
+            StackBaseIsTop = node.StackBaseIsTop,
+            TopInput = node.TopInput,
+            Seq = node.Seq,
+            Row = node.Row,
+            Col = node.Col,
+            X = x,
+            Y = y,
+            Label = node.Label
+        };
+
+        return new WorkspaceNodeViewModel(
+            preview,
+            document: null,
+            FallbackParts,
+            source.IsSelected);
+    }
+
+    /// <summary>
+    /// 拖动结束后写回节点坐标。
+    ///
+    /// SetNodePosition 负责 10px 吸附、保存并触发 Changed；
+    /// 订阅的 Refresh 会重建节点卡片并重算连线，因此这里不需要额外刷新。
+    /// </summary>
+    public void MoveNodeTo(
+        WorkspaceNodeViewModel node,
+        double x,
+        double y)
+    {
+        node.Node.X = x;
+
+        node.Node.Y = y;
+
+        _store.SetNodePosition(
+            node.Id,
+            x,
+            y);
     }
 
     /// <summary>

@@ -364,10 +364,14 @@
 
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
+                                    <!-- 节点拖动：按下记录、移动改 Canvas 坐标、松开写回数据 -->
                                     <Border Width="{Binding NodeWidth}"
                                             Height="{Binding NodeHeight}"
                                             CornerRadius="12"
                                             SnapsToDevicePixels="True"
+                                            PreviewMouseLeftButtonDown="OnNodePreviewMouseLeftButtonDown"
+                                            PreviewMouseLeftButtonUp="OnNodePreviewMouseLeftButtonUp"
+                                            MouseMove="OnNodeMouseMove"
                                             MouseLeftButtonDown="OnNodeClick">
                                         <Border.Style>
                                             <Style TargetType="Border">
