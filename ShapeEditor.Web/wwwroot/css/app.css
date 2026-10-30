@@ -1877,3 +1877,11 @@ button {
     gap: 8px;
     margin: 6px 2px 2px;
 }
+.graph-node {
+    min-height: 0;
+}
+
+.graph-node-body {
+    overflow-y: auto;
+    max-height: none;
+}

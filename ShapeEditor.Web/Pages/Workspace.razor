@@ -325,7 +325,7 @@
     private const int CellWidth = 250;
     private const int CellHeight = 400;
     private const int NodeHeight = 280;
-    private const int NodeWidth = 210;
+    private const int NodeWidth = 260;
 
     private WorkspaceItem? _selectedMaterial;
 
@@ -647,15 +647,27 @@
     /// <summary>
     /// 计算矩形边界上朝向另一节点的锚点。
     /// </summary>
+    /// <summary>节点实际高度：标题 + 最多 20 行预览。</summary>
+    private double NodeHeightOf(WorkspaceNode node)
+    {
+        int rows = 6;
+
+        if (NodeDocument(node) is ShapeDocument document)
+        {
+            rows = Math.Min(Math.Max(document.LayerCount, 1), 20);
+        }
+
+        return 44 + rows * 18 + 10;
+    }
     private (double X, double Y) EdgeAnchor(
         WorkspaceNode node,
         WorkspaceNode other)
     {
         double cx = NodeX(node) + NodeWidth / 2;
-        double cy = NodeY(node) + NodeHeight / 2;
+        double cy = NodeY(node) + NodeHeightOf(node) / 2;
 
         double ox = NodeX(other) + NodeWidth / 2;
-        double oy = NodeY(other) + NodeHeight / 2;
+        double oy = NodeY(other) + NodeHeightOf(other) / 2;
 
         double dx = ox - cx;
         double dy = oy - cy;
@@ -663,14 +675,14 @@
 
         if (length < 1)
         {
-            return (cx, cy + NodeHeight / 2);
+            return (cx, cy + NodeHeightOf(node) / 2);
         }
 
         dx /= length;
         dy /= length;
 
         double halfWidth = NodeWidth / 2;
-        double halfHeight = NodeHeight / 2;
+        double halfHeight = NodeHeightOf(node) / 2;
 
         double scaleX = Math.Abs(dx) < 1e-6 ? double.MaxValue : halfWidth / Math.Abs(dx);
         double scaleY = Math.Abs(dy) < 1e-6 ? double.MaxValue : halfHeight / Math.Abs(dy);
