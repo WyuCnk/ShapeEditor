@@ -225,7 +225,7 @@
                             @if (NodeDocument(node) is ShapeDocument document)
                             {
                                 <div class="ws-preview-scroll"
-                                     style="height:@(Math.Min(document.LayerCount, 20) * 18)px">
+                                     style="height:@(Math.Min(document.LayerCount, 20) * 20)px">
                                     <ShapePreview Document="document" CssClass="graph-preview" />
                                 </div>
                             }
@@ -613,7 +613,7 @@
             rows = Math.Min(Math.Max(document.LayerCount, 1), 20);
         }
 
-        return 44 + rows * 18 + 10;
+        return 50 + rows * 20;
     }
     private (double X, double Y) EdgeAnchor(
         WorkspaceNode node,
