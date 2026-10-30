@@ -30,6 +30,15 @@ public sealed class WorkspaceNode
 
     public string? BaseId { get; set; }
 
+    /// <summary>主输入节点（下落 / 顶针 / 切割）。</summary>
+    public string? InputAId { get; set; }
+
+    /// <summary>堆叠的第二输入节点。</summary>
+    public string? InputBId { get; set; }
+
+    /// <summary>堆叠时 A 是否为上层。</summary>
+    public bool StackBaseIsTop { get; set; }
+
     public bool TopInput { get; set; }
 
     /// <summary>画布上的唯一编号，用于引用与显示。</summary>

@@ -39,8 +39,16 @@
                     @onclick='() => ApplyFromToolbar("pin")'>顶针</button>
             <button class="mini-button" disabled="@(Store.SelectedNode is null)"
                     @onclick='() => ApplyFromToolbar("cut")'>切割</button>
+
+            <button class="mini-button" disabled="@(Store.SelectedNode is null)"
+                    @onclick="BeginStackFromToolbar">堆叠</button>
         </div>
-<div class="graph-hint">
+        @if (_stackHint is not null)
+        {
+            <div class="graph-hint">@_stackHint</div>
+        }
+
+        <div class="graph-hint">
             提示：点击连线上的操作文字可以调整标签位置；双击工作区标签可以重命名。
         </div>
     </header>
@@ -207,7 +215,7 @@
                     <div class="graph-node @(node.IsResult ? "result" : "") @(node.Kind == "ref" ? "ref" : "") @(Store.SelectedNode?.Id == node.Id ? "selected" : "")"
                          style="@NodeStyle(node)"
                          @onpointerdown="e => BeginDrag(node, e)"
-                         @onclick="() => Store.SelectNode(node)">
+                         @onclick="() => OnNodeClick(node)">
 
                         <div class="graph-node-head">
                             <span class="graph-node-title">#@node.Seq · @NodeTitle(node)</span>
@@ -449,6 +457,48 @@
         await Task.CompletedTask;
     }
 
+    private string? _stackBaseId;
+
+    private string? _stackHint;
+
+    private void BeginStackFromToolbar()
+    {
+        if (Store.SelectedNode is null)
+        {
+            return;
+        }
+
+        _stackBaseId = Store.SelectedNode.Id;
+        _stackHint = "再点一个节点或素材作为第二个输入（Esc 取消）";
+    }
+
+    private void OnNodeClick(WorkspaceNode node)
+    {
+        if (_stackBaseId is not null && node.Id != _stackBaseId)
+        {
+            NodeActionResult result = Store.ComputeStackOf(_stackBaseId, node.Id, baseIsTop: true, Store.Mode);
+
+            _stackBaseId = null;
+            _stackHint = null;
+
+            if (result.Node is not null)
+            {
+                Store.SetNodePosition(
+                    result.Node.Id,
+                    NodeX(node) + NodeWidth + 80,
+                    NodeY(node));
+            }
+            else if (!result.Created)
+            {
+                ShowDialog("提示", result.Message);
+            }
+
+            return;
+        }
+
+        Store.SelectNode(node);
+    }
+
     private string? _dragMaterialId;
 
     private string? _dragId;
@@ -458,6 +508,12 @@
         WorkspaceNode node = Store.CreateNodeAtPoint(60, 60);
 
         Store.ReplaceNodeShape(node.Id, material.Code, material.Format, material.Layers, material.Parts);
+    }
+
+    private void CancelStack()
+    {
+        _stackBaseId = null;
+        _stackHint = null;
     }
 
     private void OnDragOver()

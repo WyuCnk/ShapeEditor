@@ -483,6 +483,74 @@ public sealed partial class WorkspaceStore
         Changed?.Invoke();
     }
 
+    /// <summary>直接按两个节点堆叠，不需要引用槽。</summary>
+    public NodeActionResult ComputeStackOf(
+        string baseId,
+        string otherId,
+        bool baseIsTop,
+        CollapseMode mode)
+    {
+        WorkspaceNode? first = FindNode(baseId);
+        WorkspaceNode? second = FindNode(otherId);
+
+        if (first is null || second is null)
+        {
+            return new NodeActionResult(false, null, "堆叠输入不存在。");
+        }
+
+        ShapeDocument? firstDocument = GetEffectiveDocument(first);
+        ShapeDocument? secondDocument = GetEffectiveDocument(second);
+
+        if (firstDocument is null || secondDocument is null)
+        {
+            return new NodeActionResult(false, null, "堆叠输入缺少图形。");
+        }
+
+        string topId = baseIsTop ? baseId : otherId;
+        string bottomId = baseIsTop ? otherId : baseId;
+        string key = $"stack:{bottomId}|{topId}";
+
+        WorkspaceNode? existing = _nodes.FirstOrDefault(node => node.OpKey == key);
+
+        if (existing is not null)
+        {
+            return new NodeActionResult(false, existing, "该组合已堆叠过，已定位到结果。");
+        }
+
+        ShapeDocument stackBase = baseIsTop ? secondDocument : firstDocument;
+        ShapeDocument stackTop = baseIsTop ? firstDocument : secondDocument;
+
+        int heightLimit = Math.Min(
+            ShapeRules.MaxLayerCount,
+            stackBase.LayerCount + 1 + stackTop.LayerCount);
+
+        PhysicsResult result = ShapePhysics.Stack(stackBase, stackTop, heightLimit, mode);
+
+        if (!result.Success || result.Document is null)
+        {
+            return new NodeActionResult(false, null, result.Error ?? "堆叠失败。");
+        }
+
+        WorkspaceNode created = AddResultNode(
+            first,
+            ApplyLimit(result.Document),
+            key,
+            "堆叠结果",
+            0);
+
+        WorkspaceNode topNode = baseIsTop ? first : second;
+        WorkspaceNode bottomNode = baseIsTop ? second : first;
+
+        created.Label = $"堆叠结果（上 #{topNode.Seq} / 下 #{bottomNode.Seq}）";
+
+        AddEdge(topNode.Id, created.Id, "在上方堆叠");
+        AddEdge(bottomNode.Id, created.Id, "在下方堆叠");
+
+        PersistGraph();
+        Changed?.Invoke();
+
+        return new NodeActionResult(true, created, "已生成堆叠结果。");
+    }
     public NodeActionResult ComputeStack(string slotId, CollapseMode mode)
     {
         WorkspaceNode? slot = FindNode(slotId);
