@@ -242,6 +242,14 @@ public sealed partial class WorkspaceStore
 
         int removed = DeleteDownstream(nodeId);
 
+        // 工作区里出现第一个图形时，把高度上限对齐到它的层数
+        bool hasOtherShape = _nodes.Any(entry => entry.Id != nodeId && entry.HasShape);
+
+        if (!hasOtherShape)
+        {
+            MaxLayers = Math.Clamp(layers, 4, ShapeRules.MaxLayerCount);
+        }
+
         node.Kind = "shape";
         node.Code = code;
         node.Format = format;
