@@ -350,10 +350,18 @@
     }
 
     private int CanvasWidth =>
-        (Store.Nodes.Count == 0 ? 1 : Store.Nodes.Max(node => node.Col) + 1) * CellWidth + 60;
+        (int)Math.Max(
+            900,
+            Store.Nodes.Count == 0
+                ? 0
+                : Store.Nodes.Max(node => NodeX(node)) + NodeWidth + 200);
 
     private int CanvasHeight =>
-        (Store.Nodes.Count == 0 ? 1 : Store.Nodes.Max(node => node.Row) + 1) * CellHeight + 60;
+        (int)Math.Max(
+            600,
+            Store.Nodes.Count == 0
+                ? 0
+                : Store.Nodes.Max(node => NodeY(node)) + NodeHeight + 200);
 
     private string CanvasStyle =>
         $"width:{CanvasWidth}px;height:{CanvasHeight}px;";
