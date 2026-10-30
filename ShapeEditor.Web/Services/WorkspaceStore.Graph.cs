@@ -820,6 +820,54 @@ public sealed partial class WorkspaceStore
         Changed?.Invoke();
     }
 
+    /// <summary>
+    /// 把旧的「堆叠输入」槽节点折叠成结果节点的两个输入，然后删除槽节点。
+    /// 迁移在加载时执行一次，属性变更后自动持久化。
+    /// </summary>
+    public int MigrateRefSlots()
+    {
+        var slots = _nodes.Where(node => node.Kind == "ref").ToList();
+
+        if (slots.Count == 0)
+        {
+            return 0;
+        }
+
+        foreach (WorkspaceNode slot in slots)
+        {
+            WorkspaceNode? baseNode = slot.BaseId is null ? null : FindNode(slot.BaseId);
+            WorkspaceNode? other = slot.TargetId is null ? null : FindNode(slot.TargetId);
+
+            foreach (WorkspaceEdge edge in _edges.Where(e => e.FromId == slot.Id).ToList())
+            {
+                WorkspaceNode? result = FindNode(edge.ToId);
+
+                if (result is not null && baseNode is not null && other is not null)
+                {
+                    result.InputAId = baseNode.Id;
+                    result.InputBId = other.Id;
+                    result.StackBaseIsTop = slot.TopInput;
+
+                    AddEdge(baseNode.Id, result.Id, slot.TopInput ? "在下方堆叠" : "在上方堆叠");
+                    AddEdge(other.Id, result.Id, slot.TopInput ? "在上方堆叠" : "在下方堆叠");
+                }
+
+                _edges.Remove(edge);
+            }
+
+            _nodes.Remove(slot);
+            _nodeCache.Remove(slot.Id);
+        }
+
+        _edges.RemoveAll(edge =>
+            slots.Any(slot => slot.Id == edge.FromId || slot.Id == edge.ToId));
+
+        PersistGraph();
+        Changed?.Invoke();
+
+        return slots.Count;
+    }
+
     public void ClearGraph()
     {
         _nodes.Clear();
@@ -1135,6 +1183,11 @@ public sealed partial class WorkspaceStore
         catch
         {
             EnsureProject();
+        }
+
+        if (MigrateRefSlots() > 0)
+        {
+            RecomputeAll(Mode);
         }
 
         Changed?.Invoke();
