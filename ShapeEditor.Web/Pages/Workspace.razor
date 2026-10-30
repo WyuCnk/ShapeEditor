@@ -231,7 +231,7 @@
                             @if (NodeDocument(node) is ShapeDocument document)
                             {
                                 <div class="ws-preview-scroll @(document.LayerCount > 20 ? "scrollable" : "fixed")"
-                                     style="max-height:@(Math.Min(document.LayerCount, 20) * 20 + 4)px">
+                                     style="height:@(Math.Min(document.LayerCount, 20) * 20 + 4)px">
                                     <ShapePreview Document="document" CssClass="graph-preview" />
                                 </div>
                             }
