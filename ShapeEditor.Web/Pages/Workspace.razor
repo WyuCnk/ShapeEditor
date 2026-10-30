@@ -231,9 +231,9 @@
                             @if (NodeDocument(node) is ShapeDocument document)
                             {
                                 <div class="ws-preview-scroll fixed"
-                                     style="height:@(document.LayerCount * 20 + 4)px">
+                                     style="height:@(document.LayerCount * 20 + 4)px;width:@(document.PartCount * 20)px;margin:0 auto">
                                     <div class="ws-preview-inner"
-                                         style="height:@(document.LayerCount * 20 + 4)px">
+                                         style="height:@(document.LayerCount * 20 + 4)px;width:@(document.PartCount * 20)px;margin:0 auto">
                                         <ShapePreview Document="document" CssClass="graph-preview" />
                                     </div>
                                 </div>
@@ -291,6 +291,7 @@
     private const int CellHeight = 400;
     private const int NodeHeight = 280;
     private const int NodeWidth = 260;
+    private const int CellSize = 20;
 
     private WorkspaceItem? _selectedMaterial;
 
@@ -672,6 +673,14 @@
     /// 计算矩形边界上朝向另一节点的锚点。
     /// </summary>
     /// <summary>节点实际高度：标题 + 最多 20 行预览。</summary>
+    /// <summary>节点宽度：象限数 × 20 + 内边距。</summary>
+    private double NodeWidthOf(WorkspaceNode node)
+    {
+        int parts = NodeDocument(node)?.PartCount ?? 12;
+
+        return parts * CellSize + 16;
+    }
+
     private double NodeHeightOf(WorkspaceNode node)
     {
         int rows = 6;
@@ -692,10 +701,10 @@
         WorkspaceNode node,
         WorkspaceNode other)
     {
-        double cx = NodeX(node) + NodeWidth / 2;
+        double cx = NodeX(node) + NodeWidthOf(node) / 2;
         double cy = NodeY(node) + NodeHeightOf(node) / 2;
 
-        double ox = NodeX(other) + NodeWidth / 2;
+        double ox = NodeX(other) + NodeWidthOf(other) / 2;
         double oy = NodeY(other) + NodeHeightOf(other) / 2;
 
         double dx = ox - cx;
@@ -710,7 +719,7 @@
         dx /= length;
         dy /= length;
 
-        double halfWidth = NodeWidth / 2;
+        double halfWidth = NodeWidthOf(node) / 2;
         double halfHeight = NodeHeightOf(node) / 2;
 
         double scaleX = Math.Abs(dx) < 1e-6 ? double.MaxValue : halfWidth / Math.Abs(dx);
