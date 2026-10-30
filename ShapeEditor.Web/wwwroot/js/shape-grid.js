@@ -1539,6 +1539,13 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
     for (const item of nodes) {
         const layerCount = item.state && item.state.layers ? item.state.layers : 6;
         item._height = 50 + Math.min(layerCount, 20) * 20;
+        if (item._image) {
+            const availH = Math.max(20, item._height - 44 - 8);
+            const fit = Math.min((NODE_W - 24) / item._image.width, availH / item._image.height, 1);
+
+            item._imageW = Math.round(item._image.width * fit);
+            item._imageH = Math.round(item._image.height * fit);
+        }
     }
 const rowHeights = [];
 
@@ -1776,12 +1783,20 @@ const width = bounds.maxX - bounds.minX + PAD * 2;
         }
 
         if (node._image) {
+            ctx.save();
+
+            ctx.beginPath();
+            ctx.rect(x + 1, y + 1, NODE_W - 2, h - 2);
+            ctx.clip();
+
             ctx.drawImage(
                 node._image,
                 x + (NODE_W - node._imageW) / 2,
                 y + HEADER_H,
                 node._imageW,
                 node._imageH);
+
+            ctx.restore();
         }
     }
 
