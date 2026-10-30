@@ -1935,3 +1935,7 @@ button {
 .ws-preview-scroll.scrollable {
     overflow-y: auto;
 }
+.ws-preview-scroll.fixed .graph-preview {
+    min-height: 0;
+    height: 100%;
+}
