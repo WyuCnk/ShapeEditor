@@ -1217,6 +1217,17 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
 
     const ctx = canvas.getContext("2d");
 
+    const exportScale = 2;
+
+    if (width * exportScale > 16000 || height * exportScale > 16000) {
+        throw new Error("图片过大：" + Math.round(width * exportScale) + " × " +
+            Math.round(height * exportScale) + " 像素，请减少节点数量后重试。");
+    }
+
+    canvas.width = Math.round(width * exportScale);
+    canvas.height = Math.round(height * exportScale);
+
+    ctx.scale(exportScale, exportScale);
     ctx.fillStyle = "#FFFFFF";
     ctx.fillRect(0, 0, width, height);
 
@@ -1577,6 +1588,17 @@ const width = bounds.maxX - bounds.minX + PAD * 2;
 
     const ctx = canvas.getContext("2d");
 
+    const exportScale = 2;
+
+    if (width * exportScale > 16000 || height * exportScale > 16000) {
+        throw new Error("图片过大：" + Math.round(width * exportScale) + " × " +
+            Math.round(height * exportScale) + " 像素，请减少节点数量后重试。");
+    }
+
+    canvas.width = Math.round(width * exportScale);
+    canvas.height = Math.round(height * exportScale);
+
+    ctx.scale(exportScale, exportScale);
     ctx.fillStyle = "#FFFFFF";
     ctx.fillRect(0, 0, width, height);
 
