@@ -39,6 +39,11 @@ public sealed class WorkspaceNode
 
     public int Col { get; set; }
 
+    /// <summary>自由布局坐标；为空时由 Row/Col 折算。</summary>
+    public double? X { get; set; }
+
+    public double? Y { get; set; }
+
     public string Label { get; set; } = "";
 
     public bool HasShape =>

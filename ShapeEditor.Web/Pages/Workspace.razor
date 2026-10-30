@@ -160,7 +160,10 @@
         </aside>
 
         <section class="graph-canvas-wrapper">
-            <div class="graph-canvas" style="@CanvasStyle">
+            <div class="graph-canvas" style="@CanvasStyle"
+             @onpointermove="OnDragMove"
+             @onpointerup="EndDrag"
+             @onpointerleave="EndDrag">
 
                 <svg class="graph-edges" width="@CanvasWidth" height="@CanvasHeight">
                     <defs>
@@ -189,6 +192,7 @@
                 {
                     <div class="graph-node @(node.IsResult ? "result" : "") @(node.Kind == "ref" ? "ref" : "") @(Store.SelectedNode?.Id == node.Id ? "selected" : "")"
                          style="@NodeStyle(node)"
+                         @onpointerdown="e => BeginDrag(node, e)"
                          @onclick="() => Store.SelectNode(node)">
 
                         <div class="graph-node-head">
@@ -368,6 +372,69 @@
     private static int NodeTop(WorkspaceNode node) =>
         20 + node.Row * CellHeight;
 
+    private string? _dragId;
+
+    private double _dragStartX;
+    private double _dragStartY;
+    private double _nodeStartX;
+    private double _nodeStartY;
+
+    private void BeginDrag(
+        WorkspaceNode node,
+        PointerEventArgs e)
+    {
+        _dragId = node.Id;
+        _dragStartX = e.ClientX;
+        _dragStartY = e.ClientY;
+        _nodeStartX = NodeX(node);
+        _nodeStartY = NodeY(node);
+    }
+
+    private void OnDragMove(
+        PointerEventArgs e)
+    {
+        if (_dragId is null)
+        {
+            return;
+        }
+
+        WorkspaceNode? node = Store.FindNode(_dragId);
+
+        if (node is null)
+        {
+            return;
+        }
+
+        node.X = Math.Round((_nodeStartX + e.ClientX - _dragStartX) / 10) * 10;
+        node.Y = Math.Round((_nodeStartY + e.ClientY - _dragStartY) / 10) * 10;
+
+        StateHasChanged();
+    }
+
+    private void EndDrag(
+        PointerEventArgs e)
+    {
+        if (_dragId is null)
+        {
+            return;
+        }
+
+        WorkspaceNode? node = Store.FindNode(_dragId);
+
+        _dragId = null;
+
+        if (node is not null)
+        {
+            Store.SetNodePosition(node.Id, node.X ?? 0, node.Y ?? 0);
+        }
+    }
+
+    private double NodeX(WorkspaceNode node) =>
+        node.X ?? (20 + node.Col * CellWidth);
+
+    private double NodeY(WorkspaceNode node) =>
+        node.Y ?? (20 + node.Row * CellHeight);
+
     private sealed record EdgeView(
         string FromId,
         string ToId,
@@ -409,11 +476,11 @@
                 int inIndex = incoming[edge.ToId].IndexOf(edge);
                 int inCount = incoming[edge.ToId].Count;
 
-                int x1 = NodeCenterX(from) + Spread(outIndex, outCount, 30);
-                int x2 = NodeCenterX(to) + Spread(inIndex, inCount, 30);
+                int x1 = (int)(NodeX(from) + NodeWidth / 2) + Spread(outIndex, outCount, 30);
+                int x2 = (int)(NodeX(to) + NodeWidth / 2) + Spread(inIndex, inCount, 30);
 
-                int y1 = NodeBottom(from);
-                int y2 = NodeTop(to);
+                int y1 = (int)(NodeY(from) + NodeHeight);
+                int y2 = (int)NodeY(to);
 
                 // 折线走在“父节点底部到子节点顶部”的空档里，
                 // 每条边占一条独立车道，标签压在车道上方

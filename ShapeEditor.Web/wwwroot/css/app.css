@@ -1864,3 +1864,11 @@ button {
     background: #FFFFFF;
     vertical-align: middle;
 }
+.graph-node {
+    cursor: grab;
+    touch-action: none;
+}
+
+.graph-node.dragging {
+    cursor: grabbing;
+}

@@ -667,6 +667,28 @@ public sealed partial class WorkspaceStore
         Changed?.Invoke();
     }
 
+    /// <summary>
+    /// 拖动后写入自由坐标。
+    /// </summary>
+    public void SetNodePosition(
+        string nodeId,
+        double x,
+        double y)
+    {
+        WorkspaceNode? node = FindNode(nodeId);
+
+        if (node is null)
+        {
+            return;
+        }
+
+        node.X = Math.Round(x / 10) * 10;
+        node.Y = Math.Round(y / 10) * 10;
+
+        PersistGraph();
+        Changed?.Invoke();
+    }
+
     public void ClearGraph()
     {
         _nodes.Clear();
