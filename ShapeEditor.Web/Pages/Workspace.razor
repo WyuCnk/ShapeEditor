@@ -20,7 +20,7 @@
 
 <SiteHeader Active="workspace" />
 
-<div class="workspace-page">
+<div class="workspace-page" tabindex="0" @onkeydown="OnKeyDown">
 
             <header class="workspace-title">
         <h1>制作路径</h1>
@@ -422,6 +422,27 @@
     private int _clipLayers;
 
     private int _clipParts;
+
+    private void OnKeyDown(
+        KeyboardEventArgs e)
+    {
+        if (e.CtrlKey && e.Key == "c")
+        {
+            CopySelected();
+        }
+        else if (e.CtrlKey && e.Key == "v")
+        {
+            PasteClipboard();
+        }
+        else if (e.Key == "Delete")
+        {
+            DeleteSelected();
+        }
+        else if (e.Key == "Escape")
+        {
+            CancelStack();
+        }
+    }
 
     private void CopySelected()
     {

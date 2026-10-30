@@ -1951,3 +1951,6 @@ button {
     height: 100%;
     min-height: 0;
 }
+.workspace-page:focus {
+    outline: none;
+}
