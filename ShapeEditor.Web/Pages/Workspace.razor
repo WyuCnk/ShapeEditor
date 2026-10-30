@@ -282,14 +282,6 @@
                                     导入所选
                                 </button>
                             }
-
-                            <div class="node-actions">
-                                <button class="mini-button" @onclick='() => Apply(node, "collapse")'>下落</button>
-                                <button class="mini-button" @onclick='() => Apply(node, "pin")'>顶针</button>
-                                <button class="mini-button" @onclick='() => Apply(node, "cut")'>切割</button>
-                                <button class="mini-button" @onclick='() => BeginStack(node, false)'>在下方堆叠</button>
-                                <button class="mini-button" @onclick='() => BeginStack(node, true)'>在上方堆叠</button>
-                            </div>
                         }
                     </div>
                 }
@@ -455,6 +447,50 @@
         }
 
         await Task.CompletedTask;
+    }
+
+    private string? _clipCode;
+
+    private ShortCodeFormat _clipFormat = ShortCodeFormat.Full;
+
+    private int _clipLayers;
+
+    private int _clipParts;
+
+    private void CopySelected()
+    {
+        if (Store.SelectedNode is not WorkspaceNode node ||
+            NodeDocument(node) is not ShapeDocument document)
+        {
+            return;
+        }
+
+        _clipCode = new ShapeEditor.Core.Services.ShortCodeExporter()
+            .Export(document, omitTopEmptyLayers: true);
+
+        _clipFormat = ShortCodeFormat.Full;
+        _clipLayers = document.LayerCount;
+        _clipParts = document.PartCount;
+    }
+
+    private void PasteClipboard()
+    {
+        if (_clipCode is null || !Store.PartsAllowed(_clipParts))
+        {
+            return;
+        }
+
+        WorkspaceNode node = Store.CreateNodeAtPoint(80, 80);
+
+        Store.ReplaceNodeShape(node.Id, _clipCode, _clipFormat, _clipLayers, _clipParts);
+    }
+
+    private void DeleteSelected()
+    {
+        if (Store.SelectedNode is WorkspaceNode node)
+        {
+            Store.DeleteNode(node.Id);
+        }
     }
 
     private string? _stackBaseId;
