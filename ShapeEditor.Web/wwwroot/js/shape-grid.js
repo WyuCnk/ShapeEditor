@@ -967,6 +967,40 @@ window.shapeGrid.downloadComposition = async function (sections, fileName) {
         x += widths[i];
     }
 
+    // 箭头单独一遍绘制，避免被后绘制的节点卡片遮住
+    for (let i = 0; i < edges.length; i++) {
+        const edge = edges[i];
+        const from = byId[edge.from];
+        const to = byId[edge.to];
+
+        if (!from || !to) { continue; }
+
+        const a1 = edgeAnchor(from, to);
+        const a2 = edgeAnchor(to, from);
+
+        let vx = a2.x - a1.x;
+        let vy = a2.y - a1.y;
+        const len = Math.max(1, Math.sqrt(vx * vx + vy * vy));
+
+        vx /= len;
+        vy /= len;
+
+        const tipX = a2.x - vx * 3;
+        const tipY = a2.y - vy * 3;
+
+        const head = 11;
+        const half = 5;
+        const bx = tipX - vx * head;
+        const by = tipY - vy * head;
+
+        ctx.beginPath();
+        ctx.moveTo(tipX, tipY);
+        ctx.lineTo(bx - vy * half, by + vx * half);
+        ctx.lineTo(bx + vy * half, by - vx * half);
+        ctx.closePath();
+        ctx.fillStyle = "#512BD4";
+        ctx.fill();
+    }
     const blob = await canvasToBlob(canvas);
     if (await window.shapeGridTryShare(blob, fileName)) { return; }
     const url = URL.createObjectURL(blob);
@@ -1157,6 +1191,40 @@ window.shapeGrid.downloadComposition = async function (sections, fileName, opera
         yRight += item.image.height + labelHeight + gap;
     }
 
+    // 箭头单独一遍绘制，避免被后绘制的节点卡片遮住
+    for (let i = 0; i < edges.length; i++) {
+        const edge = edges[i];
+        const from = byId[edge.from];
+        const to = byId[edge.to];
+
+        if (!from || !to) { continue; }
+
+        const a1 = edgeAnchor(from, to);
+        const a2 = edgeAnchor(to, from);
+
+        let vx = a2.x - a1.x;
+        let vy = a2.y - a1.y;
+        const len = Math.max(1, Math.sqrt(vx * vx + vy * vy));
+
+        vx /= len;
+        vy /= len;
+
+        const tipX = a2.x - vx * 3;
+        const tipY = a2.y - vy * 3;
+
+        const head = 11;
+        const half = 5;
+        const bx = tipX - vx * head;
+        const by = tipY - vy * head;
+
+        ctx.beginPath();
+        ctx.moveTo(tipX, tipY);
+        ctx.lineTo(bx - vy * half, by + vx * half);
+        ctx.lineTo(bx + vy * half, by - vx * half);
+        ctx.closePath();
+        ctx.fillStyle = "#512BD4";
+        ctx.fill();
+    }
     const blob = await canvasToBlob(canvas);
     if (await window.shapeGridTryShare(blob, fileName)) { return; }
     const url = URL.createObjectURL(blob);
@@ -1462,6 +1530,40 @@ function edgeAnchor(node, other) {
         }
     }
 
+    // 箭头单独一遍绘制，避免被后绘制的节点卡片遮住
+    for (let i = 0; i < edges.length; i++) {
+        const edge = edges[i];
+        const from = byId[edge.from];
+        const to = byId[edge.to];
+
+        if (!from || !to) { continue; }
+
+        const a1 = edgeAnchor(from, to);
+        const a2 = edgeAnchor(to, from);
+
+        let vx = a2.x - a1.x;
+        let vy = a2.y - a1.y;
+        const len = Math.max(1, Math.sqrt(vx * vx + vy * vy));
+
+        vx /= len;
+        vy /= len;
+
+        const tipX = a2.x - vx * 3;
+        const tipY = a2.y - vy * 3;
+
+        const head = 11;
+        const half = 5;
+        const bx = tipX - vx * head;
+        const by = tipY - vy * head;
+
+        ctx.beginPath();
+        ctx.moveTo(tipX, tipY);
+        ctx.lineTo(bx - vy * half, by + vx * half);
+        ctx.lineTo(bx + vy * half, by - vx * half);
+        ctx.closePath();
+        ctx.fillStyle = "#512BD4";
+        ctx.fill();
+    }
     const blob = await canvasToBlob(canvas);
     if (await window.shapeGridTryShare(blob, fileName)) { return; }
     const url = URL.createObjectURL(blob);
@@ -1826,6 +1928,40 @@ const width = bounds.maxX - bounds.minX + PAD * 2;
         }
     }
 
+    // 箭头单独一遍绘制，避免被后绘制的节点卡片遮住
+    for (let i = 0; i < edges.length; i++) {
+        const edge = edges[i];
+        const from = byId[edge.from];
+        const to = byId[edge.to];
+
+        if (!from || !to) { continue; }
+
+        const a1 = edgeAnchor(from, to);
+        const a2 = edgeAnchor(to, from);
+
+        let vx = a2.x - a1.x;
+        let vy = a2.y - a1.y;
+        const len = Math.max(1, Math.sqrt(vx * vx + vy * vy));
+
+        vx /= len;
+        vy /= len;
+
+        const tipX = a2.x - vx * 3;
+        const tipY = a2.y - vy * 3;
+
+        const head = 11;
+        const half = 5;
+        const bx = tipX - vx * head;
+        const by = tipY - vy * head;
+
+        ctx.beginPath();
+        ctx.moveTo(tipX, tipY);
+        ctx.lineTo(bx - vy * half, by + vx * half);
+        ctx.lineTo(bx + vy * half, by - vx * half);
+        ctx.closePath();
+        ctx.fillStyle = "#512BD4";
+        ctx.fill();
+    }
     const blob = await canvasToBlob(canvas);
     if (await window.shapeGridTryShare(blob, fileName)) { return; }
     const url = URL.createObjectURL(blob);
