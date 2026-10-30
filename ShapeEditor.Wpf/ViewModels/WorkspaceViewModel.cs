@@ -299,11 +299,17 @@ public sealed class WorkspaceViewModel : ObservableObject
 
         foreach (WorkspaceNode node in nodes)
         {
+            ShapeDocument? document = _store.GetEffectiveDocument(node);
+
             Nodes.Add(new WorkspaceNodeViewModel(
                 node,
                 NodeThumbnail(node),
                 node.Id == _store.SelectedNode?.Id)
             {
+                CodeText = document is null
+                    ? ""
+                    : string.Join(Environment.NewLine, ShapeText.Lines(document)),
+                CodeSummary = document is null ? "" : ShapeText.Summary(document),
                 RefText = node.TargetId is not null &&
                           _store.FindNode(node.TargetId) is WorkspaceNode target
                     ? $"引用 #{target.Seq}"

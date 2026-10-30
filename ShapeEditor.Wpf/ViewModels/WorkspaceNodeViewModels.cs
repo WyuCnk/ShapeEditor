@@ -58,6 +58,11 @@ public sealed class WorkspaceNodeViewModel : ObservableObject
 
     public ImageSource? Thumbnail { get; }
 
+    /// <summary>节点里显示的短代码文本（c/S/P/-）。</summary>
+    public string CodeText { get; set; } = "";
+
+    public string CodeSummary { get; set; } = "";
+
     public bool IsSelected
     {
         get => _isSelected;

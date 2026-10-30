@@ -376,12 +376,7 @@ public partial class WorkspacePage : ContentPage
             Children =
             {
                 header,
-                new GraphicsView
-                {
-                    HeightRequest = 80,
-                    InputTransparent = true,
-                    Drawable = NodePreview(node)
-                }
+                BuildCodeBlock(node)
             }
         };
 
@@ -515,6 +510,53 @@ public partial class WorkspacePage : ContentPage
         return row;
     }
 
+    /// <summary>
+    /// 节点正文：c/S/P/- 短代码 + 摘要，层数多时节点内滚动。
+    /// </summary>
+    private View BuildCodeBlock(
+        WorkspaceNode node)
+    {
+        ShapeDocument? document = _store!.GetEffectiveDocument(node);
+
+        var stack = new VerticalStackLayout { Spacing = 2 };
+
+        if (document is null)
+        {
+            stack.Add(new Label
+            {
+                Text = "空",
+                FontSize = 11,
+                TextColor = Muted
+            });
+
+            return stack;
+        }
+
+        var code = new Label
+        {
+            Text = string.Join(Environment.NewLine, ShapeText.Lines(document)),
+            FontFamily = "Consolas",
+            FontSize = 11,
+            TextColor = Color.FromArgb("#2B2B2B"),
+            LineHeight = 1.15
+        };
+
+        stack.Add(new ScrollView
+        {
+            HeightRequest = 90,
+            Orientation = ScrollOrientation.Vertical,
+            Content = code
+        });
+
+        stack.Add(new Label
+        {
+            Text = ShapeText.Summary(document),
+            FontSize = 10,
+            TextColor = Muted
+        });
+
+        return stack;
+    }
     private static string TitleOf(
         WorkspaceNode node)
     {
