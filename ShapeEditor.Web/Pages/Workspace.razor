@@ -197,7 +197,10 @@
                         <div class="graph-node-body">
                             @if (NodeDocument(node) is ShapeDocument document)
                             {
-                                <ShapePreview Document="document" CssClass="graph-preview" />
+                                <div class="ws-preview-scroll"
+                                     style="height:@(Math.Min(document.LayerCount, 20) * 18)px">
+                                    <ShapePreview Document="document" CssClass="graph-preview" />
+                                </div>
                                 <div class="ws-code-summary">@ShapeText.Summary(document)</div>
                             }
                             else if (node.Kind == "ref")

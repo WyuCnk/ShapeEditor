@@ -1821,3 +1821,15 @@ button {
     font-size: 11px;
     color: #6B6B76;
 }
+/* 节点预览：最多显示 20 层，超出在节点内滚动 */
+.ws-preview-scroll {
+    overflow-y: auto;
+    overflow-x: hidden;
+    border-radius: 6px;
+    background: #FAF8FF;
+}
+
+.ws-preview-scroll .graph-preview {
+    height: auto;
+    min-height: 100%;
+}
