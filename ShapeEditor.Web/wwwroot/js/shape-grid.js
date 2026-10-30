@@ -1220,6 +1220,35 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
     ctx.fillStyle = "#FFFFFF";
     ctx.fillRect(0, 0, width, height);
 
+function edgeAnchor(node, other) {
+        const cx = nodeLeft(node) + NODE_W / 2;
+        const cy = nodeTop(node) + (node._height || NODE_H) / 2;
+
+        const ox = nodeLeft(other) + NODE_W / 2;
+        const oy = nodeTop(other) + (other._height || NODE_H) / 2;
+
+        let dx = ox - cx;
+        let dy = oy - cy;
+        const len = Math.sqrt(dx * dx + dy * dy);
+
+        if (len < 1) {
+            return { x: cx, y: cy + (node._height || NODE_H) / 2 };
+        }
+
+        dx /= len;
+        dy /= len;
+
+        const hw = NODE_W / 2;
+        const hh = (node._height || NODE_H) / 2;
+
+        const sx = Math.abs(dx) < 1e-6 ? Number.MAX_VALUE : hw / Math.abs(dx);
+        const sy = Math.abs(dy) < 1e-6 ? Number.MAX_VALUE : hh / Math.abs(dy);
+
+        const scale = Math.min(sx, sy);
+
+        return { x: cx + dx * scale, y: cy + dy * scale };
+    }
+
     function nodeLeft(node) { return PAD + node.col * CELL_W; }
     function nodeTop(node) { return PAD + node.row * CELL_H; }
 
@@ -1584,10 +1613,24 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
             continue;
         }
 
-        const x1 = nodeLeft(from) + NODE_W / 2 + spread(outIndex[i], outCount[edge.from], 30);
-        const x2 = nodeLeft(to) + NODE_W / 2 + spread(inIndex[i], inCount[edge.to], 30);
-        const y1 = nodeTop(from) + from._height;
-        const y2 = nodeTop(to);
+        // 与界面一致：锚点取连心线与矩形边界交点，多条边沿法线错开
+        const a1 = edgeAnchor(from, to);
+        const a2 = edgeAnchor(to, from);
+
+        const vx = a2.x - a1.x;
+        const vy = a2.y - a1.y;
+        const vlen = Math.max(1, Math.sqrt(vx * vx + vy * vy));
+
+        const px = -vy / vlen;
+        const py = vx / vlen;
+
+        const o1 = spread(outIndex[i], outCount[edge.from], 30);
+        const o2 = spread(inIndex[i], inCount[edge.to], 30);
+
+        const x1 = a1.x + px * o1;
+        const y1 = a1.y + py * o1;
+        const x2 = a2.x + px * o2;
+        const y2 = a2.y + py * o2;
 
         ctx.strokeStyle = "#512BD4";
         ctx.lineWidth = 2;
