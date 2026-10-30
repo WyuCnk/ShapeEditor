@@ -1807,8 +1807,8 @@ const width = bounds.maxX - bounds.minX + PAD * 2;
         const px = -vy / vlen;
         const py = vx / vlen;
 
-        const o1 = spread(outIndex[i], outCount[edge.from], 30);
-        const o2 = spread(inIndex[i], inCount[edge.to], 30);
+        const o1 = 0;
+        const o2 = 0;
 
         const x1 = a1.x + px * o1;
         const y1 = a1.y + py * o1;
