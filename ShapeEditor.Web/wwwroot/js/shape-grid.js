@@ -1515,8 +1515,8 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
         rowY[row] = rowY[row - 1] + rowHeights[row - 1] + GAP_Y;
     }
 
-    const width = PAD * 2 + (maxCol + 1) * COL_W - (COL_W - NODE_W);
-    const height = rowY[maxRow] + rowHeights[maxRow] + PAD;
+    const width = Math.max(PAD * 2 + (maxCol + 1) * COL_W - (COL_W - NODE_W), ...nodes.map(n => nodeLeft(n) + NODE_W + PAD));
+    const height = Math.max(rowY[maxRow] + rowHeights[maxRow] + PAD, ...nodes.map(n => nodeTop(n) + (n._height || 220) + PAD));
 
     if (width > maxSide || height > maxSide) {
         throw new Error("图片尺寸过大：" + width + " × " + height);
@@ -1531,8 +1531,8 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
     ctx.fillStyle = "#FFFFFF";
     ctx.fillRect(0, 0, width, height);
 
-    function nodeLeft(node) { return PAD + node.col * COL_W; }
-    function nodeTop(node) { return rowY[node.row]; }
+    function nodeLeft(node) { return PAD + (node.x !== undefined ? node.x : node.col * COL_W); }
+    function nodeTop(node) { return PAD + (node.y !== undefined ? node.y : rowY[node.row]); }
 
     // 出入边序号，端点错开
     const outIndex = {};

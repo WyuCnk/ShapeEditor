@@ -26,6 +26,10 @@ public sealed class GraphExportNode
 
     public int Col { get; set; }
 
+    public double X { get; set; }
+
+    public double Y { get; set; }
+
     public string Label { get; set; } = "";
 
     public bool IsResult { get; set; }
