@@ -537,10 +537,14 @@
 
             if (changed)
             {
+                // 高度变了先重渲染，下一轮再按新布局校正连线
                 await InvokeAsync(StateHasChanged);
             }
-
-            await JS.InvokeVoidAsync("shapeGridLayoutEdges");
+            else
+            {
+                // 布局稳定后再用实测矩形校正连线
+                await JS.InvokeVoidAsync("shapeGridLayoutEdges");
+            }
         }
         catch
         {
