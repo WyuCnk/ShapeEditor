@@ -763,6 +763,16 @@
                 double x2 = ax2 + px * inOffset;
                 double y2 = ay2 + py * inOffset;
 
+                double ux = x2 - x1;
+                double uy = y2 - y1;
+                double ulen = Math.Sqrt(ux * ux + uy * uy);
+
+                if (ulen > 12)
+                {
+                    x2 -= ux / ulen * 8;
+                    y2 -= uy / ulen * 8;
+                }
+
                 // 折线走在“父节点底部到子节点顶部”的空档里，
                 // 每条边占一条独立车道，标签压在车道上方
                 // 直接斜线连到目标，箭头在终点按角度旋转
