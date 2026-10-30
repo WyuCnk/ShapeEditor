@@ -1562,6 +1562,31 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
 
     function nodeLeft(node) { return PAD + (node.x !== undefined ? node.x : node.col * COL_W); }
     function nodeTop(node) { return PAD + (node.y !== undefined ? node.y : rowY[node.row]); }
+    function edgeAnchor(node, other) {
+        const cx = nodeLeft(node) + NODE_W / 2;
+        const cy = nodeTop(node) + (node._height || 220) / 2;
+        const ox = nodeLeft(other) + NODE_W / 2;
+        const oy = nodeTop(other) + (other._height || 220) / 2;
+
+        let dx = ox - cx;
+        let dy = oy - cy;
+        const len = Math.sqrt(dx * dx + dy * dy);
+
+        if (len < 1) {
+            return { x: cx, y: cy + (node._height || 220) / 2 };
+        }
+
+        dx /= len;
+        dy /= len;
+
+        const hw = NODE_W / 2;
+        const hh = (node._height || 220) / 2;
+        const sx = Math.abs(dx) < 1e-6 ? Number.MAX_VALUE : hw / Math.abs(dx);
+        const sy = Math.abs(dy) < 1e-6 ? Number.MAX_VALUE : hh / Math.abs(dy);
+        const scale = Math.min(sx, sy);
+
+        return { x: cx + dx * scale, y: cy + dy * scale };
+    }
 
     // 出入边序号，端点错开
     const outIndex = {};
