@@ -1818,7 +1818,6 @@ const width = bounds.maxX - bounds.minX + PAD * 2;
         ctx.lineTo(x2, y2);
         ctx.stroke();
 
-        arrowHeadAt(x1, y1, x2, y2);
 
         const t = Math.min(0.9, Math.max(0.1, edge.labelT === undefined ? 0.5 : edge.labelT));
         const dx = x2 - x1;
