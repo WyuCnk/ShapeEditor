@@ -200,8 +200,14 @@
                         <path d="@edge.Path"
                               fill="none"
                               stroke="#512bd4"
-                              stroke-width="2"
-                              marker-end="url(#arrow)" />
+                              stroke-width="2" />
+                    }
+                </svg>
+
+                <svg class="graph-arrows" width="@CanvasWidth" height="@CanvasHeight">
+                    @foreach (EdgeView edge in EdgeViews)
+                    {
+                        <polygon points="@edge.Arrow" fill="#512bd4" />
                     }
                 </svg>
 
@@ -702,6 +708,7 @@
         string FromId,
         string ToId,
         string Path,
+        string Arrow,
         string Label,
         int LabelX,
         int LabelY);
@@ -815,10 +822,27 @@
 
                 labelX = Math.Clamp(labelX, 70, CanvasWidth - 70);
 
+                double alen = Math.Sqrt(ux * ux + uy * uy);
+
+                double uxN = alen < 1 ? 0 : ux / alen;
+                double uyN = alen < 1 ? 1 : uy / alen;
+
+                const double head = 11;
+                const double half = 5;
+
+                double bx = x2 - uxN * head;
+                double by = y2 - uyN * head;
+
+                string arrow =
+                    $"{x2:0.#},{y2:0.#} " +
+                    $"{bx - uyN * half:0.#},{by + uxN * half:0.#} " +
+                    $"{bx + uyN * half:0.#},{by - uxN * half:0.#}";
+
                 views.Add(new EdgeView(
                     edge.FromId,
                     edge.ToId,
                     path,
+                    arrow,
                     edge.Label,
                     labelX,
                     labelY));
