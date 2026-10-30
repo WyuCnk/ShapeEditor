@@ -411,11 +411,33 @@
 
         if (result.Node is not null)
         {
-            // 结果节点放到源节点右侧
-            Store.SetNodePosition(
-                result.Node.Id,
-                NodeX(source) + NodeWidth + 60,
-                NodeY(source));
+            double gap = NodeHeight + 120;
+            double below = NodeY(source) + gap;
+
+            if (operation == "cut")
+            {
+                // 切割：东在左、西在右，对称排在下方
+                WorkspaceNode? east = Store.Nodes.FirstOrDefault(
+                    node => node.OpKey == $"cutw:{source.Id}");
+
+                WorkspaceNode? west = Store.Nodes.FirstOrDefault(
+                    node => node.OpKey == $"cute:{source.Id}");
+
+                if (east is not null)
+                {
+                    Store.SetNodePosition(east.Id, Math.Max(20, NodeX(source) - 260), below);
+                }
+
+                if (west is not null)
+                {
+                    Store.SetNodePosition(west.Id, NodeX(source) + 260, below);
+                }
+            }
+            else
+            {
+                // 下落 / 顶针：放在正下方
+                Store.SetNodePosition(result.Node.Id, NodeX(source), below);
+            }
 
             Store.SelectNode(result.Node);
         }
