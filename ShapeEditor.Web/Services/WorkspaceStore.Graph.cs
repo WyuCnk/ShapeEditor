@@ -848,8 +848,8 @@ public sealed partial class WorkspaceStore
                     result.InputBId = other.Id;
                     result.StackBaseIsTop = slot.TopInput;
 
-                    AddEdge(baseNode.Id, result.Id, slot.TopInput ? "在下方堆叠" : "在上方堆叠");
-                    AddEdge(other.Id, result.Id, slot.TopInput ? "在上方堆叠" : "在下方堆叠");
+                    AddEdge(baseNode.Id, result.Id, slot.TopInput ? "在上方堆叠" : "在下方堆叠");
+                    AddEdge(other.Id, result.Id, slot.TopInput ? "在下方堆叠" : "在上方堆叠");
                 }
 
                 _edges.Remove(edge);

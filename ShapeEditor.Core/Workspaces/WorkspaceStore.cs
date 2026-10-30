@@ -84,6 +84,36 @@ public sealed class WorkspaceStore
 
     public CollapseMode Mode => _active?.Mode ?? CollapseMode.IncludeCycles;
 
+    /// <summary>
+    /// 该工作区固定的象限数：已经有图形时返回锁定值，空工作区返回 4。
+    /// </summary>
+    public int WorkspaceParts
+    {
+        get
+        {
+            WorkspaceNode? first = _active?.Nodes.FirstOrDefault(node => node.HasShape);
+
+            if (first is null)
+            {
+                return 4;
+            }
+
+            return _active!.PartCount > 0 ? _active.PartCount : first.Parts;
+        }
+    }
+
+    /// <summary>
+    /// 判断给定象限数的图形能否加入当前工作区：
+    /// 空工作区一律放行，否则必须与已锁定的象限数一致。
+    /// </summary>
+    public bool PartsAllowed(
+        int parts)
+    {
+        bool hasShape = _active?.Nodes.Any(node => node.HasShape) ?? false;
+
+        return !hasShape || parts == WorkspaceParts;
+    }
+
     public WorkspaceNode? SelectedNode { get; private set; }
 
     #region 素材库
@@ -325,9 +355,24 @@ public sealed class WorkspaceStore
             return 0;
         }
 
+        /*
+         * 象限数校验：工作区里除当前节点外已经有图形时，
+         * 新图形的象限数必须与锁定值一致，否则一个字节都不改动。
+         */
+        if (HasOtherShape(nodeId) && parts != WorkspaceParts)
+        {
+            LastError = $"该工作区的象限数已固定为 {WorkspaceParts}，不能再加入 {parts} 象限的图形。";
+
+            return 0;
+        }
+
+        LastError = null;
+
         int removed = DeleteDownstream(nodeId);
 
         AlignMaxLayersOnFirstShape(nodeId, layers);
+
+        LockPartCountOnFirstShape(nodeId, parts);
 
         ApplyShape(node, code, format, layers, parts);
         node.IsResult = false;
@@ -356,6 +401,8 @@ public sealed class WorkspaceStore
         }
 
         AlignMaxLayersOnFirstShape(slotId, layers);
+
+        LockPartCountOnFirstShape(slotId, parts);
 
         ApplyShape(slot, code, format, layers, parts);
         slot.TargetId = null;
@@ -405,6 +452,33 @@ public sealed class WorkspaceStore
             layers,
             ShapeRules.MinLayerCount,
             ShapeRules.MaxLayerCount);
+    }
+
+    /// <summary>
+    /// 工作区里除指定节点外是否已经有图形。
+    /// </summary>
+    private bool HasOtherShape(
+        string nodeId)
+    {
+        WorkspaceProject project = EnsureActive();
+
+        return project.Nodes.Any(node =>
+            node.Id != nodeId && node.HasShape);
+    }
+
+    /// <summary>
+    /// 工作区里第一次出现图形时，把象限数锁定成该图形的象限数。
+    /// </summary>
+    private void LockPartCountOnFirstShape(
+        string nodeId,
+        int parts)
+    {
+        if (HasOtherShape(nodeId))
+        {
+            return;
+        }
+
+        EnsureActive().PartCount = parts;
     }
 
     private void ApplyShape(
@@ -749,6 +823,90 @@ public sealed class WorkspaceStore
         return new NodeActionResult(true, created, "已生成堆叠结果。");
     }
 
+    /// <summary>
+    /// 直接按两个节点堆叠（不再经过 ref 槽位），并把两个输入记录到结果节点上。
+    /// baseIsTop 为 true 表示 base 节点放在上层。
+    /// </summary>
+    public NodeActionResult ComputeStackOf(
+        string baseId,
+        string otherId,
+        bool baseIsTop)
+    {
+        WorkspaceNode? baseNode = FindNode(baseId);
+
+        WorkspaceNode? otherNode = FindNode(otherId);
+
+        if (baseNode is null || otherNode is null)
+        {
+            return new NodeActionResult(false, null, "堆叠输入不存在。");
+        }
+
+        ShapeDocument? baseDocument = GetEffectiveDocument(baseNode);
+
+        ShapeDocument? otherDocument = GetEffectiveDocument(otherNode);
+
+        if (baseDocument is null || otherDocument is null)
+        {
+            return new NodeActionResult(false, null, "堆叠输入缺少图形。");
+        }
+
+        WorkspaceNode topNode = baseIsTop ? baseNode : otherNode;
+
+        WorkspaceNode bottomNode = baseIsTop ? otherNode : baseNode;
+
+        string key = $"stack:{bottomNode.Id}|{topNode.Id}";
+
+        WorkspaceNode? existing = EnsureActive().Nodes.FirstOrDefault(
+            node => node.OpKey == key);
+
+        if (existing is not null)
+        {
+            return new NodeActionResult(false, existing, "该组合已堆叠过，已定位到结果。");
+        }
+
+        ShapeDocument stackBottom = baseIsTop ? otherDocument : baseDocument;
+
+        ShapeDocument stackTop = baseIsTop ? baseDocument : otherDocument;
+
+        int heightLimit = Math.Min(
+            MaxLayers,
+            stackBottom.LayerCount + 1 + stackTop.LayerCount);
+
+        PhysicsResult result = ShapePhysics.Stack(
+            stackBottom,
+            stackTop,
+            heightLimit,
+            Mode);
+
+        if (!result.Success || result.Document is null)
+        {
+            return new NodeActionResult(false, null, result.Error ?? "堆叠失败。");
+        }
+
+        WorkspaceNode created = AddResultNode(
+            baseNode,
+            ApplyLimit(result.Document),
+            key,
+            "堆叠结果",
+            0);
+
+        // 结果节点自己记住两个输入，供重算与界面展示使用
+        created.InputAId = baseId;
+        created.InputBId = otherId;
+        created.StackBaseIsTop = baseIsTop;
+
+        created.Label = $"堆叠结果（上 #{topNode.Seq} / 下 #{bottomNode.Seq}）";
+
+        AddEdge(topNode.Id, created.Id, "在上方堆叠");
+
+        AddEdge(bottomNode.Id, created.Id, "在下方堆叠");
+
+        Save();
+        Changed?.Invoke();
+
+        return new NodeActionResult(true, created, "已生成堆叠结果。");
+    }
+
     public (int Updated, int Failed) RecomputeAll()
     {
         WorkspaceProject project = EnsureActive();
@@ -934,6 +1092,77 @@ public sealed class WorkspaceStore
 
         Save();
         Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// 把旧的「堆叠输入」槽节点（kind = ref）折叠成结果节点的两个输入，然后删掉槽节点。
+    /// 每个槽的结果节点会写入 InputAId / InputBId / StackBaseIsTop，
+    /// 并补上两条真实节点到结果的边（标签按上下关系），这样重算不再依赖槽位。
+    /// 返回迁移的槽数量。
+    /// </summary>
+    public int MigrateRefSlots()
+    {
+        WorkspaceProject project = EnsureActive();
+
+        List<WorkspaceNode> slots = project.Nodes
+            .Where(node => node.Kind == "ref")
+            .ToList();
+
+        if (slots.Count == 0)
+        {
+            return 0;
+        }
+
+        foreach (WorkspaceNode slot in slots)
+        {
+            WorkspaceNode? baseNode = slot.BaseId is null ? null : FindNode(slot.BaseId);
+
+            WorkspaceNode? otherNode = slot.TargetId is null
+                ? null
+                : FindNode(slot.TargetId);
+
+            foreach (WorkspaceEdge edge in project.Edges
+                         .Where(entry => entry.FromId == slot.Id)
+                         .ToList())
+            {
+                WorkspaceNode? result = FindNode(edge.ToId);
+
+                if (result is not null && baseNode is not null && otherNode is not null)
+                {
+                    result.InputAId = baseNode.Id;
+                    result.InputBId = otherNode.Id;
+                    result.StackBaseIsTop = slot.TopInput;
+
+                    // TopInput 为 true 表示槽位的底节点在上层
+                    WorkspaceNode topNode = slot.TopInput ? baseNode : otherNode;
+
+                    WorkspaceNode bottomNode = slot.TopInput ? otherNode : baseNode;
+
+                    AddEdge(topNode.Id, result.Id, "在上方堆叠");
+
+                    AddEdge(bottomNode.Id, result.Id, "在下方堆叠");
+                }
+
+                project.Edges.Remove(edge);
+            }
+
+            project.Nodes.Remove(slot);
+
+            _cache.Remove(slot.Id);
+
+            if (SelectedNode is not null && SelectedNode.Id == slot.Id)
+            {
+                SelectedNode = null;
+            }
+        }
+
+        project.Edges.RemoveAll(edge =>
+            slots.Any(slot => slot.Id == edge.FromId || slot.Id == edge.ToId));
+
+        Save();
+        Changed?.Invoke();
+
+        return slots.Count;
     }
 
     public void CycleEdgeLabel(
@@ -1227,6 +1456,9 @@ public sealed class WorkspaceStore
                   ?? _projects[0];
 
         _activeId = _active.Id;
+
+        // 加载后顺手把旧版 ref 槽位迁移成结果节点上的输入记录
+        MigrateRefSlots();
     }
 
     private void Save()
