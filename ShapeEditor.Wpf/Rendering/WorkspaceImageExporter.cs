@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using ShapeEditor.Core.Models;
+using ShapeEditor.Core.Theme;
 using ShapeEditor.Core.Workspaces;
 
 namespace ShapeEditor.Wpf.Rendering;
@@ -12,7 +13,7 @@ namespace ShapeEditor.Wpf.Rendering;
 /// 把路径图导出成 PNG。
 ///
 /// 节点尺寸与画布一致：宽度 = 象限数 × 30 + 16，高度 = 50 + 层数 × 30。
-/// 预览使用固定 30×30 单元格，按 1 倍尺寸绘制 c/S/P 字母；
+/// 预览使用固定 30×30 单元格，按 1 倍尺寸绘制 c/S 字母与顶针黑条；
 /// 连线不画标签，箭头在节点之后绘制，避免被卡片遮住。
 /// </summary>
 public static class WorkspaceImageExporter
@@ -28,8 +29,6 @@ public static class WorkspaceImageExporter
     private static readonly Brush TextBrush = CreateBrush(0x6B, 0x6B, 0x76);
 
     private static readonly Brush SummaryBrush = CreateBrush(0x8B, 0x8B, 0x96);
-
-    private static readonly Brush LetterBrush = CreateBrush(0x33, 0x33, 0x3D);
 
     private static readonly Brush PlaceholderBrush = CreateBrush(0xB0, 0xB0, 0xBA);
 
@@ -337,14 +336,18 @@ public static class WorkspaceImageExporter
     }
 
     /// <summary>
-    /// 固定 30×30 单元格，水平居中；字母只表示类型：
-    /// c 晶体、S 普通形状、P 顶针，空位只画格线。
+    /// 固定 30×30 单元格，水平居中。先按图形文档给单元格铺底色，
+    /// 再画类型字母：c 晶体、S 普通形状；顶针只画白底黑条，
+    /// 空位只画格线。
+    /// 竖式图第一行是最高层，取单元格时要做层号换算。
     /// </summary>
     private static void DrawPreview(
         DrawingContext context,
         ShapeDocument document,
         Rect nodeRect)
     {
+        ShapeTheme theme = ShapeTheme.Instance;
+
         double gridWidth = document.PartCount * CellSize;
 
         double gridHeight = document.LayerCount * CellSize;
@@ -359,6 +362,11 @@ public static class WorkspaceImageExporter
         {
             string line = lines[visualRow];
 
+            /*
+             * 视觉第一行是最高层，ShapeDocument 的 layer 0 是最底层。
+             */
+            int layer = document.LayerCount - 1 - visualRow;
+
             double cellTop = gridTop + visualRow * CellSize;
 
             for (int part = 0; part < document.PartCount; part++)
@@ -370,18 +378,40 @@ public static class WorkspaceImageExporter
                     continue;
                 }
 
+                var cellRect = new Rect(
+                    gridLeft + part * CellSize,
+                    cellTop,
+                    CellSize,
+                    CellSize);
+
+                ShapeCell cell = document[layer, part];
+
+                Brush? letterBrush = DrawCellBackground(
+                    context,
+                    theme,
+                    cell,
+                    cellRect);
+
+                /*
+                 * 顶针不画字母，只保留白底与中央黑条，与界面一致。
+                 */
+                if (letterBrush is null)
+                {
+                    continue;
+                }
+
                 FormattedText text = CreateText(
                     letter.ToString(),
                     16,
-                    LetterBrush,
+                    letterBrush,
                     bold: true,
                     family: "Consolas, Microsoft YaHei UI");
 
                 context.DrawText(
                     text,
                     new Point(
-                        gridLeft + part * CellSize + (CellSize - text.Width) / 2,
-                        cellTop + (CellSize - text.Height) / 2));
+                        cellRect.Left + (CellSize - text.Width) / 2,
+                        cellRect.Top + (CellSize - text.Height) / 2));
             }
         }
 
@@ -393,6 +423,89 @@ public static class WorkspaceImageExporter
             gridTop,
             gridWidth,
             gridHeight);
+    }
+
+    /// <summary>
+    /// 给非空单元格铺底色，并返回与底色对比度足够的字母画刷。
+    /// 晶体用主题的七段条带，普通形状用调色板颜色；
+    /// 顶针沿用界面的白底 + 中央黑条，不画字母，返回 null；
+    /// 空位不填充，只保留格线。
+    /// </summary>
+    private static Brush? DrawCellBackground(
+        DrawingContext context,
+        ShapeTheme theme,
+        ShapeCell cell,
+        Rect rect)
+    {
+        if (cell.Type == CellType.Empty)
+        {
+            return null;
+        }
+
+        if (cell.Type == CellType.Pin)
+        {
+            context.DrawRectangle(theme.EmptyBrush, null, rect);
+
+            /*
+             * 与界面观感一致：白底上居中一条黑色竖条。
+             * 宽度约 22%，高度约 70%，上下居中。
+             */
+            const double barWidthRatio = 0.22;
+
+            const double barHeightRatio = 0.70;
+
+            double barWidth = rect.Width * barWidthRatio;
+
+            double barHeight = rect.Height * barHeightRatio;
+
+            context.DrawRectangle(
+                theme.PinBrush,
+                null,
+                new Rect(
+                    rect.Left + (rect.Width - barWidth) / 2,
+                    rect.Top + (rect.Height - barHeight) / 2,
+                    barWidth,
+                    barHeight));
+
+            return null;
+        }
+
+        if (cell.Type == CellType.Crystal)
+        {
+            SolidColorBrush[] bands = theme.GetCrystalBrushes(cell.ColorCode);
+
+            double bandWidth = rect.Width / bands.Length;
+
+            double bandX = rect.Left;
+
+            for (int index = 0; index < bands.Length; index++)
+            {
+                /*
+                 * 最后一段补齐到边界，避免浮点误差留下一条缝。
+                 */
+                double actualWidth = index == bands.Length - 1
+                    ? rect.Right - bandX
+                    : bandWidth;
+
+                context.DrawRectangle(
+                    bands[index],
+                    null,
+                    new Rect(bandX, rect.Top, actualWidth, rect.Height));
+
+                bandX += bandWidth;
+            }
+        }
+        else
+        {
+            context.DrawRectangle(
+                theme.GetShapeBrush(cell.ColorCode),
+                null,
+                rect);
+        }
+
+        return ShapePalette.NeedsLightText(cell.ColorCode)
+            ? theme.LightTextBrush
+            : theme.DarkTextBrush;
     }
 
     private static void DrawGrid(
