@@ -231,9 +231,9 @@
                             @if (NodeDocument(node) is ShapeDocument document)
                             {
                                 <div class="ws-preview-scroll fixed"
-                                     style="height:@(document.LayerCount * 20 + 4)px;width:@(document.PartCount * 20)px;margin:0 auto">
+                                     style="height:@(document.LayerCount * CellSize + 4)px;width:@(document.PartCount * CellSize)px;margin:0 auto">
                                     <div class="ws-preview-inner"
-                                         style="height:@(document.LayerCount * 20 + 4)px;width:@(document.PartCount * 20)px;margin:0 auto">
+                                         style="height:@(document.LayerCount * CellSize + 4)px;width:@(document.PartCount * CellSize)px;margin:0 auto">
                                         <ShapePreview Document="document" CssClass="graph-preview" />
                                     </div>
                                 </div>
@@ -291,7 +291,7 @@
     private const int CellHeight = 400;
     private const int NodeHeight = 280;
     private const int NodeWidth = 260;
-    private const int CellSize = 20;
+    private const int CellSize = 30;
 
     private WorkspaceItem? _selectedMaterial;
 

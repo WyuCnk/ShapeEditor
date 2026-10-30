@@ -1538,7 +1538,8 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
         // 与界面一致：节点高度按层数计算（最多 20 行）
     for (const item of nodes) {
         const layerCount = item.state && item.state.layers ? item.state.layers : 6;
-        item._height = 50 + layerCount * 20;
+        item._height = 50 + layerCount * 30;
+        item._w = 16 + (item.state && item.state.columns ? item.state.columns : 12) * 30;
         if (item._image) {
             const availH = Math.max(20, item._height - 44 - 8);
             const fit = Math.min((NODE_W - 24) / item._image.width, availH / item._image.height, 1);
@@ -1576,7 +1577,7 @@ const rowHeights = [];
 
             minX = Math.min(minX, nx);
             minY = Math.min(minY, ny);
-            maxX = Math.max(maxX, nx + NODE_W);
+            maxX = Math.max(maxX, nx + (n._w || NODE_W));
             maxY = Math.max(maxY, ny + (n._height || 220));
         }
 
@@ -1766,7 +1767,7 @@ const width = bounds.maxX - bounds.minX + PAD * 2;
         ctx.lineWidth = node.isResult ? 2 : 1.2;
 
         ctx.beginPath();
-        ctx.roundRect(x, y, NODE_W, h, 12);
+        ctx.roundRect(x, y, node._w || NODE_W, h, 12);
         ctx.fill();
         ctx.stroke();
 
@@ -1786,10 +1787,10 @@ const width = bounds.maxX - bounds.minX + PAD * 2;
         if (node.state && node.state.cells) {
             const columns = node.state.columns;
             const rows = node.state.rows;
-            const cellW = (NODE_W - 16) / columns;
-            const cellH = (h - HEADER_H - 8) / rows;
+            const cellW = 30;
+            const cellH = 30;
 
-            const left = x + 8;
+            const left = x + ((node._w || NODE_W) - columns * 30) / 2;
             const top = y + HEADER_H;
 
             for (let row = 0; row < rows; row++) {
