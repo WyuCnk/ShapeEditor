@@ -359,8 +359,8 @@
         $"width:{CanvasWidth}px;height:{CanvasHeight}px;";
 
     private string NodeStyle(WorkspaceNode node) =>
-        $"left:{20 + node.Col * CellWidth}px;" +
-        $"top:{20 + node.Row * CellHeight}px;" +
+        $"left:{NodeX(node)}px;" +
+        $"top:{NodeY(node)}px;" +
         $"width:{NodeWidth}px;";
 
     private static int NodeCenterX(WorkspaceNode node) =>
@@ -427,6 +427,42 @@
         {
             Store.SetNodePosition(node.Id, node.X ?? 0, node.Y ?? 0);
         }
+    }
+
+    /// <summary>
+    /// 计算矩形边界上朝向另一节点的锚点。
+    /// </summary>
+    private (double X, double Y) EdgeAnchor(
+        WorkspaceNode node,
+        WorkspaceNode other)
+    {
+        double cx = NodeX(node) + NodeWidth / 2;
+        double cy = NodeY(node) + NodeHeight / 2;
+
+        double ox = NodeX(other) + NodeWidth / 2;
+        double oy = NodeY(other) + NodeHeight / 2;
+
+        double dx = ox - cx;
+        double dy = oy - cy;
+        double length = Math.Sqrt(dx * dx + dy * dy);
+
+        if (length < 1)
+        {
+            return (cx, cy + NodeHeight / 2);
+        }
+
+        dx /= length;
+        dy /= length;
+
+        double halfWidth = NodeWidth / 2;
+        double halfHeight = NodeHeight / 2;
+
+        double scaleX = Math.Abs(dx) < 1e-6 ? double.MaxValue : halfWidth / Math.Abs(dx);
+        double scaleY = Math.Abs(dy) < 1e-6 ? double.MaxValue : halfHeight / Math.Abs(dy);
+
+        double scale = Math.Min(scaleX, scaleY);
+
+        return (cx + dx * scale, cy + dy * scale);
     }
 
     private double NodeX(WorkspaceNode node) =>
