@@ -118,7 +118,7 @@ public static class ShapePhysics
             }
         }
 
-        // 中间 Lb 层留空，上方图形从 Lb + 1 开始，并清掉晶体
+        // 中间留出一层空层，上方图形从 baseLayers + 1 开始原样拼上
         for (int layer = 0;
              layer < topLayers;
              layer++)
@@ -127,15 +127,8 @@ public static class ShapePhysics
                  part < parts;
                  part++)
             {
-                ShapeCell cell = topDocument[layer, part];
-
-                if (cell.Type == CellType.Crystal)
-                {
-                    continue;
-                }
-
                 temporary[baseLayers + 1 + layer, part] =
-                    cell.Clone();
+                    topDocument[layer, part].Clone();
             }
         }
 
