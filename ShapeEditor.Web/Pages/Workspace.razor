@@ -225,7 +225,7 @@
                             @if (NodeDocument(node) is ShapeDocument document)
                             {
                                 <div class="ws-preview-scroll"
-                                     style="height:@(Math.Min(document.LayerCount, 20) * 20)px">
+                                     style="height:@(Math.Min(document.LayerCount, 20) * 20 + 4)px">
                                     <ShapePreview Document="document" CssClass="graph-preview" />
                                 </div>
                             }
@@ -613,7 +613,7 @@
             rows = Math.Min(Math.Max(document.LayerCount, 1), 20);
         }
 
-        return 50 + rows * 20;
+        return 54 + rows * 20;
     }
     private (double X, double Y) EdgeAnchor(
         WorkspaceNode node,
@@ -726,8 +726,8 @@
 
                 if (ulen > 20)
                 {
-                    x2 -= ux / ulen * 2;
-                    y2 -= uy / ulen * 2;
+                    x2 -= ux / ulen * 3;
+                    y2 -= uy / ulen * 3;
                 }
 
                 // 折线走在“父节点底部到子节点顶部”的空档里，
