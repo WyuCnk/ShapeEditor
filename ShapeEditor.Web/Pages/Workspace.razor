@@ -32,6 +32,14 @@
             <span class="legend-item"><span class="legend-pin"></span> 顶针</span>
             <span class="legend-item"><span class="legend-empty"></span> 空位</span>
         </div>
+        <div class="ws-tools">
+            <button class="mini-button" disabled="@(Store.SelectedNode is null)"
+                    @onclick='() => ApplyFromToolbar("collapse")'>下落</button>
+            <button class="mini-button" disabled="@(Store.SelectedNode is null)"
+                    @onclick='() => ApplyFromToolbar("pin")'>顶针</button>
+            <button class="mini-button" disabled="@(Store.SelectedNode is null)"
+                    @onclick='() => ApplyFromToolbar("cut")'>切割</button>
+        </div>
 <div class="graph-hint">
             提示：点击连线上的操作文字可以调整标签位置；双击工作区标签可以重命名。
         </div>
@@ -384,6 +392,40 @@
 
     private static int NodeTop(WorkspaceNode node) =>
         20 + node.Row * CellHeight;
+
+    private async Task ApplyFromToolbar(string operation)
+    {
+        WorkspaceNode? source = Store.SelectedNode;
+
+        if (source is null)
+        {
+            return;
+        }
+
+        NodeActionResult result = operation switch
+        {
+            "pin" => Store.ApplyPin(source.Id, Store.Mode),
+            "cut" => Store.ApplyCut(source.Id, Store.Mode),
+            _ => Store.ApplyCollapse(source.Id, Store.Mode)
+        };
+
+        if (result.Node is not null)
+        {
+            // 结果节点放到源节点右侧
+            Store.SetNodePosition(
+                result.Node.Id,
+                NodeX(source) + NodeWidth + 60,
+                NodeY(source));
+
+            Store.SelectNode(result.Node);
+        }
+        else if (!result.Created)
+        {
+            ShowDialog("提示", result.Message);
+        }
+
+        await Task.CompletedTask;
+    }
 
     private string? _dragMaterialId;
 

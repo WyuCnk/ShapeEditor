@@ -1872,3 +1872,8 @@ button {
 .graph-node.dragging {
     cursor: grabbing;
 }
+.ws-tools {
+    display: flex;
+    gap: 8px;
+    margin: 6px 2px 2px;
+}
