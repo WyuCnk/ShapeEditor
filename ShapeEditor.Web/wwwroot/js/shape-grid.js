@@ -985,8 +985,8 @@ window.shapeGrid.downloadComposition = async function (sections, fileName) {
         vx /= len;
         vy /= len;
 
-        const tipX = a2.x - vx * 3;
-        const tipY = a2.y - vy * 3;
+        const tipX = (edgeGeom[i] ? edgeGeom[i].x : a2.x) - vx * 3;
+        const tipY = (edgeGeom[i] ? edgeGeom[i].y : a2.y) - vy * 3;
 
         const head = 11;
         const half = 5;
@@ -1209,8 +1209,8 @@ window.shapeGrid.downloadComposition = async function (sections, fileName, opera
         vx /= len;
         vy /= len;
 
-        const tipX = a2.x - vx * 3;
-        const tipY = a2.y - vy * 3;
+        const tipX = (edgeGeom[i] ? edgeGeom[i].x : a2.x) - vx * 3;
+        const tipY = (edgeGeom[i] ? edgeGeom[i].y : a2.y) - vy * 3;
 
         const head = 11;
         const half = 5;
@@ -1330,6 +1330,8 @@ function edgeAnchor(node, other) {
 
     function nodeLeft(node) { return PAD + node.col * CELL_W; }
     function nodeTop(node) { return PAD + node.row * CELL_H; }
+
+    const edgeGeom = [];
 
     // ---- 连线 ----
     const outIndex = {};
@@ -1548,8 +1550,8 @@ function edgeAnchor(node, other) {
         vx /= len;
         vy /= len;
 
-        const tipX = a2.x - vx * 3;
-        const tipY = a2.y - vy * 3;
+        const tipX = (edgeGeom[i] ? edgeGeom[i].x : a2.x) - vx * 3;
+        const tipY = (edgeGeom[i] ? edgeGeom[i].y : a2.y) - vy * 3;
 
         const head = 11;
         const half = 5;
@@ -1782,6 +1784,8 @@ const width = bounds.maxX - bounds.minX + PAD * 2;
         ctx.restore();
     }
 
+    const edgeGeom = [];
+
     // ---- 连线 ----
     for (let i = 0; i < edges.length; i++) {
         const edge = edges[i];
@@ -1810,6 +1814,8 @@ const width = bounds.maxX - bounds.minX + PAD * 2;
         const y1 = a1.y + py * o1;
         const x2 = a2.x + px * o2;
         const y2 = a2.y + py * o2;
+
+        edgeGeom[i] = { x: x2, y: y2, nx: px, ny: py };
 
         ctx.strokeStyle = "#512BD4";
         ctx.lineWidth = 2;
@@ -1945,8 +1951,8 @@ const width = bounds.maxX - bounds.minX + PAD * 2;
         vx /= len;
         vy /= len;
 
-        const tipX = a2.x - vx * 3;
-        const tipY = a2.y - vy * 3;
+        const tipX = (edgeGeom[i] ? edgeGeom[i].x : a2.x) - vx * 3;
+        const tipY = (edgeGeom[i] ? edgeGeom[i].y : a2.y) - vy * 3;
 
         const head = 11;
         const half = 5;
@@ -2108,8 +2114,8 @@ window.shapeGridLayoutEdges = function () {
         vx /= len;
         vy /= len;
 
-        const tipX = a2.x - vx * 3;
-        const tipY = a2.y - vy * 3;
+        const tipX = (edgeGeom[i] ? edgeGeom[i].x : a2.x) - vx * 3;
+        const tipY = (edgeGeom[i] ? edgeGeom[i].y : a2.y) - vy * 3;
 
         path.setAttribute("d", "M " + a1.x + " " + a1.y + " L " + tipX + " " + tipY);
 
