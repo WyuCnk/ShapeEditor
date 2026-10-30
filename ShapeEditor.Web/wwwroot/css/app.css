@@ -1928,3 +1928,10 @@ button {
     flex: 1;
     overflow: auto;
 }
+.ws-preview-scroll.fixed {
+    overflow: hidden;
+}
+
+.ws-preview-scroll.scrollable {
+    overflow-y: auto;
+}
