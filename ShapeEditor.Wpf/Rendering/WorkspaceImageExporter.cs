@@ -9,108 +9,123 @@ using ShapeEditor.Core.Workspaces;
 namespace ShapeEditor.Wpf.Rendering;
 
 /// <summary>
-/// 把路径图导出成 PNG：节点高度按图形比例自适应，行高取该行最高节点。
+/// 把路径图导出成 PNG。
+///
+/// 节点尺寸与画布一致：宽度 = 象限数 × 30 + 16，高度 = 50 + 层数 × 30。
+/// 预览使用固定 30×30 单元格，按 1 倍尺寸绘制 c/S/P 字母；
+/// 连线不画标签，箭头在节点之后绘制，避免被卡片遮住。
 /// </summary>
 public static class WorkspaceImageExporter
 {
-    private const double ColWidth = 250;
-    private const double NodeWidth = 210;
-    private const double Padding = 24;
-    private const double RowGap = 90;
-    private const double HeaderHeight = 46;
-    private const double MaxImageWidth = NodeWidth - 24;
-    private const double MaxImageHeight = 170;
+    private const double CellSize = 30;
 
-    private static readonly Brush EdgeBrush = new SolidColorBrush(Color.FromRgb(0x51, 0x2B, 0xD4));
-    private static readonly Brush TextBrush = new SolidColorBrush(Color.FromRgb(0x6B, 0x6B, 0x76));
-    private static readonly Brush RefBrush = new SolidColorBrush(Color.FromRgb(0x8B, 0x7B, 0xBF));
-    private static readonly Brush LabelBrush = new SolidColorBrush(Color.FromRgb(0x45, 0x27, 0xA0));
+    private const double HeaderHeight = 50;
+
+    private const double Padding = 24;
+
+    private static readonly Brush EdgeBrush = CreateBrush(0x51, 0x2B, 0xD4);
+
+    private static readonly Brush TextBrush = CreateBrush(0x6B, 0x6B, 0x76);
+
+    private static readonly Brush SummaryBrush = CreateBrush(0x8B, 0x8B, 0x96);
+
+    private static readonly Brush LetterBrush = CreateBrush(0x33, 0x33, 0x3D);
+
+    private static readonly Brush PlaceholderBrush = CreateBrush(0xB0, 0xB0, 0xBA);
+
+    private static readonly Pen EdgePen = CreatePen(EdgeBrush, 2);
+
+    private static readonly Pen GridPen = CreatePen(CreateBrush(0xC8, 0xC8, 0xD0), 1);
 
     public static void Export(
         string filePath,
         IReadOnlyList<WorkspaceNode> nodes,
         IReadOnlyList<WorkspaceEdge> edges,
-        Func<WorkspaceNode, ShapeDocument?> documentOf)
+        Func<WorkspaceNode, ShapeDocument?> documentOf,
+        int fallbackParts = 4)
     {
         if (nodes.Count == 0)
         {
             return;
         }
 
-        var drawings = new Dictionary<string, DrawingGroup>();
-        var sizes = new Dictionary<string, Size>();
-        var heights = new Dictionary<string, double>();
+        var documents = new Dictionary<string, ShapeDocument?>();
+
+        var layouts = new Dictionary<string, Rect>();
+
+        double minLeft = double.MaxValue;
+
+        double minTop = double.MaxValue;
+
+        double maxRight = double.MinValue;
+
+        double maxBottom = double.MinValue;
 
         foreach (WorkspaceNode node in nodes)
         {
             ShapeDocument? document = documentOf(node);
 
-            if (document is null)
-            {
-                heights[node.Id] = 120;
+            documents[node.Id] = document;
 
-                continue;
-            }
+            Size size = WorkspaceLayout.SizeFor(node, document, fallbackParts);
 
-            DrawingGroup drawing = ShapeGridDrawing.Build(document, 24, 24);
+            Rect bounds = WorkspaceLayout.BoundsFor(node, size);
 
-            Rect bounds = drawing.Bounds;
+            layouts[node.Id] = bounds;
 
-            double scale = Math.Min(
-                Math.Min(MaxImageWidth / Math.Max(1, bounds.Width), MaxImageHeight / Math.Max(1, bounds.Height)),
-                1);
-
-            // ShapeGridDrawing.Build 返回的 DrawingGroup 是冻结的，
-            // 不能直接改 Transform，包一层再缩放
-            var scaled = new DrawingGroup
-            {
-                Transform = new ScaleTransform(scale, scale)
-            };
-
-            scaled.Children.Add(drawing);
-
-            drawings[node.Id] = scaled;
-            sizes[node.Id] = new Size(bounds.Width * scale, bounds.Height * scale);
-            heights[node.Id] = HeaderHeight + bounds.Height * scale + 14;
+            minLeft = Math.Min(minLeft, bounds.Left);
+            minTop = Math.Min(minTop, bounds.Top);
+            maxRight = Math.Max(maxRight, bounds.Right);
+            maxBottom = Math.Max(maxBottom, bounds.Bottom);
         }
 
-        int maxRow = nodes.Max(node => node.Row);
+        /*
+         * 画布 = 所有节点包围盒 + 四周 24px 边距。
+         */
+        double width = Math.Max(1, maxRight - minLeft) + Padding * 2;
 
-        var rowHeights = new double[maxRow + 1];
+        double height = Math.Max(1, maxBottom - minTop) + Padding * 2;
 
-        for (int row = 0; row <= maxRow; row++)
+        double offsetX = Padding - minLeft;
+
+        double offsetY = Padding - minTop;
+
+        var shifted = new Dictionary<string, Rect>();
+
+        foreach (KeyValuePair<string, Rect> entry in layouts)
         {
-            rowHeights[row] = nodes
-                .Where(node => node.Row == row)
-                .Select(node => heights[node.Id])
-                .DefaultIfEmpty(120)
-                .Max();
+            Rect rect = entry.Value;
+
+            shifted[entry.Key] = new Rect(
+                rect.Left + offsetX,
+                rect.Top + offsetY,
+                rect.Width,
+                rect.Height);
         }
-
-        var rowY = new double[maxRow + 1];
-
-        for (int row = 1; row <= maxRow; row++)
-        {
-            rowY[row] = rowY[row - 1] + rowHeights[row - 1] + RowGap;
-        }
-
-        int maxCol = nodes.Max(node => node.Col);
-
-        double width = Padding * 2 + (maxCol + 1) * ColWidth - (ColWidth - NodeWidth);
-        double height = rowY[maxRow] + rowHeights[maxRow] + Padding;
 
         var visual = new DrawingVisual();
 
         using (DrawingContext context = visual.RenderOpen())
         {
-            context.DrawRectangle(Brushes.White, null, new Rect(0, 0, width, height));
+            context.DrawRectangle(
+                Brushes.White,
+                null,
+                new Rect(0, 0, width, height));
 
-            DrawEdges(context, nodes, edges, rowY, heights);
+            // 连线在节点之下。
+            DrawEdges(context, edges, shifted);
 
             foreach (WorkspaceNode node in nodes)
             {
-                DrawNode(context, node, rowY[node.Row], heights[node.Id], drawings, sizes);
+                DrawNode(
+                    context,
+                    node,
+                    shifted[node.Id],
+                    documents[node.Id]);
             }
+
+            // 箭头在节点之后，尖端贴住目标边框，不会被卡片遮住。
+            DrawArrows(context, edges, shifted);
         }
 
         var bitmap = new RenderTargetBitmap(
@@ -131,117 +146,100 @@ public static class WorkspaceImageExporter
         encoder.Save(stream);
     }
 
+    #region 连线与箭头
+
     private static void DrawEdges(
         DrawingContext context,
-        IReadOnlyList<WorkspaceNode> nodes,
         IReadOnlyList<WorkspaceEdge> edges,
-        double[] rowY,
-        Dictionary<string, double> heights)
+        IReadOnlyDictionary<string, Rect> layouts)
     {
-        var byId = nodes.ToDictionary(node => node.Id);
+        foreach ((Rect from, Rect to) in ResolveEdges(edges, layouts))
+        {
+            Point start = WorkspaceLayout.BoundaryToward(
+                from,
+                WorkspaceLayout.CenterOf(to));
 
-        var outIndex = new Dictionary<string, int>();
-        var outCount = edges.GroupBy(edge => edge.FromId).ToDictionary(group => group.Key, group => group.Count());
-        var inIndex = new Dictionary<string, int>();
-        var inCount = edges.GroupBy(edge => edge.ToId).ToDictionary(group => group.Key, group => group.Count());
+            Point entry = WorkspaceLayout.BoundaryToward(
+                to,
+                WorkspaceLayout.CenterOf(from));
 
+            Point tip = WorkspaceLayout.OffsetOutward(to, entry, 1);
+
+            context.DrawLine(EdgePen, start, tip);
+        }
+    }
+
+    private static void DrawArrows(
+        DrawingContext context,
+        IReadOnlyList<WorkspaceEdge> edges,
+        IReadOnlyDictionary<string, Rect> layouts)
+    {
+        foreach ((Rect from, Rect to) in ResolveEdges(edges, layouts))
+        {
+            Point start = WorkspaceLayout.BoundaryToward(
+                from,
+                WorkspaceLayout.CenterOf(to));
+
+            Point entry = WorkspaceLayout.BoundaryToward(
+                to,
+                WorkspaceLayout.CenterOf(from));
+
+            Point tip = WorkspaceLayout.OffsetOutward(to, entry, 1);
+
+            DrawArrow(context, start, tip);
+        }
+    }
+
+    private static IEnumerable<(Rect From, Rect To)> ResolveEdges(
+        IReadOnlyList<WorkspaceEdge> edges,
+        IReadOnlyDictionary<string, Rect> layouts)
+    {
         foreach (WorkspaceEdge edge in edges)
         {
-            if (!byId.TryGetValue(edge.FromId, out WorkspaceNode? from) ||
-                !byId.TryGetValue(edge.ToId, out WorkspaceNode? to))
+            if (!layouts.TryGetValue(edge.FromId, out Rect from) ||
+                !layouts.TryGetValue(edge.ToId, out Rect to))
             {
                 continue;
             }
 
-            int oi = outIndex.TryGetValue(edge.FromId, out int o) ? o : 0;
-            outIndex[edge.FromId] = oi + 1;
-
-            int ii = inIndex.TryGetValue(edge.ToId, out int i) ? i : 0;
-            inIndex[edge.ToId] = ii + 1;
-
-            double x1 = Padding + from.Col * ColWidth + NodeWidth / 2 +
-                        Spread(oi, outCount[edge.FromId], 30);
-            double y1 = rowY[from.Row] + heights[from.Id];
-
-            double x2 = Padding + to.Col * ColWidth + NodeWidth / 2 +
-                        Spread(ii, inCount[edge.ToId], 30);
-            double y2 = rowY[to.Row];
-
-            var pen = new Pen(EdgeBrush, 2);
-
-            context.DrawLine(pen, new Point(x1, y1), new Point(x2, y2 - 4));
-
-            DrawArrow(context, x1, y1, x2, y2 - 4);
-
-            double t = Math.Clamp(edge.LabelT, 0.1, 0.9);
-
-            double dx = x2 - x1;
-            double dy = y2 - y1;
-            double length = Math.Max(1, Math.Sqrt(dx * dx + dy * dy));
-
-            double nx = -dy / length;
-            double ny = dx / length;
-
-            if (ny > 0)
-            {
-                nx = -nx;
-                ny = -ny;
-            }
-
-            if (Math.Abs(dx) < 8)
-            {
-                nx = 1;
-                ny = 0;
-            }
-
-            double offset = Math.Abs(dx) < 8 ? 42 : 18;
-
-            double lx = x1 + dx * t + nx * offset;
-            double ly = y1 + dy * t + ny * offset;
-
-            FormattedText text = CreateText(edge.Label, 12, LabelBrush);
-
-            var rect = new Rect(
-                lx - text.Width / 2 - 6,
-                ly - text.Height / 2 - 2,
-                text.Width + 12,
-                text.Height + 4);
-
-            context.DrawRectangle(Brushes.White, null, rect);
-            context.DrawText(text, new Point(rect.Left + 6, rect.Top + 2));
+            yield return (from, to);
         }
     }
 
     private static void DrawArrow(
         DrawingContext context,
-        double x1,
-        double y1,
-        double x2,
-        double y2)
+        Point start,
+        Point tip)
     {
-        double angle = Math.Atan2(y2 - y1, x2 - x1);
-        const double size = 10;
+        double angle = Math.Atan2(
+            tip.Y - start.Y,
+            tip.X - start.X);
+
+        const double head = 10;
+
+        const double halfWidth = 5.5;
 
         double cos = Math.Cos(angle);
+
         double sin = Math.Sin(angle);
 
         var geometry = new StreamGeometry();
 
         using (StreamGeometryContext geometryContext = geometry.Open())
         {
-            geometryContext.BeginFigure(new Point(x2, y2), true, true);
+            geometryContext.BeginFigure(tip, true, true);
 
             geometryContext.LineTo(
                 new Point(
-                    x2 - size * cos + size * 0.55 * sin,
-                    y2 - size * sin - size * 0.55 * cos),
+                    tip.X - head * cos + halfWidth * sin,
+                    tip.Y - head * sin - halfWidth * cos),
                 true,
                 false);
 
             geometryContext.LineTo(
                 new Point(
-                    x2 - size * cos - size * 0.55 * sin,
-                    y2 - size * sin + size * 0.55 * cos),
+                    tip.X - head * cos - halfWidth * sin,
+                    tip.Y - head * sin + halfWidth * cos),
                 true,
                 false);
         }
@@ -251,44 +249,196 @@ public static class WorkspaceImageExporter
         context.DrawGeometry(EdgeBrush, null, geometry);
     }
 
+    #endregion
+
+    #region 节点
+
     private static void DrawNode(
         DrawingContext context,
         WorkspaceNode node,
-        double y,
-        double height,
-        Dictionary<string, DrawingGroup> drawings,
-        Dictionary<string, Size> sizes)
+        Rect rect,
+        ShapeDocument? document)
     {
-        double x = Padding + node.Col * ColWidth;
+        var borderColor = node.IsResult
+            ? Color.FromRgb(0x51, 0x2B, 0xD4)
+            : node.Kind == "ref"
+                ? Color.FromRgb(0xB9, 0xA9, 0xEE)
+                : Color.FromRgb(0xD0, 0xD0, 0xD0);
 
         var border = new Pen(
-            new SolidColorBrush(node.IsResult
-                ? Color.FromRgb(0x51, 0x2B, 0xD4)
-                : node.Kind == "ref"
-                    ? Color.FromRgb(0xB9, 0xA9, 0xEE)
-                    : Color.FromRgb(0xD0, 0xD0, 0xD0)),
-            node.IsResult ? 2 : 1.2);
+            CreateBrush(borderColor),
+            node.IsResult ? 2 : 1);
+
+        border.Freeze();
 
         Brush background = node.IsResult
-            ? new SolidColorBrush(Color.FromRgb(0xFA, 0xF8, 0xFF))
+            ? CreateBrush(0xFA, 0xF8, 0xFF)
             : Brushes.White;
 
-        context.DrawRoundedRectangle(background, border, new Rect(x, y, NodeWidth, height), 12, 12);
+        context.DrawRoundedRectangle(
+            background,
+            border,
+            rect,
+            12,
+            12);
 
-        FormattedText title = CreateText($"#{node.Seq} · {NodeTitle(node)}", 12, TextBrush);
+        FormattedText title = CreateText(
+            $"#{node.Seq} · {NodeTitle(node)}",
+            12,
+            TextBrush,
+            bold: true);
 
-        context.DrawText(title, new Point(x + 10, y + 10));
+        title.MaxTextWidth = Math.Max(1, rect.Width - 20);
 
-        if (drawings.TryGetValue(node.Id, out DrawingGroup? drawing) &&
-            sizes.TryGetValue(node.Id, out Size size))
+        title.MaxLineCount = 1;
+
+        title.Trimming = TextTrimming.CharacterEllipsis;
+
+        context.DrawText(title, new Point(rect.Left + 10, rect.Top + 8));
+
+        if (document is null)
         {
-            context.PushTransform(new TranslateTransform(
-                x + (NodeWidth - size.Width) / 2,
-                y + HeaderHeight));
+            FormattedText empty = CreateText(
+                node.Kind == "ref" ? "选择输入" : "空",
+                12,
+                PlaceholderBrush);
 
-            context.DrawDrawing(drawing);
+            empty.MaxTextWidth = Math.Max(1, rect.Width - 20);
 
-            context.Pop();
+            empty.MaxLineCount = 1;
+
+            empty.Trimming = TextTrimming.CharacterEllipsis;
+
+            context.DrawText(
+                empty,
+                new Point(
+                    rect.Left + (rect.Width - Math.Min(empty.Width, rect.Width - 20)) / 2,
+                    rect.Top + HeaderHeight + (rect.Height - HeaderHeight - empty.Height) / 2));
+
+            return;
+        }
+
+        FormattedText summary = CreateText(
+            ShapeText.Summary(document),
+            10,
+            SummaryBrush);
+
+        summary.MaxTextWidth = Math.Max(1, rect.Width - 20);
+
+        summary.MaxLineCount = 1;
+
+        summary.Trimming = TextTrimming.CharacterEllipsis;
+
+        context.DrawText(
+            summary,
+            new Point(rect.Left + 10, rect.Top + 28));
+
+        DrawPreview(context, document, rect);
+    }
+
+    /// <summary>
+    /// 固定 30×30 单元格，水平居中；字母只表示类型：
+    /// c 晶体、S 普通形状、P 顶针，空位只画格线。
+    /// </summary>
+    private static void DrawPreview(
+        DrawingContext context,
+        ShapeDocument document,
+        Rect nodeRect)
+    {
+        double gridWidth = document.PartCount * CellSize;
+
+        double gridHeight = document.LayerCount * CellSize;
+
+        double gridLeft = nodeRect.Left + (nodeRect.Width - gridWidth) / 2;
+
+        double gridTop = nodeRect.Top + HeaderHeight;
+
+        IReadOnlyList<string> lines = ShapeText.Lines(document);
+
+        for (int visualRow = 0; visualRow < document.LayerCount; visualRow++)
+        {
+            string line = lines[visualRow];
+
+            double cellTop = gridTop + visualRow * CellSize;
+
+            for (int part = 0; part < document.PartCount; part++)
+            {
+                char letter = part < line.Length ? line[part] : '-';
+
+                if (letter == '-')
+                {
+                    continue;
+                }
+
+                FormattedText text = CreateText(
+                    letter.ToString(),
+                    16,
+                    LetterBrush,
+                    bold: true,
+                    family: "Consolas, Microsoft YaHei UI");
+
+                context.DrawText(
+                    text,
+                    new Point(
+                        gridLeft + part * CellSize + (CellSize - text.Width) / 2,
+                        cellTop + (CellSize - text.Height) / 2));
+            }
+        }
+
+        DrawGrid(
+            context,
+            document.PartCount,
+            document.LayerCount,
+            gridLeft,
+            gridTop,
+            gridWidth,
+            gridHeight);
+    }
+
+    private static void DrawGrid(
+        DrawingContext context,
+        int columns,
+        int rows,
+        double left,
+        double top,
+        double width,
+        double height)
+    {
+        /*
+         * 外框向内缩半个像素，避免线条被卡片边界裁掉。
+         */
+        const double half = 0.5;
+
+        double right = left + Math.Max(half, width - half);
+
+        double bottom = top + Math.Max(half, height - half);
+
+        for (int column = 0; column <= columns; column++)
+        {
+            double x = column == 0
+                ? left + half
+                : column == columns
+                    ? right
+                    : left + column * CellSize;
+
+            context.DrawLine(
+                GridPen,
+                new Point(x, top + half),
+                new Point(x, bottom));
+        }
+
+        for (int row = 0; row <= rows; row++)
+        {
+            double y = row == 0
+                ? top + half
+                : row == rows
+                    ? bottom
+                    : top + row * CellSize;
+
+            context.DrawLine(
+                GridPen,
+                new Point(left + half, y),
+                new Point(right, y));
         }
     }
 
@@ -303,28 +453,61 @@ public static class WorkspaceImageExporter
         return node.IsResult ? node.Label : "素材节点";
     }
 
+    #endregion
+
+    #region 绘制工具
+
     private static FormattedText CreateText(
         string text,
         double size,
-        Brush brush)
+        Brush brush,
+        bool bold = false,
+        string family = "Microsoft YaHei UI, Segoe UI")
     {
+        var typeface = new Typeface(
+            new FontFamily(family),
+            FontStyles.Normal,
+            bold ? FontWeights.Bold : FontWeights.Normal,
+            FontStretches.Normal);
+
         return new FormattedText(
             text,
             CultureInfo.CurrentUICulture,
             FlowDirection.LeftToRight,
-            new Typeface("Microsoft YaHei UI"),
+            typeface,
             size,
             brush,
             1.0);
     }
 
-    private static double Spread(
-        int index,
-        int count,
-        double step)
+    private static Brush CreateBrush(
+        byte red,
+        byte green,
+        byte blue)
     {
-        return count <= 1
-            ? 0
-            : Math.Round((index - (count - 1) / 2.0) * step);
+        return CreateBrush(Color.FromRgb(red, green, blue));
     }
+
+    private static Brush CreateBrush(
+        Color color)
+    {
+        var brush = new SolidColorBrush(color);
+
+        brush.Freeze();
+
+        return brush;
+    }
+
+    private static Pen CreatePen(
+        Brush brush,
+        double thickness)
+    {
+        var pen = new Pen(brush, thickness);
+
+        pen.Freeze();
+
+        return pen;
+    }
+
+    #endregion
 }

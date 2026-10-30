@@ -1,4 +1,5 @@
 using ShapeEditor.Core.Models;
+using ShapeEditor.Core.Physics;
 using ShapeEditor.Core.Services;
 using ShapeEditor.Core.Workspaces;
 
@@ -7,17 +8,16 @@ namespace ShapeEditor.Maui;
 /// <summary>
 /// 工作区页面：多工作区标签、素材列表、制作路径图。
 ///
-/// 第一步先做标签、素材、节点卡片与基础运算，连线在下一步补。
+/// 节点卡片只负责展示与选中，操作统一放在工具条里，
+/// 连线分两层：线段在节点下方，箭头在节点上方。
 /// </summary>
 public partial class WorkspacePage : ContentPage
 {
-    private const double NodeWidth = 168;
+    /// <summary>结果节点与源节点的垂直间距。</summary>
+    private const double ResultGap = 56;
 
-    private const double NodeHeight = 170;
-
-    private const double CellWidth = 190;
-
-    private const double CellHeight = 400;
+    /// <summary>切割结果相对源节点的水平偏移。</summary>
+    private const double CutOffset = 260;
 
     private static readonly Color Accent = Color.FromArgb("#512BD4");
 
@@ -25,18 +25,14 @@ public partial class WorkspacePage : ContentPage
 
     private WorkspaceStore? _store;
 
-    private WorkspaceNode? _selectedNode;
-
-    private bool _exporting;
-
     private WorkspaceItem? _selectedMaterial;
+
+    private NodeClipboard? _clipboard;
 
     public WorkspacePage()
     {
         InitializeComponent();
     }
-
-
 
     protected override void OnAppearing()
     {
@@ -44,6 +40,7 @@ public partial class WorkspacePage : ContentPage
 
         _store ??= AppServices.Workspace;
 
+        _store.Changed -= Render;
         _store.Changed += Render;
 
         Render();
@@ -72,16 +69,35 @@ public partial class WorkspacePage : ContentPage
         RenderMaterials();
         RenderCanvas();
 
-        CycleModeButton.Text = _store.Mode == Core.Physics.CollapseMode.IncludeCycles
+        CycleModeButton.Text = _store.Mode == CollapseMode.IncludeCycles
             ? "含循环支撑"
             : "仅地面";
 
         MaxLayersEntry.Text = _store.MaxLayers.ToString();
 
-        int nodes = _store.Nodes.Count;
+        WorkspaceNode? selected = _store.SelectedNode;
 
-        StatusLabel.Text = $"素材 {_store.Materials.Count} 条 · 节点 {nodes} 个" +
-                           (_selectedNode is null ? "" : $" · 已选中 #{_selectedNode.Seq}");
+        StatusLabel.Text = $"素材 {_store.Materials.Count} 条 · 节点 {_store.Nodes.Count} 个" +
+                           (selected is null ? "" : $" · 已选中 #{selected.Seq}");
+
+        UpdateActionButtons();
+    }
+
+    private void UpdateActionButtons()
+    {
+        bool hasSelection = _store is not null &&
+                            _store.SelectedNode is WorkspaceNode selected &&
+                            _store.FindNode(selected.Id) is not null;
+
+        CollapseButton.IsEnabled = hasSelection;
+        PinButton.IsEnabled = hasSelection;
+        CutButton.IsEnabled = hasSelection;
+        StackButton.IsEnabled = hasSelection;
+        CopyButton.IsEnabled = hasSelection;
+        DeleteButton.IsEnabled = hasSelection;
+
+        // 粘贴还需要剪贴板里有内容
+        PasteButton.IsEnabled = hasSelection && _clipboard is not null;
     }
 
     private void RenderTabs()
@@ -199,144 +215,130 @@ public partial class WorkspacePage : ContentPage
 
         if (_store!.Nodes.Count == 0)
         {
+            Canvas.WidthRequest = 320;
+            Canvas.HeightRequest = 320;
+
             return;
         }
 
-        double width = _store.Nodes.Max(node => node.Col) * CellWidth + CellWidth;
-        double height = _store.Nodes.Max(node => node.Row) * CellHeight + CellHeight;
+        List<WorkspaceNodeBox> boxes = WorkspaceLayout.Compute(
+            _store.Nodes,
+            _store.GetEffectiveDocument);
 
-        Canvas.WidthRequest = Math.Max(320, width);
-        Canvas.HeightRequest = Math.Max(320, height);
+        // 自由坐标可能为负（例如切割的左下结果），整体平移到 24px 边距以内
+        double minLeft = boxes.Min(box => box.Bounds.X);
+        double minTop = boxes.Min(box => box.Bounds.Y);
 
-        DrawEdges(width, height);
+        double shiftX = minLeft < WorkspaceLayout.Margin
+            ? WorkspaceLayout.Margin - minLeft
+            : 0;
 
-        foreach (WorkspaceNode node in _store.Nodes)
+        double shiftY = minTop < WorkspaceLayout.Margin
+            ? WorkspaceLayout.Margin - minTop
+            : 0;
+
+        var placed = new List<WorkspaceNodeBox>(boxes.Count);
+
+        foreach (WorkspaceNodeBox box in boxes)
         {
-            View card = BuildNodeCard(node);
-
-            AbsoluteLayout.SetLayoutBounds(
-                card,
-                new Rect(12 + node.Col * CellWidth, 12 + node.Row * CellHeight, NodeWidth, AbsoluteLayout.AutoSize));
-
-            Canvas.Add(card);
+            placed.Add(new WorkspaceNodeBox(
+                box.Node,
+                new Rect(
+                    box.Bounds.X + shiftX,
+                    box.Bounds.Y + shiftY,
+                    box.Bounds.Width,
+                    box.Bounds.Height)));
         }
-    }
 
-    /// <summary>
-    /// 连线层：先算几何，再画线，最后叠可点的标签。
-    /// </summary>
-    private void DrawEdges(
-        double width,
-        double height)
-    {
-        WorkspaceStore store = _store!;
+        double width = Math.Max(
+            320,
+            placed.Max(box => box.Bounds.Right) + WorkspaceLayout.Margin);
 
-        var outgoing = store.Edges
-            .GroupBy(edge => edge.FromId)
-            .ToDictionary(group => group.Key, group => group.ToList());
+        double height = Math.Max(
+            320,
+            placed.Max(box => box.Bounds.Bottom) + WorkspaceLayout.Margin);
 
-        var incoming = store.Edges
-            .GroupBy(edge => edge.ToId)
-            .ToDictionary(group => group.Key, group => group.ToList());
+        Canvas.WidthRequest = width;
+        Canvas.HeightRequest = height;
 
-        var drawable = new WorkspaceEdgeDrawable();
+        var lookup = placed.ToDictionary(box => box.Node.Id);
 
-        var layer = new GraphicsView
+        var lineDrawable = new WorkspaceLineDrawable();
+
+        var arrowDrawable = new WorkspaceArrowDrawable();
+
+        foreach (WorkspaceEdge edge in _store.Edges)
         {
-            InputTransparent = true,
-            Drawable = drawable
-        };
-
-        AbsoluteLayout.SetLayoutBounds(layer, new Rect(0, 0, width, height));
-
-        Canvas.Add(layer);
-
-        foreach (WorkspaceEdge edge in store.Edges)
-        {
-            WorkspaceNode? from = store.FindNode(edge.FromId);
-            WorkspaceNode? to = store.FindNode(edge.ToId);
-
-            if (from is null || to is null)
+            if (!lookup.TryGetValue(edge.FromId, out WorkspaceNodeBox? from) ||
+                !lookup.TryGetValue(edge.ToId, out WorkspaceNodeBox? to))
             {
                 continue;
             }
 
-            int outIndex = outgoing[edge.FromId].IndexOf(edge);
-            int inIndex = incoming[edge.ToId].IndexOf(edge);
+            WorkspaceLink link = WorkspaceLinkGeometry.Create(
+                from.Bounds,
+                to.Bounds);
 
-            float x1 = (float)(12 + from.Col * CellWidth + NodeWidth / 2 + Spread(outIndex, outgoing[edge.FromId].Count));
-            float y1 = (float)(12 + from.Row * CellHeight + NodeHeight);
-
-            float x2 = (float)(12 + to.Col * CellWidth + NodeWidth / 2 + Spread(inIndex, incoming[edge.ToId].Count));
-            float y2 = (float)(12 + to.Row * CellHeight);
-
-            double t = Math.Clamp(edge.LabelT, 0.1, 0.9);
-
-            double dx = x2 - x1;
-            double dy = y2 - y1;
-            double length = Math.Max(1, Math.Sqrt(dx * dx + dy * dy));
-
-            double nx = -dy / length;
-            double ny = dx / length;
-
-            if (ny > 0)
-            {
-                nx = -nx;
-                ny = -ny;
-            }
-
-            if (Math.Abs(dx) < 8)
-            {
-                nx = 1;
-                ny = 0;
-            }
-
-            double offset = Math.Abs(dx) < 8 ? 42 : 18;
-
-            float lx = (float)(x1 + dx * t + nx * offset);
-            float ly = (float)(y1 + dy * t + ny * offset);
-
-            drawable.Edges.Add(new EdgeShape(x1, y1, x2, y2, edge.Label, lx, ly));
-
-            var label = new Label
-            {
-                Text = edge.Label,
-                FontSize = 11,
-                TextColor = Color.FromArgb("#4527A0"),
-                BackgroundColor = Colors.White,
-                Padding = new Thickness(4, 1)
-            };
-
-            string fromId = edge.FromId;
-            string toId = edge.ToId;
-
-            var tap = new TapGestureRecognizer();
-
-            tap.Tapped += (_, _) => store.CycleEdgeLabel(fromId, toId);
-
-            label.GestureRecognizers.Add(tap);
-
-            AbsoluteLayout.SetLayoutBounds(
-                label,
-                new Rect(lx - 34, ly - 9, AbsoluteLayout.AutoSize, AbsoluteLayout.AutoSize));
-
-            Canvas.Add(label);
+            lineDrawable.Links.Add(link);
+            arrowDrawable.Links.Add(link);
         }
 
+        // 线段层：在节点之下
+        var lineLayer = new GraphicsView
+        {
+            InputTransparent = true,
+            Drawable = lineDrawable
+        };
+
+        AbsoluteLayout.SetLayoutBounds(
+            lineLayer,
+            new Rect(0, 0, width, height));
+
+        Canvas.Add(lineLayer);
+
+        foreach (WorkspaceNodeBox box in placed)
+        {
+            View card = BuildNodeCard(
+                box.Node,
+                _store.GetEffectiveDocument(box.Node));
+
+            AbsoluteLayout.SetLayoutBounds(card, box.Bounds);
+
+            Canvas.Add(card);
+        }
+
+        // 箭头层：在节点之上
+        if (arrowDrawable.Links.Count > 0)
+        {
+            var arrowLayer = new GraphicsView
+            {
+                InputTransparent = true,
+                Drawable = arrowDrawable
+            };
+
+            AbsoluteLayout.SetLayoutBounds(
+                arrowLayer,
+                new Rect(0, 0, width, height));
+
+            Canvas.Add(arrowLayer);
+        }
     }
 
-    private static double Spread(
-        int index,
-        int count)
-    {
-        return count <= 1
-            ? 0
-            : Math.Round((index - (count - 1) / 2.0) * 30);
-    }
+    /// <summary>
+    /// 节点卡片：编号 + 标题、× 删除、竖式图预览、层数 × 象限数摘要。
+    /// 卡片内不放操作按钮，也不放滚动条。
+    /// </summary>
     private View BuildNodeCard(
-        WorkspaceNode node)
+        WorkspaceNode node,
+        ShapeDocument? document)
     {
-        bool selected = node.Id == _selectedNode?.Id;
+        bool selected = node.Id == _store!.SelectedNode?.Id;
+
+        int layers = WorkspaceLayout.LayersOf(node, document);
+        int parts = WorkspaceLayout.PartsOf(node, document);
+
+        double width = WorkspaceLayout.WidthOf(node, document);
+        double height = WorkspaceLayout.HeightOf(node, document);
 
         var header = new Grid
         {
@@ -344,14 +346,16 @@ public partial class WorkspacePage : ContentPage
             {
                 new ColumnDefinition(GridLength.Star),
                 new ColumnDefinition(GridLength.Auto)
-            }
+            },
+            Padding = new Thickness(8, 0, 2, 0)
         };
 
         header.Add(new Label
         {
-            Text = $"#{node.Seq} {TitleOf(node)}",
+            Text = $"#{node.Seq} {WorkspaceLayout.TitleOf(node)}",
             FontSize = 10,
             TextColor = Muted,
+            LineBreakMode = LineBreakMode.TailTruncation,
             VerticalTextAlignment = TextAlignment.Center
         }, 0);
 
@@ -359,228 +363,83 @@ public partial class WorkspacePage : ContentPage
         {
             Text = "×",
             FontSize = 12,
-            WidthRequest = 24,
-            HeightRequest = 24,
+            WidthRequest = 22,
+            HeightRequest = 22,
             Padding = 0,
+            MinimumWidthRequest = 0,
+            MinimumHeightRequest = 0,
             BackgroundColor = Colors.Transparent,
             TextColor = Color.FromArgb("#A00000")
         };
 
-        delete.Clicked += (_, _) => DeleteNode(node);
+        delete.Clicked += (_, _) => _store!.DeleteNode(node.Id);
 
         header.Add(delete, 1);
 
-        var stack = new VerticalStackLayout
+        var content = new Grid
         {
-            Spacing = 3,
-            Children =
+            RowDefinitions =
             {
-                header,
-                new GraphicsView
-                {
-                    HeightRequest = 80,
-                    InputTransparent = true,
-                    Drawable = NodePreview(node)
-                }
+                new RowDefinition(new GridLength(WorkspaceLayout.HeaderHeight)),
+                new RowDefinition(new GridLength(layers * WorkspaceLayout.CellSize)),
+                new RowDefinition(new GridLength(WorkspaceLayout.SummaryHeight))
             }
         };
 
-        if (_exporting)
+        content.Add(header, 0, 0);
+
+        if (document is not null && layers > 0)
         {
-            return new Border
+            var preview = new GraphicsView
             {
-                Stroke = Color.FromArgb("#D0D0D0"),
-                StrokeThickness = 1,
-                BackgroundColor = Colors.White,
-                Padding = 6,
-                Content = new VerticalStackLayout
-                {
-                    Spacing = 4,
-                    Children =
-                    {
-                        new Label
-                        {
-                            Text = $"#{node.Seq} {TitleOf(node)}",
-                            FontSize = 10,
-                            TextColor = Muted
-                        },
-                        new GraphicsView
-                        {
-                            HeightRequest = 70,
-                            InputTransparent = true,
-                            Drawable = NodePreview(node)
-                        },
-                        new Label
-                        {
-                            Text = node.IsResult ? node.Label : "",
-                            FontSize = 10,
-                            TextColor = Muted
-                        }
-                    }
-                }
+                WidthRequest = parts * WorkspaceLayout.CellSize,
+                HeightRequest = layers * WorkspaceLayout.CellSize,
+                InputTransparent = true,
+                HorizontalOptions = LayoutOptions.Center,
+                VerticalOptions = LayoutOptions.Start,
+                Drawable = new WorkspaceCellDrawable(document)
             };
+
+            content.Add(preview, 0, 1);
         }
 
-        if (node.Kind == "ref")
+        content.Add(new Label
         {
-            if (node.TargetId is not null &&
-                _store!.FindNode(node.TargetId) is WorkspaceNode target)
-            {
-                stack.Add(new Label
-                {
-                    Text = $"引用 #{target.Seq}",
-                    FontSize = 10,
-                    TextColor = Color.FromArgb("#8B7BBF")
-                });
-            }
-
-            stack.Add(ActionRow(
-                ("导入", () => ImportInto(node)),
-                ("引用", () => ReferenceInto(node)),
-                ("计算", () => ComputeStack(node))));
-        }
-        else if (node.IsResult)
-        {
-            stack.Add(new Label
-            {
-                Text = node.Label,
-                FontSize = 10,
-                TextColor = Muted
-            });
-        }
-        else
-        {
-            stack.Add(ActionRow(("导入", () => ImportInto(node))));
-        }
-
-        stack.Add(ActionRow(
-            ("下落", () => Apply(node, "collapse")),
-            ("顶针", () => Apply(node, "pin")),
-            ("切割", () => Apply(node, "cut"))));
-
-        stack.Add(ActionRow(
-            ("下堆", () => BeginStack(node, false)),
-            ("上堆", () => BeginStack(node, true))));
+            Text = document is null ? "空" : ShapeText.Summary(document),
+            FontSize = 10,
+            TextColor = Muted,
+            Margin = new Thickness(8, 0),
+            LineBreakMode = LineBreakMode.TailTruncation,
+            VerticalTextAlignment = TextAlignment.Center
+        }, 0, 2);
 
         var border = new Border
         {
+            WidthRequest = width,
+            HeightRequest = height,
             Stroke = selected ? Accent : Color.FromArgb("#D0D0D0"),
             StrokeThickness = selected ? 2 : 1,
             BackgroundColor = node.IsResult ? Color.FromArgb("#FAF8FF") : Colors.White,
-            Padding = 6,
-            Content = stack
+            Padding = 0,
+            Content = content
         };
 
         var tap = new TapGestureRecognizer();
 
         tap.Tapped += (_, _) =>
         {
-            _selectedNode = node;
+            // 删除按钮和卡片点击可能落在同一帧里，先确认节点还在
+            if (_store!.FindNode(node.Id) is null)
+            {
+                return;
+            }
 
-            _store!.SelectNode(node);
-
-            Render();
+            _store.SelectNode(node);
         };
 
         border.GestureRecognizers.Add(tap);
 
         return border;
-    }
-
-    private static HorizontalStackLayout ActionRow(
-        params (string Text, Action Action)[] actions)
-    {
-        var row = new HorizontalStackLayout { Spacing = 3 };
-
-        foreach ((string text, Action action) in actions)
-        {
-            var button = new Button
-            {
-                Text = text,
-                FontSize = 10,
-                HeightRequest = 26,
-                WidthRequest = 46,
-                Padding = 0,
-                MinimumWidthRequest = 0,
-                CornerRadius = 6,
-                BackgroundColor = Color.FromArgb("#F2F0F8"),
-                TextColor = Accent
-            };
-
-            button.Clicked += (_, _) => action();
-
-            row.Add(button);
-        }
-
-        return row;
-    }
-
-    /// <summary>
-    /// 节点正文：c/S/P/- 短代码 + 摘要，层数多时节点内滚动。
-    /// </summary>
-    private View BuildCodeBlock(
-        WorkspaceNode node)
-    {
-        ShapeDocument? document = _store!.GetEffectiveDocument(node);
-
-        var stack = new VerticalStackLayout { Spacing = 2 };
-
-        if (document is null)
-        {
-            stack.Add(new Label
-            {
-                Text = "空",
-                FontSize = 11,
-                TextColor = Muted
-            });
-
-            return stack;
-        }
-
-        var code = new Label
-        {
-            Text = string.Join(Environment.NewLine, ShapeText.Lines(document)),
-            FontFamily = "Consolas",
-            FontSize = 11,
-            TextColor = Color.FromArgb("#2B2B2B"),
-            LineHeight = 1.15
-        };
-
-        stack.Add(new ScrollView
-        {
-            HeightRequest = 90,
-            Orientation = ScrollOrientation.Vertical,
-            Content = code
-        });
-
-        stack.Add(new Label
-        {
-            Text = ShapeText.Summary(document),
-            FontSize = 10,
-            TextColor = Muted
-        });
-
-        return stack;
-    }
-    private static string TitleOf(
-        WorkspaceNode node)
-    {
-        if (node.Kind == "ref")
-        {
-            return "堆叠输入";
-        }
-
-        return node.IsResult ? node.Label : "素材节点";
-    }
-
-    private ShapePreviewDrawable NodePreview(
-        WorkspaceNode node)
-    {
-        var preview = new ShapePreviewDrawable();
-
-        preview.SetDocument(_store!.GetEffectiveDocument(node));
-
-        return preview;
     }
 
     private ShapePreviewDrawable PreviewOf(
@@ -600,98 +459,248 @@ public partial class WorkspacePage : ContentPage
 
     #endregion
 
-    #region 操作
+    #region 节点操作
 
-    private void Apply(
-        WorkspaceNode node,
-        string operation)
+    private void OnCollapseNode(
+        object? sender,
+        EventArgs e)
     {
-        NodeActionResult result = operation switch
+        ApplySingleOperation("collapse");
+    }
+
+    private void OnPinNode(
+        object? sender,
+        EventArgs e)
+    {
+        ApplySingleOperation("pin");
+    }
+
+    private void OnCutNode(
+        object? sender,
+        EventArgs e)
+    {
+        if (_store!.SelectedNode is not WorkspaceNode node)
         {
-            "pin" => _store!.ApplyPin(node.Id),
-            "cut" => _store!.ApplyCut(node.Id),
-            _ => _store!.ApplyCollapse(node.Id)
-        };
+            return;
+        }
+
+        WorkspaceNodeBox? source = FindBox(node.Id);
+
+        if (source is null)
+        {
+            return;
+        }
+
+        HashSet<string> before = _store.Nodes
+            .Select(entry => entry.Id)
+            .ToHashSet();
+
+        NodeActionResult result = _store.ApplyCut(node.Id);
 
         if (!result.Created)
         {
             Show(result.Message);
-        }
-    }
 
-    private void BeginStack(
-        WorkspaceNode node,
-        bool currentIsTop)
-    {
-        _store!.BeginStack(node.Id, currentIsTop);
-    }
-
-    private void ComputeStack(
-        WorkspaceNode node)
-    {
-        Show(_store!.ComputeStack(node.Id).Message);
-    }
-
-    private void ImportInto(
-        WorkspaceNode node)
-    {
-        if (_selectedMaterial is null)
-        {
-            Show("请先在左侧选择一个素材。");
+            if (result.Node is not null)
+            {
+                _store.SelectNode(result.Node);
+            }
 
             return;
         }
 
-        if (node.IsResult)
+        WorkspaceNode? west = null;
+
+        foreach (WorkspaceNode created in _store.Nodes)
         {
-            Show("结果节点不能导入素材。");
+            if (before.Contains(created.Id))
+            {
+                continue;
+            }
+
+            bool isWest = created.OpKey == $"cutw:{node.Id}";
+
+            created.X = source.Bounds.X + (isWest ? -CutOffset : CutOffset);
+            created.Y = source.Bounds.Y + source.Bounds.Height + ResultGap;
+
+            if (isWest)
+            {
+                west = created;
+            }
+        }
+
+        _store.SelectNode(west ?? result.Node);
+    }
+
+    private void ApplySingleOperation(
+        string operation)
+    {
+        if (_store!.SelectedNode is not WorkspaceNode node)
+        {
+            return;
+        }
+
+        WorkspaceNodeBox? source = FindBox(node.Id);
+
+        if (source is null)
+        {
+            return;
+        }
+
+        NodeActionResult result = operation == "pin"
+            ? _store.ApplyPin(node.Id)
+            : _store.ApplyCollapse(node.Id);
+
+        if (!result.Created || result.Node is null)
+        {
+            Show(result.Message);
+
+            if (result.Node is not null)
+            {
+                _store.SelectNode(result.Node);
+            }
 
             return;
         }
 
-        WorkspaceItem material = _selectedMaterial;
+        // 结果放在源节点正下方
+        result.Node.X = source.Bounds.X;
+        result.Node.Y = source.Bounds.Y + source.Bounds.Height + ResultGap;
 
-        if (_store!.Downstream(node.Id).Count > 0)
+        _store.SelectNode(result.Node);
+    }
+
+    /// <summary>
+    /// 堆叠：
+    /// 选中素材/结果节点时创建一个第二输入槽位；
+    /// 选中堆叠输入槽位时计算堆叠结果。
+    /// </summary>
+    private void OnStackNode(
+        object? sender,
+        EventArgs e)
+    {
+        if (_store!.SelectedNode is not WorkspaceNode node)
         {
-            Show("该节点已有下游结果，请先删除下游再更换图形。");
-
             return;
         }
+
+        WorkspaceNodeBox? source = FindBox(node.Id);
+
+        double left = source?.Bounds.X ?? WorkspaceLayout.Margin;
+
+        double top = source is null
+            ? WorkspaceLayout.Margin
+            : source.Bounds.Y + source.Bounds.Height + ResultGap;
 
         if (node.Kind == "ref")
         {
-            _store.SetSlotShape(node.Id, material.Code, material.Format, material.Layers, material.Parts);
-        }
-        else
-        {
-            _store.ReplaceNodeShape(node.Id, material.Code, material.Format, material.Layers, material.Parts);
-        }
-    }
+            NodeActionResult result = _store.ComputeStack(node.Id);
 
-    private void ReferenceInto(
-        WorkspaceNode slot)
-    {
-        WorkspaceNode? target = _selectedNode;
+            if (!result.Created || result.Node is null)
+            {
+                Show(result.Message);
 
-        if (target is null ||
-            target.Kind == "ref" ||
-            target.Id == slot.Id ||
-            target.Id == slot.BaseId ||
-            !target.HasShape)
-        {
-            Show("请先点选一个其它有图形的节点。");
+                if (result.Node is not null)
+                {
+                    _store.SelectNode(result.Node);
+                }
+
+                return;
+            }
+
+            result.Node.X = left;
+            result.Node.Y = top;
+
+            _store.SelectNode(result.Node);
 
             return;
         }
 
-        _store!.SetReferenceTarget(slot.Id, target.Id);
+        WorkspaceNode slot = _store.BeginStack(node.Id, false);
+
+        slot.X = left;
+        slot.Y = top;
+
+        _store.SelectNode(slot);
     }
 
-    private void DeleteNode(
-        WorkspaceNode node)
+    private void OnCopyNode(
+        object? sender,
+        EventArgs e)
     {
-        _store!.DeleteNode(node.Id);
+        if (_store!.SelectedNode is not WorkspaceNode node)
+        {
+            return;
+        }
+
+        if (!node.HasShape)
+        {
+            Show("该节点还没有可复制的图形。");
+
+            return;
+        }
+
+        _clipboard = new NodeClipboard(
+            node.Code,
+            node.Format,
+            node.Layers,
+            node.Parts);
+
+        StatusLabel.Text = $"已复制节点 #{node.Seq} 的短代码。";
+
+        UpdateActionButtons();
     }
+
+    private void OnPasteNode(
+        object? sender,
+        EventArgs e)
+    {
+        if (_store!.SelectedNode is null || _clipboard is null)
+        {
+            return;
+        }
+
+        NodeClipboard clipboard = _clipboard;
+
+        WorkspaceNode node = _store.CreateNode();
+
+        // 粘贴固定放在 (80, 80)
+        node.X = 80;
+        node.Y = 80;
+
+        _store.ReplaceNodeShape(
+            node.Id,
+            clipboard.Code,
+            clipboard.Format,
+            clipboard.Layers,
+            clipboard.Parts);
+
+        _store.SelectNode(node);
+    }
+
+    private void OnDeleteNode(
+        object? sender,
+        EventArgs e)
+    {
+        if (_store!.SelectedNode is not WorkspaceNode node)
+        {
+            return;
+        }
+
+        _store.DeleteNode(node.Id);
+    }
+
+    private WorkspaceNodeBox? FindBox(
+        string nodeId)
+    {
+        return WorkspaceLayout
+            .Compute(_store!.Nodes, _store.GetEffectiveDocument)
+            .FirstOrDefault(box => box.Node.Id == nodeId);
+    }
+
+    #endregion
+
+    #region 工作区级操作
 
     private void OnCreateNode(
         object? sender,
@@ -704,9 +713,9 @@ public partial class WorkspacePage : ContentPage
         object? sender,
         EventArgs e)
     {
-        Core.Physics.CollapseMode mode = _store!.Mode == Core.Physics.CollapseMode.IncludeCycles
-            ? Core.Physics.CollapseMode.FloorOnly
-            : Core.Physics.CollapseMode.IncludeCycles;
+        CollapseMode mode = _store!.Mode == CollapseMode.IncludeCycles
+            ? CollapseMode.FloorOnly
+            : CollapseMode.IncludeCycles;
 
         _store.SetMode(mode);
 
@@ -757,34 +766,16 @@ public partial class WorkspacePage : ContentPage
 
         try
         {
-            _exporting = true;
+            List<WorkspaceNodeBox> boxes = WorkspaceLayout.Compute(
+                _store.Nodes,
+                _store.GetEffectiveDocument);
 
-            Render();
+            var exporter = new WorkspaceImageExporter();
 
-            await Task.Delay(120);
-
-            IScreenshotResult? shot = await Canvas.CaptureAsync();
-
-            _exporting = false;
-
-            Render();
-
-            if (shot is null)
-            {
-                Show("无法截取画布。");
-
-                return;
-            }
-
-            string path = Path.Combine(
-                FileSystem.CacheDirectory,
-                $"shape-path-{DateTime.Now:yyyyMMdd-HHmmss}.png");
-
-            await using (Stream source = await shot.OpenReadAsync(ScreenshotFormat.Png))
-            await using (FileStream target = File.Create(path))
-            {
-                await source.CopyToAsync(target);
-            }
+            string path = await exporter.ExportAsync(
+                boxes,
+                _store.Edges,
+                _store.GetEffectiveDocument);
 
             await Share.Default.RequestAsync(new ShareFileRequest
             {
@@ -815,11 +806,20 @@ public partial class WorkspacePage : ContentPage
         });
     }
 
+    #endregion
+
     private async void Show(
         string message)
     {
         await DisplayAlert("工作区", message, "好");
     }
 
-    #endregion
+    /// <summary>
+    /// 复制到剪贴板的节点信息：短代码 + 解析尺寸。
+    /// </summary>
+    private sealed record NodeClipboard(
+        string Code,
+        ShortCodeFormat Format,
+        int Layers,
+        int Parts);
 }

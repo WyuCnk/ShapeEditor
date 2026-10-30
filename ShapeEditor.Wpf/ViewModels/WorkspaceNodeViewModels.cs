@@ -3,40 +3,14 @@ using System.Windows.Media;
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Workspaces;
 using ShapeEditor.Wpf.Rendering;
-using ShapeEditor.Wpf.Services;
 
 namespace ShapeEditor.Wpf.ViewModels;
 
 /// <summary>
-/// 画布布局常量，与 Web 版保持一致。
-/// </summary>
-public static class WorkspaceLayout
-{
-    public const double CellWidth = 250;
-
-    public const double CellHeight = 400;
-
-    public const double NodeWidth = 210;
-
-    public const double NodeHeight = 260;
-
-    public const double Padding = 24;
-
-    public static double NodeLeft(
-        WorkspaceNode node) => Padding + node.Col * CellWidth;
-
-    public static double NodeTop(
-        WorkspaceNode node) => Padding + node.Row * CellHeight;
-
-    public static double CenterX(
-        WorkspaceNode node) => NodeLeft(node) + NodeWidth / 2;
-
-    public static double Bottom(
-        WorkspaceNode node) => NodeTop(node) + NodeHeight;
-}
-
-/// <summary>
 /// 画布上的一个节点。
+///
+/// 卡片只保留标题、删除按钮、竖式图预览和摘要文字，
+/// 所有操作都移到工作区工具条。
 /// </summary>
 public sealed class WorkspaceNodeViewModel : ObservableObject
 {
@@ -44,34 +18,94 @@ public sealed class WorkspaceNodeViewModel : ObservableObject
 
     public WorkspaceNodeViewModel(
         WorkspaceNode node,
-        ImageSource? thumbnail,
+        ShapeDocument? document,
+        int fallbackParts,
         bool isSelected)
     {
         Node = node;
-        Thumbnail = thumbnail;
+
+        Document = document;
+
+        Size size = WorkspaceLayout.SizeFor(
+            node,
+            document,
+            fallbackParts);
+
+        NodeWidth = size.Width;
+
+        NodeHeight = size.Height;
+
+        PreviewWidth = Math.Max(
+            1,
+            NodeWidth - WorkspaceLayout.HorizontalPadding);
+
+        PreviewHeight = Math.Max(
+            1,
+            NodeHeight - WorkspaceLayout.HeaderHeight);
+
+        Bounds = WorkspaceLayout.BoundsFor(node, size);
+
+        Thumbnail = document is null
+            ? null
+            : new DrawingImage(
+                ShapeGridDrawing.Build(
+                    document,
+                    WorkspaceLayout.CellSize,
+                    WorkspaceLayout.CellSize));
+
         _isSelected = isSelected;
     }
 
     public WorkspaceNode Node { get; }
 
+    public ShapeDocument? Document { get; }
+
     public string Id => Node.Id;
 
+    /// <summary>30×30 单元格的竖式图，保持原始尺寸，不压缩。</summary>
     public ImageSource? Thumbnail { get; }
+
+    /// <summary>节点卡片宽度。</summary>
+    public double NodeWidth { get; }
+
+    /// <summary>节点卡片高度。</summary>
+    public double NodeHeight { get; }
+
+    /// <summary>预览区宽度（象限数 × 30）。</summary>
+    public double PreviewWidth { get; }
+
+    /// <summary>预览区高度（层数 × 30）。</summary>
+    public double PreviewHeight { get; }
+
+    public Rect Bounds { get; }
+
+    public double Left => Bounds.Left;
+
+    public double Top => Bounds.Top;
+
+    public Point Center => WorkspaceLayout.CenterOf(Bounds);
+
+    public bool HasPreview => Document is not null;
+
+    public string PlaceholderText => Node.Kind == "ref"
+        ? "选择输入"
+        : "空节点";
 
     /// <summary>节点里显示的短代码文本（c/S/P/-）。</summary>
     public string CodeText { get; set; } = "";
 
     public string CodeSummary { get; set; } = "";
 
+    /// <summary>摘要文字；没有图形时给出占位说明。</summary>
+    public string SummaryText => string.IsNullOrWhiteSpace(CodeSummary)
+        ? (Node.Kind == "ref" ? "等待输入" : "没有图形")
+        : CodeSummary;
+
     public bool IsSelected
     {
         get => _isSelected;
         set => SetProperty(ref _isSelected, value);
     }
-
-    public double Left => WorkspaceLayout.NodeLeft(Node);
-
-    public double Top => WorkspaceLayout.NodeTop(Node);
 
     public string Title => Node.Kind == "ref"
         ? "堆叠输入"
@@ -85,138 +119,96 @@ public sealed class WorkspaceNodeViewModel : ObservableObject
 
     public bool IsResult => Node.IsResult;
 
-    public string RefText { get; set; } = "";
-
     public bool HasShape => Node.HasShape;
-
-    public Style? Tag => null;
 }
 
 /// <summary>
-/// 一条连线：直线 + 标签。
+/// 一条连线。
+///
+/// 线段从源节点边界连到目标节点边界，箭头单独画在节点之上，
+/// 连线上不再显示任何文字标签。
 /// </summary>
 public sealed class WorkspaceEdgeViewModel
 {
     public WorkspaceEdgeViewModel(
         WorkspaceEdge edge,
-        WorkspaceNode from,
-        WorkspaceNode to,
-        int outIndex,
-        int outCount,
-        int inIndex,
-        int inCount)
+        WorkspaceNodeViewModel from,
+        WorkspaceNodeViewModel to)
     {
         Edge = edge;
 
-        double x1 = WorkspaceLayout.CenterX(from) + Spread(outIndex, outCount, 30);
-        double y1 = WorkspaceLayout.Bottom(from);
+        Point fromCenter = from.Center;
 
-        double x2 = WorkspaceLayout.CenterX(to) + Spread(inIndex, inCount, 30);
-        double y2 = WorkspaceLayout.NodeTop(to);
+        Point toCenter = to.Center;
 
-        double tipX = x2;
-        double tipY = y2 - 4;
+        Point start = WorkspaceLayout.BoundaryToward(
+            from.Bounds,
+            toCenter);
 
-        var line = new PathGeometry();
+        Point entry = WorkspaceLayout.BoundaryToward(
+            to.Bounds,
+            fromCenter);
 
-        var lineFigure = new PathFigure
-        {
-            StartPoint = new Point(x1, y1)
-        };
+        /*
+         * 箭头尖端贴在目标节点边框外 1px，
+         * 线段也停在这里，避免被卡片边框盖住。
+         */
+        Point tip = WorkspaceLayout.OffsetOutward(
+            to.Bounds,
+            entry,
+            1);
 
-        lineFigure.Segments.Add(new LineSegment(new Point(tipX, tipY), true));
-
-        line.Figures.Add(lineFigure);
+        var line = new LineGeometry(start, tip);
 
         line.Freeze();
 
-        double angle = Math.Atan2(tipY - y1, tipX - x1);
+        LineGeometry = line;
+
+        double angle = Math.Atan2(
+            tip.Y - start.Y,
+            tip.X - start.X);
+
         const double head = 10;
 
+        const double halfWidth = 5.5;
+
         double cos = Math.Cos(angle);
+
         double sin = Math.Sin(angle);
 
         var arrow = new PathGeometry();
 
-        var arrowFigure = new PathFigure
+        var figure = new PathFigure
         {
-            StartPoint = new Point(tipX, tipY),
-            IsClosed = true
+            StartPoint = tip,
+            IsClosed = true,
+            IsFilled = true
         };
 
-        arrowFigure.Segments.Add(new LineSegment(
+        figure.Segments.Add(new LineSegment(
             new Point(
-                tipX - head * cos + head * 0.55 * sin,
-                tipY - head * sin - head * 0.55 * cos),
+                tip.X - head * cos + halfWidth * sin,
+                tip.Y - head * sin - halfWidth * cos),
             true));
 
-        arrowFigure.Segments.Add(new LineSegment(
+        figure.Segments.Add(new LineSegment(
             new Point(
-                tipX - head * cos - head * 0.55 * sin,
-                tipY - head * sin + head * 0.55 * cos),
+                tip.X - head * cos - halfWidth * sin,
+                tip.Y - head * sin + halfWidth * cos),
             true));
 
-        arrow.Figures.Add(arrowFigure);
+        arrow.Figures.Add(figure);
 
         arrow.Freeze();
 
-        var geometry = new GeometryGroup();
-
-        geometry.Children.Add(line);
-        geometry.Children.Add(arrow);
-
-        geometry.Freeze();
-
-        Geometry = geometry;
-
-        double t = Math.Clamp(edge.LabelT, 0.1, 0.9);
-
-        double dx = x2 - x1;
-        double dy = y2 - y1;
-        double length = Math.Max(1, Math.Sqrt(dx * dx + dy * dy));
-
-        double nx = -dy / length;
-        double ny = dx / length;
-
-        if (ny > 0)
-        {
-            nx = -nx;
-            ny = -ny;
-        }
-
-        if (Math.Abs(dx) < 8)
-        {
-            nx = 1;
-            ny = 0;
-        }
-
-        double offset = Math.Abs(dx) < 8 ? 42 : 18;
-
-        LabelX = x1 + dx * t + nx * offset;
-        LabelY = y1 + dy * t + ny * offset;
+        ArrowGeometry = arrow;
     }
 
     public WorkspaceEdge Edge { get; }
 
-    public Geometry Geometry { get; }
+    /// <summary>不带箭头的线段。</summary>
+    public Geometry LineGeometry { get; }
 
-    public string Label => Edge.Label;
-
-    public double LabelX { get; }
-
-    public double LabelY { get; }
-
-    public double LabelLeft => LabelX - 6;
-
-    public double LabelTop => LabelY - 10;
-
-    private static double Spread(
-        int index,
-        int count,
-        double step)
-    {
-        return count <= 1
-            ? 0
-            : Math.Round((index - (count - 1) / 2.0) * step);
-    }
+    /// <summary>按连线方向旋转后的实心三角形。</summary>
+    public Geometry ArrowGeometry { get; }
 }

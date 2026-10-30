@@ -2,7 +2,8 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="clr-namespace:ShapeEditor.Wpf.Views"
-             FontFamily="Microsoft YaHei UI, Segoe UI">
+             FontFamily="Microsoft YaHei UI, Segoe UI"
+             PreviewKeyDown="OnPreviewKeyDown">
 
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
@@ -27,6 +28,11 @@
                             <ContentPresenter HorizontalAlignment="Center"
                                               VerticalAlignment="Center" />
                         </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
@@ -76,6 +82,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -118,8 +125,59 @@
                     Command="{Binding ExportProjectCommand}" />
         </DockPanel>
 
+        <!-- 操作工具条：节点卡片上的按钮全部集中到这里 -->
+        <WrapPanel Grid.Row="1"
+                   Grid.Column="1"
+                   Margin="0,8,0,0">
+            <Button Style="{StaticResource MiniButton}"
+                    Content="下落"
+                    ToolTip="对选中节点执行下落"
+                    Command="{Binding CollapseCommand}"
+                    CommandParameter="{Binding SelectedNode}"
+                    IsEnabled="{Binding HasSelectedNode}" />
+
+            <Button Style="{StaticResource MiniButton}"
+                    Content="顶针"
+                    ToolTip="对选中节点执行顶针"
+                    Command="{Binding PinCommand}"
+                    CommandParameter="{Binding SelectedNode}"
+                    IsEnabled="{Binding HasSelectedNode}" />
+
+            <Button Style="{StaticResource MiniButton}"
+                    Content="切割"
+                    ToolTip="把选中节点切成左右两个结果"
+                    Command="{Binding CutCommand}"
+                    CommandParameter="{Binding SelectedNode}"
+                    IsEnabled="{Binding HasSelectedNode}" />
+
+            <Button Style="{StaticResource MiniButton}"
+                    Content="堆叠"
+                    ToolTip="先选中底节点，再点另一个节点作为第二输入"
+                    Command="{Binding StackCommand}"
+                    IsEnabled="{Binding HasSelectedNode}" />
+
+            <Button Style="{StaticResource MiniButton}"
+                    Content="复制"
+                    ToolTip="复制选中节点的短代码"
+                    Command="{Binding CopyCommand}"
+                    IsEnabled="{Binding HasSelectedNode}" />
+
+            <Button Style="{StaticResource MiniButton}"
+                    Content="粘贴"
+                    ToolTip="在 (80,80) 新建节点并写入复制的短代码"
+                    Command="{Binding PasteCommand}"
+                    IsEnabled="{Binding HasSelectedNode}" />
+
+            <Button Style="{StaticResource MiniButton}"
+                    Content="删除"
+                    ToolTip="删除选中节点及其下游"
+                    Command="{Binding DeleteNodeCommand}"
+                    CommandParameter="{Binding SelectedNode}"
+                    IsEnabled="{Binding HasSelectedNode}" />
+        </WrapPanel>
+
         <!-- 工具行 -->
-        <WrapPanel Grid.Row="1" Grid.Column="1" Margin="0,8,0,6">
+        <WrapPanel Grid.Row="2" Grid.Column="1" Margin="0,8,0,6">
             <RadioButton Content="含循环支撑"
                          GroupName="mode"
                          Height="26"
@@ -165,78 +223,82 @@
                     Command="{Binding ClearNodesCommand}" />
         </WrapPanel>
 
-        <TextBlock Grid.Row="2"
+        <TextBlock Grid.Row="3"
                    Grid.Column="1"
                    Margin="2,0,0,8"
                    FontSize="12"
                    Foreground="#6B6B76"
                    TextTrimming="CharacterEllipsis"
                    TextWrapping="NoWrap">
-            <Run Text="提示：点击连线上的操作文字可以调整标签位置。数据目录：" />
+            <Run Text="{Binding HintText, Mode=OneWay}" />
             <Run Text="{Binding StoragePath, Mode=OneWay}" />
         </TextBlock>
 
-<Border Grid.Row="0" Grid.RowSpan="4" Grid.Column="0"
-                    Style="{StaticResource Card.Panel}"
-                    Margin="0,0,12,0">
-                <DockPanel>
-                    <TextBlock DockPanel.Dock="Top"
-                               Text="素材"
-                               FontSize="12"
-                               FontWeight="SemiBold"
-                               Foreground="#6B6B76"
-                               Margin="0,0,0,8" />
+        <Border Grid.Row="0" Grid.RowSpan="5" Grid.Column="0"
+                Style="{StaticResource Card.Panel}"
+                Margin="0,0,12,0">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Top"
+                           Text="素材"
+                           FontSize="12"
+                           FontWeight="SemiBold"
+                           Foreground="#6B6B76"
+                           Margin="0,0,0,8" />
 
-                    <ListBox ItemsSource="{Binding Materials}"
-                             SelectedItem="{Binding SelectedMaterial, Mode=TwoWay}"
-                             BorderThickness="0"
-                             Background="Transparent"
-                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate>
-                                <StackPanel Width="200" Margin="0,0,0,10">
-                                    <Border Background="#FFFFFF"
-                                            BorderBrush="#EEEAF7"
-                                            BorderThickness="1"
-                                            CornerRadius="8"
-                                            Height="120">
-                                        <Image Source="{Binding Thumbnail}"
-                                               Stretch="Uniform"
-                                               Margin="4" />
-                                    </Border>
+                <ListBox ItemsSource="{Binding Materials}"
+                         SelectedItem="{Binding SelectedMaterial, Mode=TwoWay}"
+                         BorderThickness="0"
+                         Background="Transparent"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Width="200" Margin="0,0,0,10">
+                                <Border Background="#FFFFFF"
+                                        BorderBrush="#EEEAF7"
+                                        BorderThickness="1"
+                                        CornerRadius="8"
+                                        Height="120">
+                                    <Image Source="{Binding Thumbnail}"
+                                           Stretch="Uniform"
+                                           Margin="4" />
+                                </Border>
 
-                                    <TextBlock Text="{Binding Name}"
-                                               FontSize="12"
-                                               FontWeight="SemiBold"
-                                               TextTrimming="CharacterEllipsis"
-                                               Margin="2,4,0,0" />
+                                <TextBlock Text="{Binding Name}"
+                                           FontSize="12"
+                                           FontWeight="SemiBold"
+                                           TextTrimming="CharacterEllipsis"
+                                           Margin="2,4,0,0" />
 
-                                    <TextBlock Text="{Binding DimensionText}"
-                                               FontSize="11"
-                                               Foreground="#6B6B76"
-                                               Margin="2,2,0,0" />
-                                </StackPanel>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
-                </DockPanel>
-            </Border>
-
+                                <TextBlock Text="{Binding DimensionText}"
+                                           FontSize="11"
+                                           Foreground="#6B6B76"
+                                           Margin="2,2,0,0" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </DockPanel>
+        </Border>
 
         <!-- 主体 -->
-        <Grid Grid.Row="3" Grid.Column="1">
+        <Grid Grid.Row="4" Grid.Column="1">
 
-            <Border
-                    Style="{StaticResource Card.Panel}"
+            <Border Style="{StaticResource Card.Panel}"
                     Padding="0"
                     ClipToBounds="True">
                 <ScrollViewer HorizontalScrollBarVisibility="Auto"
-                              VerticalScrollBarVisibility="Auto">
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalContentAlignment="Left"
+                              VerticalContentAlignment="Top">
                     <Grid Width="{Binding CanvasWidth}"
                           Height="{Binding CanvasHeight}"
+                          HorizontalAlignment="Left"
+                          VerticalAlignment="Top"
                           Background="#FFFFFF">
 
-                        <ItemsControl ItemsSource="{Binding Edges}">
+                        <!-- 连线画在节点之下 -->
+                        <ItemsControl ItemsSource="{Binding Edges}"
+                                      IsHitTestVisible="False">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
                                     <Canvas />
@@ -252,26 +314,16 @@
 
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <Canvas>
-                                        <Path Data="{Binding Geometry}"
-                                              Stroke="#512BD4"
-                                              StrokeThickness="2"
-                                              Fill="#512BD4" />
-
-                                        <TextBlock Text="{Binding Label}"
-                                                   Canvas.Left="{Binding LabelLeft}"
-                                                   Canvas.Top="{Binding LabelTop}"
-                                                   Background="#FFFFFF"
-                                                   Padding="4,1"
-                                                   FontSize="12"
-                                                   Foreground="#4527A0"
-                                                   Cursor="Hand"
-                                                   MouseLeftButtonDown="OnEdgeLabelClick" />
-                                    </Canvas>
+                                    <Path Data="{Binding LineGeometry}"
+                                          Stroke="#512BD4"
+                                          StrokeThickness="2"
+                                          StrokeStartLineCap="Round"
+                                          StrokeEndLineCap="Round" />
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
 
+                        <!-- 节点卡片：只保留标题、删除、竖式预览和摘要 -->
                         <ItemsControl ItemsSource="{Binding Nodes}">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
@@ -288,9 +340,10 @@
 
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <Border Width="210"
+                                    <Border Width="{Binding NodeWidth}"
+                                            Height="{Binding NodeHeight}"
                                             CornerRadius="12"
-                                            Padding="8"
+                                            SnapsToDevicePixels="True"
                                             MouseLeftButtonDown="OnNodeClick">
                                         <Border.Style>
                                             <Style TargetType="Border">
@@ -305,83 +358,104 @@
                                                     </DataTrigger>
                                                     <DataTrigger Binding="{Binding IsSelected}" Value="True">
                                                         <Setter Property="BorderBrush" Value="#512BD4" />
-                                                        <Setter Property="BorderThickness" Value="2" />
                                                     </DataTrigger>
                                                 </Style.Triggers>
                                             </Style>
                                         </Border.Style>
 
-                                        <StackPanel>
-                                            <DockPanel>
-                                                <TextBlock Text="{Binding Header}"
-                                                           FontSize="12"
-                                                           Foreground="#6B6B76"
-                                                           VerticalAlignment="Center" />
+                                        <Grid>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="48" />
+                                                <RowDefinition Height="*" />
+                                            </Grid.RowDefinitions>
 
-                                                <Button DockPanel.Dock="Right"
-                                                        Content="×"
-                                                        Width="20"
-                                                        Height="20"
-                                                        FontSize="12"
-                                                        Padding="0"
-                                                        BorderThickness="0"
-                                                        Background="Transparent"
-                                                        Foreground="#A00000"
-                                                        HorizontalAlignment="Right"
-                                                        Click="OnDeleteNode" />
-                                            </DockPanel>
+                                            <Grid Grid.Row="0" Margin="8,2,6,0">
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="24" />
+                                                    <RowDefinition Height="*" />
+                                                </Grid.RowDefinitions>
 
-                                            <Border Height="130" Margin="0,6,0,6"
-                                                    Background="#FFFFFF">
-                                                <Image Source="{Binding Thumbnail}"
-                                                       Stretch="Uniform"
-                                                       Margin="4" />
+                                                <Grid Grid.Row="0">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+
+                                                    <TextBlock Text="{Binding Header}"
+                                                               FontSize="12"
+                                                               Foreground="#6B6B76"
+                                                               VerticalAlignment="Center"
+                                                               TextTrimming="CharacterEllipsis" />
+
+                                                    <Button Grid.Column="1"
+                                                            Content="×"
+                                                            Width="18"
+                                                            Height="18"
+                                                            FontSize="12"
+                                                            Padding="0"
+                                                            BorderThickness="0"
+                                                            Background="Transparent"
+                                                            Foreground="#A00000"
+                                                            VerticalAlignment="Center"
+                                                            HorizontalAlignment="Right"
+                                                            ToolTip="删除该节点及其下游"
+                                                            Click="OnDeleteNode" />
+                                                </Grid>
+
+                                                <TextBlock Grid.Row="1"
+                                                           Text="{Binding SummaryText}"
+                                                           FontSize="10"
+                                                           Foreground="#8B8B96"
+                                                           VerticalAlignment="Center"
+                                                           TextTrimming="CharacterEllipsis" />
+                                            </Grid>
+
+                                            <Border Grid.Row="1"
+                                                    Background="#FFFFFF"
+                                                    CornerRadius="0,0,11,11">
+                                                <Grid>
+                                                    <Image Source="{Binding Thumbnail}"
+                                                           Width="{Binding PreviewWidth}"
+                                                           Height="{Binding PreviewHeight}"
+                                                           Stretch="None"
+                                                           HorizontalAlignment="Center"
+                                                           VerticalAlignment="Top"
+                                                           Visibility="{Binding HasPreview, Converter={StaticResource BoolToVis}}" />
+
+                                                    <TextBlock Text="{Binding PlaceholderText}"
+                                                               FontSize="12"
+                                                               Foreground="#B0B0BA"
+                                                               HorizontalAlignment="Center"
+                                                               VerticalAlignment="Center"
+                                                               Visibility="{Binding HasPreview, Converter={StaticResource InverseBoolToVis}}" />
+                                                </Grid>
                                             </Border>
-
-                                            <TextBlock Text="{Binding RefText}"
-                                                       FontSize="12"
-                                                       Foreground="#8B7BBF"
-                                                       Margin="0,0,0,4"
-                                                       Visibility="{Binding IsRef, Converter={StaticResource BoolToVis}}" />
-
-                                            <StackPanel Orientation="Horizontal"
-                                                        Visibility="{Binding IsRef, Converter={StaticResource BoolToVis}}">
-                                                <Button Style="{StaticResource MiniButton}"
-                                                        Content="导入素材"
-                                                        Click="OnImportMaterial" />
-
-                                                <Button Style="{StaticResource MiniButton}"
-                                                        Content="引用所选"
-                                                        Click="OnReferenceSelected" />
-                                            </StackPanel>
-
-                                            <Button Content="计算"
-                                                    Margin="0,6,0,0"
-                                                    Padding="6"
-                                                    FontSize="13"
-                                                    Background="#512BD4"
-                                                    Foreground="#FFFFFF"
-                                                    BorderThickness="0"
-                                                    Visibility="{Binding IsRef, Converter={StaticResource BoolToVis}}"
-                                                    Click="OnComputeStack" />
-
-                                            <Button Content="导入所选"
-                                                    Margin="0,6,0,0"
-                                                    Padding="6,3"
-                                                    FontSize="12"
-                                                    Click="OnImportMaterial"
-                                                    IsEnabled="{Binding DataContext.HasSelectedMaterial, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                                                    Visibility="{Binding IsRef, Converter={StaticResource InverseBoolToVis}}" />
-
-                                            <WrapPanel Visibility="{Binding IsRef, Converter={StaticResource InverseBoolToVis}}">
-                                                <Button Style="{StaticResource MiniButton}" Content="下落" Click="OnCollapse" />
-                                                <Button Style="{StaticResource MiniButton}" Content="顶针" Click="OnPin" />
-                                                <Button Style="{StaticResource MiniButton}" Content="切割" Click="OnCut" />
-                                                <Button Style="{StaticResource MiniButton}" Content="在下方堆叠" Click="OnStackBelow" />
-                                                <Button Style="{StaticResource MiniButton}" Content="在上方堆叠" Click="OnStackAbove" />
-                                            </WrapPanel>
-                                        </StackPanel>
+                                        </Grid>
                                     </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <!-- 箭头单独一层，画在节点之上且不参与命中测试 -->
+                        <ItemsControl ItemsSource="{Binding Edges}"
+                                      IsHitTestVisible="False">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <Canvas />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+
+                            <ItemsControl.ItemContainerStyle>
+                                <Style TargetType="ContentPresenter">
+                                    <Setter Property="Canvas.Left" Value="0" />
+                                    <Setter Property="Canvas.Top" Value="0" />
+                                </Style>
+                            </ItemsControl.ItemContainerStyle>
+
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Path Data="{Binding ArrowGeometry}"
+                                          Fill="#512BD4" />
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>

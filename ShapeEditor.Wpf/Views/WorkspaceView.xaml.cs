@@ -82,7 +82,7 @@ public partial class WorkspaceView : UserControl
     {
         if (DataOf<WorkspaceNodeViewModel>(sender) is WorkspaceNodeViewModel node)
         {
-            ViewModel?.SelectNodeCommand.Execute(node);
+            ViewModel?.HandleNodeClick(node);
         }
     }
 
@@ -96,93 +96,26 @@ public partial class WorkspaceView : UserControl
         }
     }
 
-    private void OnImportMaterial(
+    /// <summary>
+    /// 堆叠待选时，按 Esc 取消并清掉尚未使用的输入槽。
+    /// </summary>
+    private void OnPreviewKeyDown(
         object sender,
-        RoutedEventArgs e)
+        KeyEventArgs e)
     {
-        if (DataOf<WorkspaceNodeViewModel>(sender) is WorkspaceNodeViewModel node)
+        if (e.Key != Key.Escape ||
+            Keyboard.FocusedElement is TextBox)
         {
-            ViewModel?.ImportMaterialCommand.Execute(node);
+            return;
         }
-    }
 
-    private void OnReferenceSelected(
-        object sender,
-        RoutedEventArgs e)
-    {
-        if (DataOf<WorkspaceNodeViewModel>(sender) is WorkspaceNodeViewModel node)
+        if (ViewModel is not WorkspaceViewModel viewModel)
         {
-            ViewModel?.ReferenceSelectedCommand.Execute(node);
+            return;
         }
-    }
 
-    private void OnComputeStack(
-        object sender,
-        RoutedEventArgs e)
-    {
-        if (DataOf<WorkspaceNodeViewModel>(sender) is WorkspaceNodeViewModel node)
-        {
-            ViewModel?.ComputeStackCommand.Execute(node);
-        }
-    }
+        viewModel.CancelStack();
 
-    private void OnCollapse(
-        object sender,
-        RoutedEventArgs e)
-    {
-        if (DataOf<WorkspaceNodeViewModel>(sender) is WorkspaceNodeViewModel node)
-        {
-            ViewModel?.CollapseCommand.Execute(node);
-        }
-    }
-
-    private void OnPin(
-        object sender,
-        RoutedEventArgs e)
-    {
-        if (DataOf<WorkspaceNodeViewModel>(sender) is WorkspaceNodeViewModel node)
-        {
-            ViewModel?.PinCommand.Execute(node);
-        }
-    }
-
-    private void OnCut(
-        object sender,
-        RoutedEventArgs e)
-    {
-        if (DataOf<WorkspaceNodeViewModel>(sender) is WorkspaceNodeViewModel node)
-        {
-            ViewModel?.CutCommand.Execute(node);
-        }
-    }
-
-    private void OnStackBelow(
-        object sender,
-        RoutedEventArgs e)
-    {
-        if (DataOf<WorkspaceNodeViewModel>(sender) is WorkspaceNodeViewModel node)
-        {
-            ViewModel?.StackBelowCommand.Execute(node);
-        }
-    }
-
-    private void OnStackAbove(
-        object sender,
-        RoutedEventArgs e)
-    {
-        if (DataOf<WorkspaceNodeViewModel>(sender) is WorkspaceNodeViewModel node)
-        {
-            ViewModel?.StackAboveCommand.Execute(node);
-        }
-    }
-
-    private void OnEdgeLabelClick(
-        object sender,
-        MouseButtonEventArgs e)
-    {
-        if (DataOf<WorkspaceEdgeViewModel>(sender) is WorkspaceEdgeViewModel edge)
-        {
-            ViewModel?.CycleLabelCommand.Execute(edge);
-        }
+        e.Handled = true;
     }
 }

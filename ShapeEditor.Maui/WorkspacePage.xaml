@@ -12,6 +12,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -20,8 +21,69 @@
             <HorizontalStackLayout x:Name="TabBar" Spacing="6" />
         </ScrollView>
 
-        <!-- 工具行 -->
+        <!-- 节点操作行：作用于当前选中的节点，未选中时全部禁用 -->
         <ScrollView Grid.Row="1" Orientation="Horizontal" HorizontalScrollBarVisibility="Never">
+            <HorizontalStackLayout Spacing="6">
+                <Button x:Name="CollapseButton"
+                        Text="下落"
+                        FontSize="12"
+                        HeightRequest="32"
+                        CornerRadius="8"
+                        IsEnabled="False"
+                        Clicked="OnCollapseNode" />
+
+                <Button x:Name="PinButton"
+                        Text="顶针"
+                        FontSize="12"
+                        HeightRequest="32"
+                        CornerRadius="8"
+                        IsEnabled="False"
+                        Clicked="OnPinNode" />
+
+                <Button x:Name="CutButton"
+                        Text="切割"
+                        FontSize="12"
+                        HeightRequest="32"
+                        CornerRadius="8"
+                        IsEnabled="False"
+                        Clicked="OnCutNode" />
+
+                <Button x:Name="StackButton"
+                        Text="堆叠"
+                        FontSize="12"
+                        HeightRequest="32"
+                        CornerRadius="8"
+                        IsEnabled="False"
+                        Clicked="OnStackNode" />
+
+                <Button x:Name="CopyButton"
+                        Text="复制"
+                        FontSize="12"
+                        HeightRequest="32"
+                        CornerRadius="8"
+                        IsEnabled="False"
+                        Clicked="OnCopyNode" />
+
+                <Button x:Name="PasteButton"
+                        Text="粘贴"
+                        FontSize="12"
+                        HeightRequest="32"
+                        CornerRadius="8"
+                        IsEnabled="False"
+                        Clicked="OnPasteNode" />
+
+                <Button x:Name="DeleteButton"
+                        Text="删除"
+                        FontSize="12"
+                        HeightRequest="32"
+                        CornerRadius="8"
+                        IsEnabled="False"
+                        Clicked="OnDeleteNode" />
+            </HorizontalStackLayout>
+        </ScrollView>
+
+        <!-- 工具行 -->
+        <ScrollView Grid.Row="2" Orientation="Horizontal" HorizontalScrollBarVisibility="Never">
         <HorizontalStackLayout Spacing="6">
             <Button x:Name="CycleModeButton"
                     Text="含循环支撑"
@@ -61,12 +123,12 @@
         </ScrollView>
 
         <Label x:Name="StatusLabel"
-               Grid.Row="2"
+               Grid.Row="3"
                FontSize="11"
                TextColor="#6B6B76" />
 
         <!-- 图例：字母表示类型，颜色表示部件颜色 -->
-        <HorizontalStackLayout Grid.Row="3" Spacing="10" Margin="0,0,0,6">
+        <HorizontalStackLayout Grid.Row="4" Spacing="10" Margin="0,0,0,6">
 
             <Label Text="图例"
                    FontSize="11"
@@ -95,7 +157,7 @@
         </HorizontalStackLayout>
 
         <!-- 主体：素材 + 画布 -->
-        <Grid Grid.Row="4">
+        <Grid Grid.Row="5">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="108" />
                 <ColumnDefinition Width="*" />

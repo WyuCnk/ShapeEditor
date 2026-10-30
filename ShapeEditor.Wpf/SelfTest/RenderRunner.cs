@@ -67,6 +67,9 @@ public static class RenderRunner
             RenderWorkspaceExport(
                 Path.Combine(outputDirectory, "workspace-export.png"));
 
+            CheckWorkspaceToolbar(
+                Path.Combine(outputDirectory, "workspace-ops.txt"));
+
             /*
              * 快捷键说明窗口用非模态 Show() 打开，
              * 这里验证「关闭」按钮确实能关掉窗口。
@@ -250,7 +253,46 @@ public static class RenderRunner
             Path.GetTempPath(),
             $"shape-workspace-render-{Guid.NewGuid():N}.json");
 
-        var viewModel = new WorkspaceViewModel(new WorkspaceStore(storePath));
+        var store = new WorkspaceStore(storePath);
+
+        /*
+         * 造一小段制作路径：一个源节点加两个结果节点，
+         * 用来检查自适应卡片、连线和箭头层。
+         */
+        WorkspaceNode source = store.CreateNode();
+
+        source.X = 80;
+
+        source.Y = 60;
+
+        store.ReplaceNodeShape(
+            source.Id,
+            "CrP---Gu:ckckckck",
+            Core.Models.ShortCodeFormat.Full,
+            4,
+            4);
+
+        NodeActionResult collapse = store.ApplyCollapse(source.Id);
+
+        NodeActionResult pin = store.ApplyPin(source.Id);
+
+        if (collapse.Node is not null)
+        {
+            collapse.Node.X = 80;
+
+            collapse.Node.Y = 286;
+        }
+
+        if (pin.Node is not null)
+        {
+            pin.Node.X = 300;
+
+            pin.Node.Y = 286;
+
+            store.SelectNode(pin.Node);
+        }
+
+        var viewModel = new WorkspaceViewModel(store);
 
         var view = new WorkspaceView
         {
@@ -288,6 +330,155 @@ public static class RenderRunner
             store.Nodes,
             store.Edges,
             store.GetEffectiveDocument);
+    }
+
+    private static void CheckWorkspaceToolbar(
+        string path)
+    {
+        var lines = new List<string>();
+
+        bool ok = false;
+
+        try
+        {
+            string storePath = Path.Combine(
+                Path.GetTempPath(),
+                $"shape-workspace-toolbar-{Guid.NewGuid():N}.json");
+
+            var store = new WorkspaceStore(storePath);
+
+            var viewModel = new WorkspaceViewModel(store);
+
+            WorkspaceNode source = store.CreateNode();
+
+            source.X = 80;
+
+            source.Y = 60;
+
+            store.ReplaceNodeShape(
+                source.Id,
+                "CrP---Gu:ckckckck",
+                Core.Models.ShortCodeFormat.Full,
+                4,
+                4);
+
+            store.SelectNode(source);
+
+            WorkspaceNodeViewModel? sourceView = viewModel.Nodes
+                .FirstOrDefault(node => node.Id == source.Id);
+
+            if (sourceView is null)
+            {
+                throw new InvalidOperationException("源节点没有出现在视图集合中。");
+            }
+
+            viewModel.CollapseCommand.Execute(sourceView);
+
+            WorkspaceNode? collapsed = store.Nodes.FirstOrDefault(
+                node => node.OpKey == $"collapse:{source.Id}");
+
+            lines.Add($"下落结果：{Describe(collapsed)}（期望 X=80，Y=286）");
+
+            store.SelectNode(source);
+
+            sourceView = viewModel.Nodes.FirstOrDefault(node => node.Id == source.Id);
+
+            if (sourceView is not null)
+            {
+                viewModel.CutCommand.Execute(sourceView);
+            }
+
+            WorkspaceNode? west = store.Nodes.FirstOrDefault(
+                node => node.OpKey == $"cutw:{source.Id}");
+
+            WorkspaceNode? east = store.Nodes.FirstOrDefault(
+                node => node.OpKey == $"cute:{source.Id}");
+
+            lines.Add($"切割左：{Describe(west)}（期望 X=24，Y=286）");
+
+            lines.Add($"切割右：{Describe(east)}（期望 X=340，Y=286）");
+
+            viewModel.CopyCommand.Execute(null);
+
+            viewModel.PasteCommand.Execute(null);
+
+            WorkspaceNode? pasted = store.Nodes.FirstOrDefault(
+                node => Math.Abs((node.X ?? -1) - 80) < 0.1 &&
+                        Math.Abs((node.Y ?? -1) - 80) < 0.1 &&
+                        node.Id != source.Id);
+
+            lines.Add($"粘贴结果：{Describe(pasted)}（期望 X=80，Y=80）");
+
+            /*
+             * 堆叠：把粘贴出来的节点当底节点，再点下落结果作为第二输入。
+             */
+            if (pasted is not null && collapsed is not null)
+            {
+                store.SelectNode(pasted);
+
+                viewModel.StackCommand.Execute(null);
+
+                WorkspaceNodeViewModel? otherView = viewModel.Nodes
+                    .FirstOrDefault(node => node.Id == collapsed.Id);
+
+                if (otherView is not null)
+                {
+                    viewModel.HandleNodeClick(otherView);
+                }
+            }
+
+            WorkspaceNode? stacked = store.Nodes.FirstOrDefault(
+                node => node.OpKey?.StartsWith("stack:", StringComparison.Ordinal) == true);
+
+            lines.Add($"堆叠结果：{Describe(stacked)}");
+
+            bool deleted = false;
+
+            if (stacked is not null)
+            {
+                WorkspaceNodeViewModel? stackedView = viewModel.Nodes
+                    .FirstOrDefault(node => node.Id == stacked.Id);
+
+                if (stackedView is not null)
+                {
+                    viewModel.DeleteNodeCommand.Execute(stackedView);
+
+                    deleted = store.FindNode(stacked.Id) is null;
+                }
+            }
+
+            lines.Add($"删除选中节点：{(deleted ? "成功" : "失败")}");
+
+            ok =
+                collapsed is not null &&
+                Math.Abs((collapsed.X ?? -1) - 80) < 0.1 &&
+                Math.Abs((collapsed.Y ?? -1) - 286) < 0.1 &&
+                west is not null &&
+                Math.Abs((west.X ?? -1) - 24) < 0.1 &&
+                Math.Abs((west.Y ?? -1) - 286) < 0.1 &&
+                east is not null &&
+                Math.Abs((east.X ?? -1) - 340) < 0.1 &&
+                Math.Abs((east.Y ?? -1) - 286) < 0.1 &&
+                pasted is not null &&
+                stacked is not null &&
+                deleted;
+        }
+        catch (Exception exception)
+        {
+            lines.Add(exception.ToString());
+        }
+
+        lines.Insert(0, ok ? "PASS" : "FAIL");
+
+        File.WriteAllLines(path, lines);
+    }
+
+    private static string Describe(
+        WorkspaceNode? node)
+    {
+        return node is null
+            ? "缺失"
+            : $"#{node.Seq} X={node.X?.ToString("0.##") ?? "?"} Y={node.Y?.ToString("0.##") ?? "?"}";
     }
 
     private static void RenderMainWindow(
