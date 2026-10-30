@@ -1356,7 +1356,7 @@ function edgeAnchor(node, other) {
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(x1, y1);
-        ctx.lineTo(x2, y2 - 4);
+        ctx.lineTo(x2, y2);
         ctx.stroke();
 
         arrowHeadAt(x1, y1, x2, y2, "#512BD4");
@@ -1661,7 +1661,7 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(x1, y1);
-        ctx.lineTo(x2, y2 - 4);
+        ctx.lineTo(x2, y2);
         ctx.stroke();
 
         arrowHeadAt(x1, y1, x2, y2);
