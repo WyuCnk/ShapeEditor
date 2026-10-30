@@ -1850,3 +1850,85 @@ window.shapeGridMeasureNodes = function () {
         return { id: el.getAttribute("data-node-id"), height: rect.height, width: rect.width };
     });
 };
+/*
+ * 连线几何全部在浏览器里算：以节点真实矩形为唯一数据源，
+ * 避免 C# 计算与渲染结果不一致导致的箭头偏移。
+ */
+window.shapeGridLayoutEdges = function () {
+    const canvas = document.querySelector(".graph-canvas");
+    if (!canvas) { return; }
+
+    const canvasRect = canvas.getBoundingClientRect();
+    const nodes = {};
+
+    canvas.querySelectorAll(".graph-node[data-node-id]").forEach(function (el) {
+        const rect = el.getBoundingClientRect();
+
+        nodes[el.getAttribute("data-node-id")] = {
+            left: rect.left - canvasRect.left,
+            top: rect.top - canvasRect.top,
+            width: rect.width,
+            height: rect.height
+        };
+    });
+
+    function anchor(node, other) {
+        const cx = node.left + node.width / 2;
+        const cy = node.top + node.height / 2;
+        const ox = other.left + other.width / 2;
+        const oy = other.top + other.height / 2;
+
+        let dx = ox - cx;
+        let dy = oy - cy;
+        const len = Math.sqrt(dx * dx + dy * dy);
+
+        if (len < 1) { return { x: cx, y: cy }; }
+
+        dx /= len;
+        dy /= len;
+
+        const sx = Math.abs(dx) < 1e-6 ? Number.MAX_VALUE : (node.width / 2) / Math.abs(dx);
+        const sy = Math.abs(dy) < 1e-6 ? Number.MAX_VALUE : (node.height / 2) / Math.abs(dy);
+        const scale = Math.min(sx, sy);
+
+        return { x: cx + dx * scale, y: cy + dy * scale };
+    }
+
+    canvas.querySelectorAll("path[data-edge-from]").forEach(function (path) {
+        const from = nodes[path.getAttribute("data-edge-from")];
+        const to = nodes[path.getAttribute("data-edge-to")];
+
+        if (!from || !to) { return; }
+
+        const a1 = anchor(from, to);
+        const a2 = anchor(to, from);
+
+        let vx = a2.x - a1.x;
+        let vy = a2.y - a1.y;
+        const len = Math.max(1, Math.sqrt(vx * vx + vy * vy));
+
+        vx /= len;
+        vy /= len;
+
+        const tipX = a2.x - vx * 3;
+        const tipY = a2.y - vy * 3;
+
+        path.setAttribute("d", "M " + a1.x + " " + a1.y + " L " + tipX + " " + tipY);
+
+        const head = 11;
+        const half = 5;
+        const bx = tipX - vx * head;
+        const by = tipY - vy * head;
+
+        const polygon = canvas.querySelector(
+            'polygon[data-edge-from="' + path.getAttribute("data-edge-from") +
+            '"][data-edge-to="' + path.getAttribute("data-edge-to") + '"]');
+
+        if (polygon) {
+            polygon.setAttribute("points",
+                tipX + "," + tipY + " " +
+                (bx - vy * half) + "," + (by + vx * half) + " " +
+                (bx + vy * half) + "," + (by - vx * half));
+        }
+    });
+};

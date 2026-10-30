@@ -191,11 +191,16 @@
                     @foreach (EdgeView edge in EdgeViews)
                     {
                         <path d="@edge.Path"
+                              data-edge-from="@edge.FromId"
+                              data-edge-to="@edge.ToId"
                               fill="none"
                               stroke="#512bd4"
                               stroke-width="2" />
 
-                        <polygon points="@edge.Arrow" fill="#512bd4" />
+                        <polygon points="@edge.Arrow"
+                                 data-edge-from="@edge.FromId"
+                                 data-edge-to="@edge.ToId"
+                                 fill="#512bd4" />
                     }
                 </svg>
 
@@ -226,7 +231,7 @@
                             @if (NodeDocument(node) is ShapeDocument document)
                             {
                                 <div class="ws-preview-scroll"
-                                     style="height:@(Math.Min(document.LayerCount, 20) * 20 + 4)px">
+                                     style="max-height:@(Math.Min(document.LayerCount, 20) * 20 + 4)px">
                                     <ShapePreview Document="document" CssClass="graph-preview" />
                                 </div>
                             }
@@ -530,6 +535,8 @@
             {
                 await InvokeAsync(StateHasChanged);
             }
+
+            await JS.InvokeVoidAsync("shapeGridLayoutEdges");
         }
         catch
         {
