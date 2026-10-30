@@ -352,18 +352,21 @@
     }
 
     private int CanvasWidth =>
-        (int)Math.Max(
-            900,
+        Quantize(Math.Max(
+            1200,
             Store.Nodes.Count == 0
                 ? 0
-                : Store.Nodes.Max(node => NodeX(node)) + NodeWidth + 200);
+                : Store.Nodes.Max(node => NodeX(node)) + NodeWidth + 400));
 
     private int CanvasHeight =>
-        (int)Math.Max(
-            600,
+        Quantize(Math.Max(
+            800,
             Store.Nodes.Count == 0
                 ? 0
-                : Store.Nodes.Max(node => NodeY(node)) + NodeHeight + 200);
+                : Store.Nodes.Max(node => NodeY(node)) + NodeHeight + 400));
+
+    private static int Quantize(double value) =>
+        (int)(Math.Ceiling(value / 200) * 200);
 
     private string CanvasStyle =>
         $"width:{CanvasWidth}px;height:{CanvasHeight}px;";
