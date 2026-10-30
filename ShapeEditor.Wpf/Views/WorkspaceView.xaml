@@ -332,21 +332,11 @@
                                             </DockPanel>
 
                                             <Border Height="130" Margin="0,6,0,6"
-                                                    Background="#FAF8FF"
-                                                    CornerRadius="6"
-                                                    Padding="4">
-                                                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                                                    <TextBlock Text="{Binding CodeText}"
-                                                               FontFamily="Consolas, Courier New"
-                                                               FontSize="11"
-                                                               TextWrapping="NoWrap" />
-                                                </ScrollViewer>
+                                                    Background="#FFFFFF">
+                                                <Image Source="{Binding Thumbnail}"
+                                                       Stretch="Uniform"
+                                                       Margin="4" />
                                             </Border>
-
-                                            <TextBlock Text="{Binding CodeSummary}"
-                                                       FontSize="10"
-                                                       Foreground="#6B6B76"
-                                                       Margin="0,0,0,4" />
 
                                             <TextBlock Text="{Binding RefText}"
                                                        FontSize="12"

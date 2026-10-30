@@ -83,8 +83,7 @@ public static class ShapeText
             }
         }
 
-        return $"{document.LayerCount} 层 × {document.PartCount} 象限" +
-               $" · {shapes} 形状 · {crystals} 晶体 · {pins} 顶针";
+        return $"{document.LayerCount} 层 × {document.PartCount} 象限";
     }
 
     public static bool IsTruncated(

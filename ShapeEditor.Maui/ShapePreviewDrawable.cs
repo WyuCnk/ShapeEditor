@@ -50,31 +50,6 @@ public sealed class ShapePreviewDrawable : IDrawable
                 float x = offsetX + part * cell;
                 float y = offsetY + row * cell;
 
-                if (shape.Type == CellType.Empty)
-                {
-                    // 空位画短横线，和 c/S/P 同一套显示约定
-                    if (cell >= 11)
-                    {
-                        canvas.FontColor = Color.FromArgb("#C9C4DA");
-                        canvas.FontSize = (float)(cell * 0.45);
-
-                        canvas.DrawString(
-                            "-",
-                            x,
-                            y,
-                            cell,
-                            cell,
-                            HorizontalAlignment.Center,
-                            VerticalAlignment.Center);
-                    }
-
-                    canvas.StrokeColor = Color.FromArgb("#E6E2F2");
-                    canvas.StrokeSize = 0.6f;
-
-                    canvas.DrawRectangle(x, y, cell, cell);
-
-                    continue;
-                }
 
                 if (shape.Type != CellType.Empty)
                 {

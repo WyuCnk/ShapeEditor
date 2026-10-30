@@ -376,7 +376,12 @@ public partial class WorkspacePage : ContentPage
             Children =
             {
                 header,
-                BuildCodeBlock(node)
+                new GraphicsView
+                {
+                    HeightRequest = 80,
+                    InputTransparent = true,
+                    Drawable = NodePreview(node)
+                }
             }
         };
 
