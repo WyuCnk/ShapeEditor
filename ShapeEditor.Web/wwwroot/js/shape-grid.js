@@ -2114,10 +2114,14 @@ window.shapeGridLayoutEdges = function () {
         vx /= len;
         vy /= len;
 
-        const tipX = (edgeGeom[i] ? edgeGeom[i].x : a2.x) - vx * 3;
-        const tipY = (edgeGeom[i] ? edgeGeom[i].y : a2.y) - vy * 3;
+        // 两端各向外延伸 1px，抵消 2px 描边的一半，视觉上正好贴住边框
+        const tipX = a2.x + vx * 1;
+        const tipY = a2.y + vy * 1;
 
-        path.setAttribute("d", "M " + a1.x + " " + a1.y + " L " + tipX + " " + tipY);
+        const startX = a1.x - vx * 1;
+        const startY = a1.y - vy * 1;
+
+        path.setAttribute("d", "M " + startX + " " + startY + " L " + tipX + " " + tipY);
 
         const head = 11;
         const half = 5;
