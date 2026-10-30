@@ -1217,7 +1217,7 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
 
     const ctx = canvas.getContext("2d");
 
-    const exportScale = 2;
+    const exportScale = 1;
 
     if (width * exportScale > 16000 || height * exportScale > 16000) {
         throw new Error("图片过大：" + Math.round(width * exportScale) + " × " +
@@ -1538,7 +1538,7 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
         // 与界面一致：节点高度按层数计算（最多 20 行）
     for (const item of nodes) {
         const layerCount = item.state && item.state.layers ? item.state.layers : 6;
-        item._height = 50 + Math.min(layerCount, 20) * 20;
+        item._height = 50 + layerCount * 20;
         if (item._image) {
             const availH = Math.max(20, item._height - 44 - 8);
             const fit = Math.min((NODE_W - 24) / item._image.width, availH / item._image.height, 1);
@@ -1595,7 +1595,7 @@ const width = bounds.maxX - bounds.minX + PAD * 2;
 
     const ctx = canvas.getContext("2d");
 
-    const exportScale = 2;
+    const exportScale = 1;
 
     if (width * exportScale > 16000 || height * exportScale > 16000) {
         throw new Error("图片过大：" + Math.round(width * exportScale) + " × " +
@@ -1805,7 +1805,7 @@ const width = bounds.maxX - bounds.minX + PAD * 2;
 
                         ctx.fillRect(cx + cellW * 0.08, cy + cellH * 0.08, cellW * 0.84, cellH * 0.84);
 
-                        if (cellW >= 12 && cellH >= 12) {
+                        if (cellW >= 8 && cellH >= 8) {
                             ctx.fillStyle = "#FFFFFF";
                             ctx.font = '700 ' + Math.round(Math.min(cellW, cellH) * 0.55) + 'px "Microsoft YaHei", sans-serif';
                             ctx.textAlign = "center";
