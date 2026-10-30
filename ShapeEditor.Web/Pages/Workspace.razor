@@ -681,11 +681,29 @@
                 int inIndex = incoming[edge.ToId].IndexOf(edge);
                 int inCount = incoming[edge.ToId].Count;
 
-                int x1 = (int)(NodeX(from) + NodeWidth / 2) + Spread(outIndex, outCount, 30);
-                int x2 = (int)(NodeX(to) + NodeWidth / 2) + Spread(inIndex, inCount, 30);
+                // 锚点取“中心连心线”与矩形边界的交点，箭头始终指向对方中心
+                (double ax1, double ay1) = EdgeAnchor(from, to);
+                (double ax2, double ay2) = EdgeAnchor(to, from);
 
-                int y1 = (int)(NodeY(from) + NodeHeight);
-                int y2 = (int)NodeY(to);
+                double vx = ax2 - ax1;
+                double vy = ay2 - ay1;
+                double vlen = Math.Sqrt(vx * vx + vy * vy);
+
+                if (vlen < 1)
+                {
+                    vlen = 1;
+                }
+
+                double px = -vy / vlen;
+                double py = vx / vlen;
+
+                double outOffset = Spread(outIndex, outCount, 30);
+                double inOffset = Spread(inIndex, inCount, 30);
+
+                double x1 = ax1 + px * outOffset;
+                double y1 = ay1 + py * outOffset;
+                double x2 = ax2 + px * inOffset;
+                double y2 = ay2 + py * inOffset;
 
                 // 折线走在“父节点底部到子节点顶部”的空档里，
                 // 每条边占一条独立车道，标签压在车道上方
