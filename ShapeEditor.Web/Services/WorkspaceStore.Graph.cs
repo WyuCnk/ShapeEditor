@@ -240,14 +240,29 @@ public sealed partial class WorkspaceStore
             return 0;
         }
 
+        if (_nodes.Any(entry => entry.Id != nodeId && entry.HasShape) &&
+            parts != WorkspaceParts)
+        {
+            LastError = $"该工作区的象限数已固定为 {WorkspaceParts}，不能再加入 {parts} 象限的图形。";
+
+            return 0;
+        }
+
+        LastError = null;
+
         int removed = DeleteDownstream(nodeId);
 
-        // 工作区里出现第一个图形时，把高度上限对齐到它的层数
+        // 工作区里出现第一个图形时，锁定层数上限与象限数
         bool hasOtherShape = _nodes.Any(entry => entry.Id != nodeId && entry.HasShape);
 
         if (!hasOtherShape)
         {
             MaxLayers = Math.Clamp(layers, 4, ShapeRules.MaxLayerCount);
+
+            if (ActiveProject is not null)
+            {
+                ActiveProject.PartCount = parts;
+            }
         }
 
         node.Kind = "shape";
@@ -559,6 +574,21 @@ public sealed partial class WorkspaceStore
 
         return new NodeActionResult(true, created, "已生成堆叠结果。");
     }
+    /// <summary>该工作区固定的象限数（空工作区为 4）。</summary>
+    public int WorkspaceParts =>
+        _nodes.Any(node => node.HasShape)
+            ? (ActiveProject?.PartCount ?? _nodes.First(node => node.HasShape).Parts)
+            : 4;
+
+    /// <summary>判断一个图形能否加入当前工作区。</summary>
+    public string? LastError { get; private set; }
+
+    public bool PartsAllowed(
+        int parts)
+    {
+        return !_nodes.Any(node => node.HasShape) || parts == WorkspaceParts;
+    }
+
     public NodeActionResult ComputeStack(string slotId, CollapseMode mode)
     {
         WorkspaceNode? slot = FindNode(slotId);

@@ -90,6 +90,9 @@ public sealed class WorkspaceProject
 
     public int MaxLayers { get; set; } = 4;
 
+    /// <summary>该工作区固定的象限数；空工作区为 4。</summary>
+    public int PartCount { get; set; } = 4;
+
     public CollapseMode Mode { get; set; } = CollapseMode.IncludeCycles;
 
     public DateTime CreatedAt { get; set; } = DateTime.Now;

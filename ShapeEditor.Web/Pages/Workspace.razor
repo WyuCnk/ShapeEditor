@@ -508,6 +508,11 @@
         WorkspaceNode node = Store.CreateNodeAtPoint(60, 60);
 
         Store.ReplaceNodeShape(node.Id, material.Code, material.Format, material.Layers, material.Parts);
+
+        if (Store.LastError is not null)
+        {
+            ShowDialog("无法添加", Store.LastError);
+        }
     }
 
     private void CancelStack()
@@ -541,6 +546,11 @@
             Math.Max(20, e.OffsetY - 30));
 
         Store.ReplaceNodeShape(node.Id, material.Code, material.Format, material.Layers, material.Parts);
+
+        if (Store.LastError is not null)
+        {
+            ShowDialog("无法添加", Store.LastError);
+        }
     }
 
     private double _dragStartX;
