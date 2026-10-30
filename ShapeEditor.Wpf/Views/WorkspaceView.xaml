@@ -152,7 +152,7 @@
 
             <Button Style="{StaticResource MiniButton}"
                     Content="堆叠"
-                    ToolTip="先选中底节点，再点另一个节点作为第二输入"
+                    ToolTip="先选中第一个输入，点“堆叠”，再点第二个输入；Esc 取消"
                     Command="{Binding StackCommand}"
                     IsEnabled="{Binding HasSelectedNode}" />
 
@@ -250,6 +250,20 @@
                          BorderThickness="0"
                          Background="Transparent"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            <Setter Property="Padding" Value="0" />
+                            <Setter Property="Margin" Value="0" />
+                            <EventSetter Event="PreviewMouseLeftButtonDown"
+                                         Handler="OnMaterialMouseLeftButtonDown" />
+                            <EventSetter Event="PreviewMouseMove"
+                                         Handler="OnMaterialMouseMove" />
+                            <EventSetter Event="MouseDoubleClick"
+                                         Handler="OnMaterialDoubleClick" />
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+
                     <ListBox.ItemTemplate>
                         <DataTemplate>
                             <StackPanel Width="200" Margin="0,0,0,10">
@@ -281,7 +295,9 @@
         </Border>
 
         <!-- 主体 -->
-        <Grid Grid.Row="4" Grid.Column="1">
+        <Grid Grid.Row="4"
+              Grid.Column="1"
+              MouseLeftButtonDown="OnCanvasMouseLeftButtonDown">
 
             <Border Style="{StaticResource Card.Panel}"
                     Padding="0"
@@ -290,11 +306,15 @@
                               VerticalScrollBarVisibility="Auto"
                               HorizontalContentAlignment="Left"
                               VerticalContentAlignment="Top">
-                    <Grid Width="{Binding CanvasWidth}"
+                    <Grid x:Name="CanvasSurface"
+                          Width="{Binding CanvasWidth}"
                           Height="{Binding CanvasHeight}"
                           HorizontalAlignment="Left"
                           VerticalAlignment="Top"
-                          Background="#FFFFFF">
+                          Background="#FFFFFF"
+                          AllowDrop="True"
+                          DragOver="OnCanvasDragOver"
+                          Drop="OnCanvasDrop">
 
                         <!-- 连线画在节点之下 -->
                         <ItemsControl ItemsSource="{Binding Edges}"

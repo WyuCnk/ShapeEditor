@@ -171,7 +171,15 @@
                         Orientation="Both"
                         HorizontalScrollBarVisibility="Always">
                 <AbsoluteLayout x:Name="Canvas"
-                                BackgroundColor="White" />
+                                BackgroundColor="White">
+                    <AbsoluteLayout.GestureRecognizers>
+                        <!-- 素材拖到画布时，在落点创建节点 -->
+                        <DropGestureRecognizer AllowDrop="True" Drop="OnCanvasDrop" />
+
+                        <!-- 点空白处取消堆叠的第二输入选择 -->
+                        <TapGestureRecognizer Tapped="OnCanvasTapped" />
+                    </AbsoluteLayout.GestureRecognizers>
+                </AbsoluteLayout>
             </ScrollView>
         </Grid>
     </Grid>

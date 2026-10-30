@@ -341,6 +341,55 @@ public sealed class WorkspaceStore
         return node;
     }
 
+    /// <summary>
+    /// 在画布指定坐标新建节点（拖放素材时使用）。
+    /// </summary>
+    public WorkspaceNode CreateNodeAtPoint(
+        double x,
+        double y)
+    {
+        WorkspaceProject project = EnsureActive();
+
+        var node = new WorkspaceNode
+        {
+            Row = 0,
+            Col = 0,
+            X = x,
+            Y = y,
+            Seq = NextSeq(),
+            Label = "素材节点"
+        };
+
+        project.Nodes.Add(node);
+
+        Save();
+        Changed?.Invoke();
+
+        return node;
+    }
+
+    /// <summary>
+    /// 拖动后写入自由坐标，按 10px 网格吸附。
+    /// </summary>
+    public void SetNodePosition(
+        string nodeId,
+        double x,
+        double y)
+    {
+        WorkspaceNode? node = FindNode(nodeId);
+
+        if (node is null)
+        {
+            return;
+        }
+
+        node.X = Math.Round(x / 10) * 10;
+        node.Y = Math.Round(y / 10) * 10;
+
+        Save();
+        Changed?.Invoke();
+    }
+
     public int ReplaceNodeShape(
         string nodeId,
         string code,

@@ -21,10 +21,13 @@ namespace ShapeEditor.Wpf.ViewModels;
 public sealed class WorkspaceViewModel : ObservableObject
 {
     private const string DefaultHint =
-        "提示：选中节点后使用工具条操作；堆叠时再点另一个节点作为第二输入。数据目录：";
+        "提示：选中节点后使用工具条操作；双击素材或把素材拖到画布可加入。数据目录：";
 
     private const string StackHint =
-        "堆叠：请再点一个节点作为第二输入（再点“堆叠”或 Esc 取消）。数据目录：";
+        "堆叠：再点一个节点作为第二个输入，Esc 取消。数据目录：";
+
+    /// <summary>素材拖放时使用的数据格式，值为素材 Id。</summary>
+    public const string MaterialDragFormat = "ShapeEditor.Material";
 
     private readonly WorkspaceStore _store;
 
@@ -51,8 +54,8 @@ public sealed class WorkspaceViewModel : ObservableObject
 
     private int _clipParts;
 
-    /// <summary>正在进行中的堆叠槽位；为空表示没有待选的第二输入。</summary>
-    private string? _stackSlotId;
+    /// <summary>正在进行中的堆叠：第一个输入的节点 Id；为空表示没有待选的第二输入。</summary>
+    private string? _stackFirstId;
 
     private string _hintText = DefaultHint;
 
@@ -267,6 +270,14 @@ public sealed class WorkspaceViewModel : ObservableObject
 
     public void Refresh()
     {
+        if (_stackFirstId is not null && _store.FindNode(_stackFirstId) is null)
+        {
+            // 第一个输入被删除或切换了工作区，堆叠待选自动取消
+            _stackFirstId = null;
+
+            HintText = DefaultHint;
+        }
+
         if (_store.LastError is not null && !_storageErrorShown)
         {
             _storageErrorShown = true;
@@ -449,29 +460,23 @@ public sealed class WorkspaceViewModel : ObservableObject
     public void HandleNodeClick(
         WorkspaceNodeViewModel node)
     {
-        if (_stackSlotId is not null)
+        if (_stackFirstId is not null)
         {
-            WorkspaceNode? slot = _store.FindNode(_stackSlotId);
+            WorkspaceNode? first = _store.FindNode(_stackFirstId);
 
-            if (slot is null)
+            if (first is null)
             {
-                _stackSlotId = null;
-
-                HintText = DefaultHint;
+                CancelStack();
             }
-            else if (node.Id == slot.Id)
+            else if (node.Id == first.Id)
             {
-                return;
-            }
-            else if (node.Id == slot.BaseId)
-            {
-                HintText = "堆叠：不能用底节点自己作为第二输入，请选择另一个节点（Esc 取消）。数据目录：";
+                HintText = "堆叠：不能用同一个节点作为第二个输入，请选择另一个节点（Esc 取消）。数据目录：";
 
                 return;
             }
             else
             {
-                CompleteStack(slot, node.Node);
+                CompleteStack(first, node.Node);
 
                 return;
             }
@@ -514,8 +519,6 @@ public sealed class WorkspaceViewModel : ObservableObject
 
         PositionResult(source, result.Node, operation);
 
-        PersistPositions();
-
         _store.SelectNode(result.Node);
     }
 
@@ -541,7 +544,10 @@ public sealed class WorkspaceViewModel : ObservableObject
 
         if (operation != "cut")
         {
-            SetNodePosition(result, sourceBounds.Left, below);
+            _store.SetNodePosition(
+                result.Id,
+                sourceBounds.Left,
+                below);
 
             return;
         }
@@ -554,44 +560,29 @@ public sealed class WorkspaceViewModel : ObservableObject
 
         if (west is null && east is null)
         {
-            SetNodePosition(result, sourceBounds.Left - 260, below);
+            _store.SetNodePosition(
+                result.Id,
+                sourceBounds.Left - 260,
+                below);
 
             return;
         }
 
         if (west is not null)
         {
-            SetNodePosition(
-                west,
+            _store.SetNodePosition(
+                west.Id,
                 Math.Max(WorkspaceLayout.Padding, sourceBounds.Left - 260),
                 below);
         }
 
         if (east is not null)
         {
-            SetNodePosition(east, sourceBounds.Left + 260, below);
+            _store.SetNodePosition(
+                east.Id,
+                sourceBounds.Left + 260,
+                below);
         }
-    }
-
-    private static void SetNodePosition(
-        WorkspaceNode node,
-        double x,
-        double y)
-    {
-        node.X = x;
-
-        node.Y = y;
-    }
-
-    /// <summary>
-    /// 写入节点坐标并保存。
-    ///
-    /// Core 没有公开的 Save 入口，RecomputeAll 会顺带落盘；
-    /// 重算结果只与输入图形有关，与坐标无关。
-    /// </summary>
-    private void PersistPositions()
-    {
-        _store.RecomputeAll();
     }
 
     private void DeleteNode(
@@ -625,11 +616,135 @@ public sealed class WorkspaceViewModel : ObservableObject
 
     #endregion
 
+    #region 素材加入画布
+
+    /// <summary>
+    /// 双击素材：在 (80, 80) 新建节点并写入图形。
+    /// </summary>
+    public void AddMaterialAtDefaultPoint(
+        MaterialViewModel material)
+    {
+        AddMaterialToCanvas(
+            material,
+            80,
+            80);
+    }
+
+    /// <summary>
+    /// 把素材放到画布坐标 (x, y)；
+    /// 失败时弹出提示，适合双击/拖放这类直接操作。
+    /// </summary>
+    public void AddMaterialToCanvas(
+        MaterialViewModel material,
+        double x,
+        double y)
+    {
+        if (!TryAddMaterialToCanvas(
+                material,
+                x,
+                y,
+                out string? error))
+        {
+            ShowMessage(
+                error ?? "素材写入失败。",
+                "加入素材");
+        }
+    }
+
+    /// <summary>
+    /// 尝试把素材放到画布坐标 (x, y)。
+    /// 象限数不符、数据无效或写入失败时返回 false，不弹窗，便于自检。
+    /// </summary>
+    public bool TryAddMaterialToCanvas(
+        MaterialViewModel material,
+        double x,
+        double y,
+        out string? error)
+    {
+        error = null;
+
+        if (material.Layers <= 0 ||
+            material.Parts <= 0 ||
+            string.IsNullOrWhiteSpace(material.Code))
+        {
+            error = "该素材缺少可用的图形数据。";
+
+            return false;
+        }
+
+        if (!_store.PartsAllowed(material.Parts))
+        {
+            error = $"该工作区的象限数已固定为 {_store.WorkspaceParts}";
+
+            return false;
+        }
+
+        WorkspaceNode node = _store.CreateNodeAtPoint(
+            x,
+            y);
+
+        _store.ReplaceNodeShape(
+            node.Id,
+            material.Code,
+            material.Format,
+            material.Layers,
+            material.Parts);
+
+        if (!node.HasShape)
+        {
+            // 写入失败（例如象限数在两次检查之间被锁定）时撤掉空节点
+            error = _store.LastError ?? "素材写入失败。";
+
+            _store.DeleteNode(node.Id);
+
+            return false;
+        }
+
+        _store.SelectNode(node);
+
+        HintText = $"已把素材 #{node.Seq} 加入画布。数据目录：";
+
+        return true;
+    }
+
+    /// <summary>拖放结束时按素材 Id 查找素材并放入画布。</summary>
+    public void DropMaterial(
+        string materialId,
+        double x,
+        double y)
+    {
+        MaterialViewModel? material = Materials.FirstOrDefault(
+            item => item.Id == materialId);
+
+        if (material is null)
+        {
+            return;
+        }
+
+        AddMaterialToCanvas(
+            material,
+            x,
+            y);
+    }
+
+    private static void ShowMessage(
+        string message,
+        string title)
+    {
+        MessageBox.Show(
+            message,
+            title,
+            MessageBoxButton.OK,
+            MessageBoxImage.Information);
+    }
+
+    #endregion
+
     #region 工具条操作
 
     private void BeginStackFromToolbar()
     {
-        if (_stackSlotId is not null)
+        if (_stackFirstId is not null)
         {
             CancelStack();
 
@@ -643,8 +758,7 @@ public sealed class WorkspaceViewModel : ObservableObject
             return;
         }
 
-        if (source.Kind == "ref" ||
-            !source.HasShape)
+        if (_store.GetEffectiveDocument(source) is null)
         {
             MessageBox.Show(
                 "请先选择一个有图形的节点，再点“堆叠”。",
@@ -655,47 +769,23 @@ public sealed class WorkspaceViewModel : ObservableObject
             return;
         }
 
-        WorkspaceNode slot = _store.BeginStack(source.Id, currentIsTop: true);
-
-        ShapeDocument? sourceDocument = _store.GetEffectiveDocument(source);
-
-        Rect sourceBounds = WorkspaceLayout.BoundsFor(
-            source,
-            WorkspaceLayout.SizeFor(source, sourceDocument, FallbackParts));
-
-        SetNodePosition(
-            slot,
-            sourceBounds.Right + 80,
-            sourceBounds.Top);
-
-        PersistPositions();
-
-        _stackSlotId = slot.Id;
+        _stackFirstId = source.Id;
 
         HintText = StackHint;
-
-        _store.SelectNode(slot);
     }
 
+    /// <summary>
+    /// 第二个输入就绪：直接调用 ComputeStackOf，
+    /// 结果节点放在第二个输入右侧 80px 并选中。
+    /// </summary>
     private void CompleteStack(
-        WorkspaceNode slot,
-        WorkspaceNode other)
+        WorkspaceNode first,
+        WorkspaceNode second)
     {
-        if (other.Kind == "ref" ||
-            !other.HasShape)
-        {
-            MessageBox.Show(
-                "第二输入必须是一个有图形的普通节点。",
-                "堆叠",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
-
-            return;
-        }
-
-        _store.SetReferenceTarget(slot.Id, other.Id);
-
-        NodeActionResult result = _store.ComputeStack(slot.Id);
+        NodeActionResult result = _store.ComputeStackOf(
+            first.Id,
+            second.Id,
+            baseIsTop: true);
 
         if (result.Node is null)
         {
@@ -705,51 +795,44 @@ public sealed class WorkspaceViewModel : ObservableObject
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
 
+            // 输入仍不完整时留在待选状态，方便换一个节点重试
             return;
         }
 
-        ShapeDocument? otherDocument = _store.GetEffectiveDocument(other);
+        ShapeDocument? secondDocument = _store.GetEffectiveDocument(second);
 
-        Rect otherBounds = WorkspaceLayout.BoundsFor(
-            other,
-            WorkspaceLayout.SizeFor(other, otherDocument, FallbackParts));
+        Rect secondBounds = WorkspaceLayout.BoundsFor(
+            second,
+            WorkspaceLayout.SizeFor(second, secondDocument, FallbackParts));
 
-        SetNodePosition(
-            result.Node,
-            otherBounds.Right + 80,
-            otherBounds.Top);
+        _store.SetNodePosition(
+            result.Node.Id,
+            secondBounds.Right + 80,
+            secondBounds.Top);
 
-        _stackSlotId = null;
+        _stackFirstId = null;
 
-        HintText = DefaultHint;
-
-        PersistPositions();
+        HintText = result.Created
+            ? "已生成堆叠结果。数据目录："
+            : $"{result.Message}数据目录：";
 
         _store.SelectNode(result.Node);
     }
 
     /// <summary>
-    /// 取消进行中的堆叠，并删掉尚未使用的输入槽。
+    /// 取消进行中的堆叠（Esc、再点“堆叠”或点画布空白处）。
+    /// 新流程不再创建 ref 槽位，因此这里只清状态。
     /// </summary>
     public void CancelStack()
     {
-        if (_stackSlotId is null)
+        if (_stackFirstId is null)
         {
             return;
         }
 
-        WorkspaceNode? slot = _store.FindNode(_stackSlotId);
-
-        _stackSlotId = null;
+        _stackFirstId = null;
 
         HintText = DefaultHint;
-
-        if (slot is not null &&
-            slot.Kind == "ref" &&
-            !slot.HasShape)
-        {
-            _store.DeleteNode(slot.Id);
-        }
     }
 
     private void CopySelected()
@@ -820,14 +903,9 @@ public sealed class WorkspaceViewModel : ObservableObject
             return;
         }
 
-        /*
-         * Core 当前没有 CreateNodeAtPoint；
-         * 用 CreateNode 建节点后直接写入 X/Y，
-         * ReplaceNodeShape 保存时会把坐标一起落盘。
-         */
-        WorkspaceNode node = _store.CreateNode();
-
-        SetNodePosition(node, 80, 80);
+        WorkspaceNode node = _store.CreateNodeAtPoint(
+            80,
+            80);
 
         node.Label = "素材节点";
 
