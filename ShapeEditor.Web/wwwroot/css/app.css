@@ -1885,3 +1885,7 @@ button {
     overflow-y: auto;
     max-height: none;
 }
+/* 节点高度用 border-box，保证脚本算出的高度与渲染高度一致 */
+.graph-node {
+    box-sizing: border-box;
+}
