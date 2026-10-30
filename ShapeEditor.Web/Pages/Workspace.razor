@@ -197,7 +197,7 @@
                         <div class="graph-node-body">
                             @if (NodeDocument(node) is ShapeDocument document)
                             {
-                                <pre class="ws-code">@string.Join("\n", ShapeText.Lines(document))</pre>
+                                <ShapePreview Document="document" CssClass="graph-preview" />
                                 <div class="ws-code-summary">@ShapeText.Summary(document)</div>
                             }
                             else if (node.Kind == "ref")

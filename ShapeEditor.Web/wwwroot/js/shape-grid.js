@@ -519,8 +519,8 @@ function drawCell(ctx, cell, x, y, width, height, theme) {
 
     ctx.fillText(
         cell.type === "crystal"
-            ? "晶"
-            : "图",
+            ? "c"
+            : "S",
         x + width / 2,
         y + height / 2);
 }
