@@ -1356,6 +1356,7 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
         const midY = y1 + dy * t + ny * offset;
 
         // 标签加白底，避免压线
+        if (!edge.label) { continue; }
         ctx.font = '400 12px "Microsoft YaHei", sans-serif';
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
@@ -1619,6 +1620,7 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
         const labelX = x1 + dx * t + nx * offset;
         const labelY = y1 + dy * t + ny * offset;
 
+        if (!edge.label) { continue; }
         ctx.font = '400 12px "Microsoft YaHei", sans-serif';
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";

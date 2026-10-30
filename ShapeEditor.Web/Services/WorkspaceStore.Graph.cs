@@ -314,14 +314,14 @@ public sealed partial class WorkspaceStore
             node,
             cut.West,
             westKey,
-            "切割西半",
+            "切割结果（东）",
             colOffset: -1);
 
         WorkspaceNode east = AddResultNode(
             node,
             cut.East,
             eastKey,
-            "切割东半",
+            "切割结果（西）",
             colOffset: 1);
 
         AddEdge(nodeId, west.Id, "切割西半边");

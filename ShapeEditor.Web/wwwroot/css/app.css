@@ -1802,3 +1802,22 @@ button {
         gap: 4px;
     }
 }
+.ws-code {
+    margin: 0;
+    padding: 6px;
+    max-height: 150px;
+    overflow: auto;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 12px;
+    line-height: 1.25;
+    color: #2B2B2B;
+    background: #FAF8FF;
+    border-radius: 6px;
+    white-space: pre;
+}
+
+.ws-code-summary {
+    margin-top: 4px;
+    font-size: 11px;
+    color: #6B6B76;
+}

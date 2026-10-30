@@ -175,12 +175,7 @@
 
                 @foreach (EdgeView edge in EdgeViews)
                 {
-                    <div class="graph-edge-label-html"
-                         style="left:@(edge.LabelX)px;top:@(edge.LabelY)px;"
-                         title="点击调整标签位置"
-                         @onclick="() => Store.CycleEdgeLabel(edge.FromId, edge.ToId)">
-                        @edge.Label
-                    </div>
+                    
                 }
 
                 @foreach (WorkspaceNode node in Store.Nodes)
@@ -202,7 +197,8 @@
                         <div class="graph-node-body">
                             @if (NodeDocument(node) is ShapeDocument document)
                             {
-                                <ShapePreview Document="document" CssClass="graph-preview" />
+                                <pre class="ws-code">@string.Join("\n", ShapeText.Lines(document))</pre>
+                                <div class="ws-code-summary">@ShapeText.Summary(document)</div>
                             }
                             else if (node.Kind == "ref")
                             {
