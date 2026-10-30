@@ -187,26 +187,14 @@
              @onpointerup="EndDrag"
              @onpointerleave="EndDrag">
 
-                <svg class="graph-edges" width="@CanvasWidth" height="@CanvasHeight">
-                    <defs>
-                        <marker id="arrow" markerWidth="10" markerHeight="10"
-                                refX="8" refY="3" orient="auto">
-                            <path d="M0,0 L0,6 L9,3 z" fill="#512bd4" />
-                        </marker>
-                    </defs>
-
+                <svg class="graph-arrows" width="@CanvasWidth" height="@CanvasHeight">
                     @foreach (EdgeView edge in EdgeViews)
                     {
                         <path d="@edge.Path"
                               fill="none"
                               stroke="#512bd4"
                               stroke-width="2" />
-                    }
-                </svg>
 
-                <svg class="graph-arrows" width="@CanvasWidth" height="@CanvasHeight">
-                    @foreach (EdgeView edge in EdgeViews)
-                    {
                         <polygon points="@edge.Arrow" fill="#512bd4" />
                     }
                 </svg>
