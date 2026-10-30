@@ -1300,10 +1300,10 @@ window.shapeGrid.downloadGraph = async function (payload, fileName) {
     ctx.fillRect(0, 0, width, height);
 
 function edgeAnchor(node, other) {
-        const cx = nodeLeft(node) + NODE_W / 2;
+        const cx = nodeLeft(node) + (node._w || NODE_W) / 2;
         const cy = nodeTop(node) + (node._height || NODE_H) / 2;
 
-        const ox = nodeLeft(other) + NODE_W / 2;
+        const ox = nodeLeft(other) + (other._w || NODE_W) / 2;
         const oy = nodeTop(other) + (other._height || NODE_H) / 2;
 
         let dx = ox - cx;
@@ -1317,7 +1317,7 @@ function edgeAnchor(node, other) {
         dx /= len;
         dy /= len;
 
-        const hw = NODE_W / 2;
+        const hw = (node._w || NODE_W) / 2;
         const hh = (node._height || NODE_H) / 2;
 
         const sx = Math.abs(dx) < 1e-6 ? Number.MAX_VALUE : hw / Math.abs(dx);
@@ -1717,9 +1717,9 @@ const width = bounds.maxX - bounds.minX + PAD * 2;
     function nodeLeft(node) { return PAD + rawLeft(node) - bounds.minX; }
     function nodeTop(node) { return PAD + rawTop(node) - bounds.minY; }
     function edgeAnchor(node, other) {
-        const cx = nodeLeft(node) + NODE_W / 2;
+        const cx = nodeLeft(node) + (node._w || NODE_W) / 2;
         const cy = nodeTop(node) + (node._height || 220) / 2;
-        const ox = nodeLeft(other) + NODE_W / 2;
+        const ox = nodeLeft(other) + (other._w || NODE_W) / 2;
         const oy = nodeTop(other) + (other._height || 220) / 2;
 
         let dx = ox - cx;
@@ -1733,7 +1733,7 @@ const width = bounds.maxX - bounds.minX + PAD * 2;
         dx /= len;
         dy /= len;
 
-        const hw = NODE_W / 2;
+        const hw = (node._w || NODE_W) / 2;
         const hh = (node._height || 220) / 2;
         const sx = Math.abs(dx) < 1e-6 ? Number.MAX_VALUE : hw / Math.abs(dx);
         const sy = Math.abs(dy) < 1e-6 ? Number.MAX_VALUE : hh / Math.abs(dy);
