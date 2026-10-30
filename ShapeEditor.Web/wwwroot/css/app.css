@@ -1387,7 +1387,9 @@ button {
 
 .graph-edges {
     position: absolute;
-    inset: 0;
+    left: 0;
+    top: 0;
+    z-index: 0;
     pointer-events: none;
 }
 
@@ -1892,7 +1894,8 @@ button {
 /* 连线层压到节点之上（节点本身不拦截指针），彻底避免箭头被卡片遮挡 */
 .graph-canvas > svg {
     position: absolute;
-    inset: 0;
+    left: 0;
+    top: 0;
 }
 
 .graph-node {
@@ -1901,14 +1904,16 @@ button {
 }
 .graph-edges {
     position: absolute;
-    inset: 0;
+    left: 0;
+    top: 0;
     z-index: 0;
     pointer-events: none;
 }
 
 .graph-arrows {
     position: absolute;
-    inset: 0;
+    left: 0;
+    top: 0;
     z-index: 5;
     pointer-events: none;
 }
