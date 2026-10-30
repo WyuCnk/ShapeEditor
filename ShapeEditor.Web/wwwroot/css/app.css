@@ -1889,3 +1889,14 @@ button {
 .graph-node {
     box-sizing: border-box;
 }
+/* 连线层压到节点之上（节点本身不拦截指针），彻底避免箭头被卡片遮挡 */
+.graph-canvas > svg {
+    position: relative;
+    z-index: 5;
+    pointer-events: none;
+}
+
+.graph-node {
+    position: absolute;
+    z-index: 1;
+}
