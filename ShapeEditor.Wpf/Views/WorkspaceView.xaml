@@ -218,10 +218,6 @@
                      VerticalContentAlignment="Center"
                      Text="{Binding MaxLayers, UpdateSourceTrigger=LostFocus}" />
 
-            <Button Style="{StaticResource MiniButton}"
-                    Content="新建节点"
-                    Command="{Binding NewNodeCommand}"
-                    Margin="0,0,4,0" />
 
             <Button Style="{StaticResource MiniButton}"
                     Content="导出图片"

@@ -110,12 +110,6 @@
                    Keyboard="Numeric"
                    Completed="OnMaxLayersChanged" />
 
-            <Button Text="新建节点"
-                    FontSize="12"
-                    HeightRequest="32"
-                    CornerRadius="8"
-                    Clicked="OnCreateNode" />
-
             <Button Text="导出图片"
                     FontSize="12"
                     HeightRequest="32"
