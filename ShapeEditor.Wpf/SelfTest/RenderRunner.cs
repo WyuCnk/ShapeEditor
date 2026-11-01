@@ -27,6 +27,13 @@ public static class RenderRunner
     {
         try
         {
+            // 自检期间不要因为窗口关闭而结束应用，否则后续创建视图会失败
+            if (System.Windows.Application.Current is not null)
+            {
+                System.Windows.Application.Current.ShutdownMode =
+                    System.Windows.ShutdownMode.OnExplicitShutdown;
+            }
+
             Directory.CreateDirectory(outputDirectory);
 
             ShapeDocument document = CreateSampleDocument();
