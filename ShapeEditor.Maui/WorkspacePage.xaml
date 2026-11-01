@@ -79,6 +79,14 @@
                         CornerRadius="8"
                         IsEnabled="False"
                         Clicked="OnDeleteNode" />
+
+                <Button x:Name="AutoLayoutButton"
+                        Text="自动布局"
+                        FontSize="12"
+                        HeightRequest="32"
+                        CornerRadius="8"
+                        IsEnabled="False"
+                        Clicked="OnAutoLayout" />
             </HorizontalStackLayout>
         </ScrollView>
 

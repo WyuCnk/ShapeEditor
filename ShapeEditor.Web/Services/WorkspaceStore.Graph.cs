@@ -821,6 +821,53 @@ public sealed partial class WorkspaceStore
     }
 
     /// <summary>
+    /// 按依赖关系重新排列所有节点。
+    ///
+    /// 排布计算与 Core 共用 <see cref="ShapeEditor.Core.Workspaces.WorkspaceStore.PlanAutoLayout"/>，
+    /// 保证三端结果一致；坐标吸附到 10px 网格后统一落盘。
+    /// 返回坐标真正发生变化的节点数。
+    /// </summary>
+    public int AutoLayout()
+    {
+        if (_nodes.Count == 0)
+        {
+            return 0;
+        }
+
+        IReadOnlyDictionary<string, (double X, double Y)> plan =
+            ShapeEditor.Core.Workspaces.WorkspaceStore.PlanAutoLayout(
+                _nodes,
+                _edges);
+
+        int moved = 0;
+
+        foreach (WorkspaceNode node in _nodes)
+        {
+            if (!plan.TryGetValue(node.Id, out (double X, double Y) point))
+            {
+                continue;
+            }
+
+            double x = Math.Round(point.X / 10) * 10;
+
+            double y = Math.Round(point.Y / 10) * 10;
+
+            if (node.X != x || node.Y != y)
+            {
+                moved++;
+            }
+
+            node.X = x;
+            node.Y = y;
+        }
+
+        PersistGraph();
+        Changed?.Invoke();
+
+        return moved;
+    }
+
+    /// <summary>
     /// 把旧的「堆叠输入」槽节点折叠成结果节点的两个输入，然后删除槽节点。
     /// 迁移在加载时执行一次，属性变更后自动持久化。
     /// </summary>

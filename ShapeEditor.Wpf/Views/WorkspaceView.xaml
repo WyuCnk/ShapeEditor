@@ -178,6 +178,12 @@
                     Command="{Binding DeleteNodeCommand}"
                     CommandParameter="{Binding SelectedNode}"
                     IsEnabled="{Binding HasSelectedNode}" />
+
+            <Button Style="{StaticResource MiniButton}"
+                    Content="自动布局"
+                    ToolTip="按依赖关系重新排列所有节点"
+                    Command="{Binding AutoLayoutCommand}"
+                    IsEnabled="{Binding HasNodes}" />
         </WrapPanel>
 
         <!-- 工具行 -->

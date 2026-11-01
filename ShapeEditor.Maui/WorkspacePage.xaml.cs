@@ -138,6 +138,9 @@ public partial class WorkspacePage : ContentPage
         CopyButton.IsEnabled = hasSelection;
         DeleteButton.IsEnabled = hasSelection;
 
+        // 自动布局不依赖选中项，只要画布上有节点就可用
+        AutoLayoutButton.IsEnabled = _store is not null && _store.Nodes.Count > 0;
+
         // 粘贴还需要剪贴板里有内容
         PasteButton.IsEnabled = hasSelection && _clipboard is not null;
     }
@@ -1178,6 +1181,24 @@ public partial class WorkspacePage : ContentPage
         EventArgs e)
     {
         _store!.CreateNode();
+    }
+
+    /// <summary>
+    /// 按依赖关系重新排列所有节点；Store 会落盘并触发一次重绘，
+    /// 这里再显式 Render 一次，保证坐标与卡片位置立即同步。
+    /// </summary>
+    private void OnAutoLayout(
+        object? sender,
+        EventArgs e)
+    {
+        if (_store is null)
+        {
+            return;
+        }
+
+        _store.AutoLayout();
+
+        Render();
     }
 
     private void OnToggleMode(

@@ -1954,3 +1954,14 @@ button {
 .workspace-page:focus {
     outline: none;
 }
+
+/*
+ * 节点宽高由 Workspace.razor 的 NodeStyle 内联计算：
+ * 宽 = 象限数 × 30 + 16，高 = 50 + 层数 × 30。
+ * 这里不再写死宽高，只允许预览区纵向滚动，避免边框差值撑出横向滚动条。
+ */
+.graph-node-body {
+    min-width: 0;
+    min-height: 0;
+    overflow-x: hidden;
+}

@@ -629,6 +629,351 @@ public sealed class WorkspaceStore
 
     #endregion
 
+    #region 自动布局
+
+    /// <summary>自动布局的节点宽度基数：象限数 × 30 + 16。</summary>
+    private const double LayoutCellSize = 30;
+
+    /// <summary>自动布局的节点左右留白合计。</summary>
+    private const double LayoutHorizontalPadding = 16;
+
+    /// <summary>自动布局的节点标题区高度。</summary>
+    private const double LayoutHeaderHeight = 50;
+
+    /// <summary>同一行相邻节点之间的空隙。</summary>
+    private const double LayoutColumnGap = 40;
+
+    /// <summary>相邻两行之间的额外空隙。</summary>
+    private const double LayoutRowGap = 64;
+
+    /// <summary>整张图左上角的留白。</summary>
+    private const double LayoutMargin = 24;
+
+    /// <summary>
+    /// 按依赖关系重新排列画布上的所有节点。
+    ///
+    /// 行号取节点到根节点的最长路径；同一行按父节点平均 X 排序后横向排开，
+    /// 每行再整体居中。有环时按 Seq 顺序强行断边，保证不会死循环。
+    /// 坐标写回前吸附到 10px 网格，返回真正移动了的节点数。
+    /// </summary>
+    public int AutoLayout()
+    {
+        WorkspaceProject project = EnsureActive();
+
+        if (project.Nodes.Count == 0)
+        {
+            return 0;
+        }
+
+        IReadOnlyDictionary<string, (double X, double Y)> plan =
+            PlanAutoLayout(project.Nodes, project.Edges);
+
+        int moved = 0;
+
+        foreach (WorkspaceNode node in project.Nodes)
+        {
+            if (!plan.TryGetValue(node.Id, out (double X, double Y) point))
+            {
+                continue;
+            }
+
+            double x = SnapToGrid(point.X);
+
+            double y = SnapToGrid(point.Y);
+
+            if (node.X != x || node.Y != y)
+            {
+                moved++;
+            }
+
+            node.X = x;
+            node.Y = y;
+        }
+
+        Save();
+        Changed?.Invoke();
+
+        return moved;
+    }
+
+    /// <summary>
+    /// 计算自动布局坐标，但不修改节点。
+    ///
+    /// Web 端的 WorkspaceStore 是另一套实现，页面复用这份计算后再自行落盘，
+    /// 这样三端得到的是同一套排布结果。返回值里的坐标已经按 10px 吸附。
+    /// </summary>
+    public static IReadOnlyDictionary<string, (double X, double Y)> PlanAutoLayout(
+        IReadOnlyList<WorkspaceNode> nodes,
+        IReadOnlyList<WorkspaceEdge> edges)
+    {
+        var plan = new Dictionary<string, (double X, double Y)>();
+
+        if (nodes.Count == 0)
+        {
+            return plan;
+        }
+
+        /*
+         * Seq 既提供稳定的排放顺序，也是遇到环时强行断边的兜底依据。
+         */
+        List<WorkspaceNode> ordered = nodes
+            .OrderBy(node => node.Seq)
+            .ThenBy(node => node.Id, StringComparer.Ordinal)
+            .ToList();
+
+        var byId = ordered.ToDictionary(node => node.Id);
+
+        var children = ordered.ToDictionary(
+            node => node.Id,
+            _ => new List<string>());
+
+        var parents = ordered.ToDictionary(
+            node => node.Id,
+            _ => new List<string>());
+
+        var seenEdges = new HashSet<(string FromId, string ToId)>();
+
+        foreach (WorkspaceEdge edge in edges)
+        {
+            if (!byId.ContainsKey(edge.FromId) ||
+                !byId.ContainsKey(edge.ToId) ||
+                edge.FromId == edge.ToId)
+            {
+                continue;
+            }
+
+            // 同方向的重复边只算一次，否则入度会被多减
+            if (!seenEdges.Add((edge.FromId, edge.ToId)))
+            {
+                continue;
+            }
+
+            children[edge.FromId].Add(edge.ToId);
+
+            parents[edge.ToId].Add(edge.FromId);
+        }
+
+        var remaining = new HashSet<string>(ordered.Select(node => node.Id));
+
+        var indegree = ordered.ToDictionary(
+            node => node.Id,
+            node => parents[node.Id].Count);
+
+        var depth = ordered.ToDictionary(node => node.Id, _ => 0);
+
+        while (remaining.Count > 0)
+        {
+            /*
+             * 优先取入度为 0 且 Seq 最小的节点；
+             * 一个都找不到说明还有环：同样按 Seq 取一个强行处理，
+             * 等价于忽略指向它的回边。
+             */
+            string? picked = PickLowestSeq(
+                remaining.Where(id => indegree[id] == 0),
+                byId) ?? PickLowestSeq(remaining, byId);
+
+            if (picked is null)
+            {
+                break;
+            }
+
+            string current = picked;
+
+            remaining.Remove(current);
+
+            foreach (string childId in children[current])
+            {
+                if (!remaining.Contains(childId))
+                {
+                    // 子节点已经处理过，这条边是回边，直接忽略
+                    continue;
+                }
+
+                depth[childId] = Math.Max(depth[childId], depth[current] + 1);
+
+                indegree[childId] = Math.Max(0, indegree[childId] - 1);
+            }
+        }
+
+        int maxDepth = depth.Values.Max();
+
+        var layers = new List<List<WorkspaceNode>>();
+
+        for (int index = 0; index <= maxDepth; index++)
+        {
+            layers.Add(new List<WorkspaceNode>());
+        }
+
+        foreach (WorkspaceNode node in ordered)
+        {
+            layers[depth[node.Id]].Add(node);
+        }
+
+        var sizes = ordered.ToDictionary(node => node.Id, MeasureNode);
+
+        // 先按 0 为起点算行内坐标，最后再加居中偏移
+        var raw = new Dictionary<string, (double X, double Y)>();
+
+        var rowWidths = new Dictionary<int, double>();
+
+        var rowHeights = new Dictionary<int, double>();
+
+        for (int layerIndex = 0; layerIndex < layers.Count; layerIndex++)
+        {
+            List<WorkspaceNode> row = layers[layerIndex];
+
+            if (row.Count == 0)
+            {
+                continue;
+            }
+
+            var sortKeys = row.ToDictionary(
+                node => node.Id,
+                node => ParentMeanX(node, parents, raw));
+
+            row.Sort((left, right) =>
+            {
+                int compare = sortKeys[left.Id].CompareTo(sortKeys[right.Id]);
+
+                if (compare != 0)
+                {
+                    return compare;
+                }
+
+                compare = left.Seq.CompareTo(right.Seq);
+
+                return compare != 0
+                    ? compare
+                    : string.CompareOrdinal(left.Id, right.Id);
+            });
+
+            double x = 0;
+
+            double height = 0;
+
+            foreach (WorkspaceNode node in row)
+            {
+                (double width, double nodeHeight) = sizes[node.Id];
+
+                raw[node.Id] = (x, 0);
+
+                x += width + LayoutColumnGap;
+
+                height = Math.Max(height, nodeHeight);
+            }
+
+            rowWidths[layerIndex] = Math.Max(0, x - LayoutColumnGap);
+
+            rowHeights[layerIndex] = height;
+        }
+
+        double maxRowWidth = rowWidths.Count == 0 ? 0 : rowWidths.Values.Max();
+
+        double top = LayoutMargin;
+
+        for (int layerIndex = 0; layerIndex < layers.Count; layerIndex++)
+        {
+            if (!rowWidths.TryGetValue(layerIndex, out double rowWidth))
+            {
+                continue;
+            }
+
+            // 整行水平居中：窄行的左右留白相等
+            double left = LayoutMargin + (maxRowWidth - rowWidth) / 2;
+
+            foreach (WorkspaceNode node in layers[layerIndex])
+            {
+                (double x, _) = raw[node.Id];
+
+                raw[node.Id] = (x + left, top);
+            }
+
+            top += rowHeights[layerIndex] + LayoutRowGap;
+        }
+
+        foreach (KeyValuePair<string, (double X, double Y)> entry in raw)
+        {
+            plan[entry.Key] = (
+                SnapToGrid(entry.Value.X),
+                SnapToGrid(entry.Value.Y));
+        }
+
+        return plan;
+    }
+
+    /// <summary>
+    /// 节点占位尺寸：宽 = 象限数 × 30 + 16，高 = 50 + 层数 × 30。
+    /// 没有图形的节点按 4 象限、1 个空层处理，宽 136、高 80。
+    /// </summary>
+    private static (double Width, double Height) MeasureNode(
+        WorkspaceNode node)
+    {
+        int parts = node.HasShape ? node.Parts : 4;
+
+        int layers = node.HasShape ? Math.Max(1, node.Layers) : 1;
+
+        return (
+            parts * LayoutCellSize + LayoutHorizontalPadding,
+            LayoutHeaderHeight + layers * LayoutCellSize);
+    }
+
+    /// <summary>
+    /// 行内排序键：父节点平均 X；没有父节点时退回节点自己的 Seq。
+    /// </summary>
+    private static double ParentMeanX(
+        WorkspaceNode node,
+        IReadOnlyDictionary<string, List<string>> parents,
+        IReadOnlyDictionary<string, (double X, double Y)> positions)
+    {
+        double sum = 0;
+
+        int count = 0;
+
+        foreach (string parentId in parents[node.Id])
+        {
+            if (positions.TryGetValue(parentId, out (double X, double Y) parent))
+            {
+                sum += parent.X;
+
+                count++;
+            }
+        }
+
+        return count == 0 ? node.Seq : sum / count;
+    }
+
+    /// <summary>
+    /// 按 Seq（再按 Id）取最小的节点 Id。
+    /// </summary>
+    private static string? PickLowestSeq(
+        IEnumerable<string> ids,
+        IReadOnlyDictionary<string, WorkspaceNode> byId)
+    {
+        string? result = null;
+
+        foreach (string id in ids)
+        {
+            if (result is null ||
+                byId[id].Seq < byId[result].Seq ||
+                (byId[id].Seq == byId[result].Seq &&
+                 string.CompareOrdinal(id, result) < 0))
+            {
+                result = id;
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>按 10px 网格吸附。</summary>
+    private static double SnapToGrid(
+        double value)
+    {
+        return Math.Round(value / 10) * 10;
+    }
+
+    #endregion
+
     #region 运算
 
     public NodeActionResult ApplyCollapse(

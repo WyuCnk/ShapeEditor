@@ -42,6 +42,10 @@
 
             <button class="mini-button" disabled="@(Store.SelectedNode is null)"
                     @onclick="BeginStackFromToolbar">堆叠</button>
+
+            <button class="mini-button"
+                    disabled="@(Store.Nodes.Count == 0)"
+                    @onclick="AutoLayout">自动布局</button>
         </div>
         @if (_stackHint is not null)
         {
@@ -330,14 +334,14 @@
             1200,
             Store.Nodes.Count == 0
                 ? 0
-                : Store.Nodes.Max(node => NodeX(node)) + NodeWidth + 400));
+                : Store.Nodes.Max(node => NodeX(node) + NodeWidthOf(node)) + 400));
 
     private int CanvasHeight =>
         Quantize(Math.Max(
             800,
             Store.Nodes.Count == 0
                 ? 0
-                : Store.Nodes.Max(node => NodeY(node)) + NodeHeight + 400));
+                : Store.Nodes.Max(node => NodeY(node) + NodeHeightOf(node)) + 400));
 
     private static int Quantize(double value) =>
         (int)(Math.Ceiling(value / 200) * 200);
@@ -348,7 +352,8 @@
     private string NodeStyle(WorkspaceNode node) =>
         $"left:{NodeX(node)}px;" +
         $"top:{NodeY(node)}px;" +
-        $"width:{NodeWidth}px;";
+        $"width:{NodeWidthOf(node)}px;" +
+        $"height:{NodeHeightOf(node)}px;";
 
     private static int NodeCenterX(WorkspaceNode node) =>
         20 + node.Col * CellWidth + NodeWidth / 2;
@@ -697,30 +702,20 @@
     /// <summary>
     /// 计算矩形边界上朝向另一节点的锚点。
     /// </summary>
-    /// <summary>节点实际高度：标题 + 最多 20 行预览。</summary>
-    /// <summary>节点宽度：象限数 × 20 + 内边距。</summary>
+    /// <summary>节点宽度：象限数 × 30 + 16，与自动布局的占位尺寸一致。</summary>
     private double NodeWidthOf(WorkspaceNode node)
     {
-        int parts = NodeDocument(node)?.PartCount ?? 12;
+        int parts = node.HasShape ? node.Parts : 4;
 
         return parts * CellSize + 16;
     }
 
+    /// <summary>节点高度：50 + 层数 × 30；没有图形时按 1 个空层处理。</summary>
     private double NodeHeightOf(WorkspaceNode node)
     {
-        int rows = 6;
+        int layers = node.HasShape ? Math.Max(1, node.Layers) : 1;
 
-        if (NodeDocument(node) is ShapeDocument document)
-        {
-            rows = Math.Max(document.LayerCount, 1);
-        }
-
-        if (_measuredHeight.TryGetValue(node.Id, out double measured) && measured > 20)
-        {
-            return measured;
-        }
-
-        return 54 + rows * 20;
+        return 50 + layers * CellSize;
     }
     private (double X, double Y) EdgeAnchor(
         WorkspaceNode node,
@@ -1136,6 +1131,15 @@
             "清空画布",
             "将删除画布上的所有节点，素材列表不受影响。",
             () => Store.ClearGraph());
+    }
+
+    /// <summary>
+    /// 按依赖关系重新排列所有节点；布局与落盘都由 Store 完成，
+    /// Changed 事件会触发页面重绘。
+    /// </summary>
+    private void AutoLayout()
+    {
+        Store.AutoLayout();
     }
 
     private async Task ExportGraph()

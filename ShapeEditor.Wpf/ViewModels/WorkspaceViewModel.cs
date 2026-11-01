@@ -73,6 +73,7 @@ public sealed class WorkspaceViewModel : ObservableObject
         CopyCommand = new RelayCommand(_ => CopySelected());
         PasteCommand = new RelayCommand(_ => PasteClipboard());
         DeleteNodeCommand = new RelayCommand(p => DeleteNode(p));
+        AutoLayoutCommand = new RelayCommand(_ => AutoLayout());
         SelectNodeCommand = new RelayCommand(p => SelectNode(p));
 
         NewNodeCommand = new RelayCommand(() => _store.CreateNode());
@@ -106,6 +107,8 @@ public sealed class WorkspaceViewModel : ObservableObject
     public System.Windows.Input.ICommand PasteCommand { get; }
 
     public System.Windows.Input.ICommand DeleteNodeCommand { get; }
+
+    public System.Windows.Input.ICommand AutoLayoutCommand { get; }
 
     public System.Windows.Input.ICommand SelectNodeCommand { get; }
 
@@ -169,6 +172,9 @@ public sealed class WorkspaceViewModel : ObservableObject
     }
 
     public bool HasSelectedNode => _selectedNode is not null;
+
+    /// <summary>画布上是否有节点；没有节点时禁用自动布局。</summary>
+    public bool HasNodes => Nodes.Count > 0;
 
     /// <summary>
     /// 是否正在等待堆叠的第二个输入。
@@ -330,6 +336,7 @@ public sealed class WorkspaceViewModel : ObservableObject
 
         BuildNodes();
 
+        OnPropertyChanged(nameof(HasNodes));
         OnPropertyChanged(nameof(MaxLayers));
         OnPropertyChanged(nameof(IsCycleMode));
         OnPropertyChanged(nameof(IsFloorMode));
@@ -746,6 +753,18 @@ public sealed class WorkspaceViewModel : ObservableObject
         }
 
         _store.DeleteNode(node.Id);
+    }
+
+    /// <summary>
+    /// 按依赖关系重新排列所有节点；坐标由 Store 落盘，Changed 会触发重绘。
+    /// </summary>
+    private void AutoLayout()
+    {
+        int moved = _store.AutoLayout();
+
+        HintText = moved > 0
+            ? $"已自动布局，移动 {moved} 个节点。数据目录："
+            : "已自动布局，节点位置没有变化。数据目录：";
     }
 
     #endregion
