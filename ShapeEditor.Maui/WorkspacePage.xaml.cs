@@ -285,15 +285,37 @@ public partial class WorkspacePage : ContentPage
 
             border.GestureRecognizers.Add(tap);
 
-            // 双击：在 (80, 80) 新建节点并导入该素材
-            var doubleTap = new TapGestureRecognizer
+            // 加号按钮：在 (80, 80) 新建节点并导入该素材。
+            // 用按钮代替双击手势，避免 Android 上多个手势识别器冲突导致闪退。
+            var add = new Button
             {
-                NumberOfTapsRequired = 2
+                Text = "+",
+                FontSize = 14,
+                WidthRequest = 26,
+                HeightRequest = 26,
+                Padding = 0,
+                CornerRadius = 13,
+                BackgroundColor = Accent,
+                TextColor = Colors.White,
+                HorizontalOptions = LayoutOptions.End,
+                VerticalOptions = LayoutOptions.End
             };
 
-            doubleTap.Tapped += (_, _) => Dispatcher.Dispatch(() => ImportMaterial(captured, 80, 80));
+            add.Clicked += (_, _) => Dispatcher.Dispatch(() => ImportMaterial(captured, 80, 80));
 
-            border.GestureRecognizers.Add(doubleTap);
+            // 把卡片原有内容与加号按钮叠放在一个 Grid 里
+            var host = new Grid();
+
+            if (border.Content is View existing)
+            {
+                border.Content = null;
+
+                host.Add(existing);
+            }
+
+            host.Add(add);
+
+            border.Content = host;
 
             // 拖拽：MAUI 的 DragGestureRecognizer 没有 Data 属性，
             // 素材 Id 通过 DragStarting 的数据包（Properties + Text）交给画布
