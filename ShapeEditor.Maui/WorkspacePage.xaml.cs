@@ -90,12 +90,42 @@ public partial class WorkspacePage : ContentPage
 
     #region 渲染
 
+    private bool _rendering;
+
     private void Render()
     {
-        if (_store is null)
+        if (_store is null || _rendering)
         {
             return;
         }
+
+        _rendering = true;
+
+        try
+        {
+            RenderCore();
+        }
+        catch (Exception exception)
+        {
+            // 渲染异常写日志，避免直接把 App 打崩
+            try
+            {
+                File.AppendAllText(
+                    Path.Combine(FileSystem.AppDataDirectory, "workspace-error.log"),
+                    DateTime.Now + " " + exception + Environment.NewLine);
+            }
+            catch
+            {
+            }
+        }
+        finally
+        {
+            _rendering = false;
+        }
+    }
+
+    private void RenderCore()
+    {
 
         RenderTabs();
         RenderMaterials();
@@ -261,7 +291,7 @@ public partial class WorkspacePage : ContentPage
                 NumberOfTapsRequired = 2
             };
 
-            doubleTap.Tapped += (_, _) => ImportMaterial(captured, 80, 80);
+            doubleTap.Tapped += (_, _) => Dispatcher.Dispatch(() => ImportMaterial(captured, 80, 80));
 
             border.GestureRecognizers.Add(doubleTap);
 
@@ -735,6 +765,21 @@ public partial class WorkspacePage : ContentPage
     /// 象限数不符时只提示，不创建节点。
     /// </summary>
     private void ImportMaterial(
+        WorkspaceItem item,
+        double x,
+        double y)
+    {
+        try
+        {
+            ImportMaterialCore(item, x, y);
+        }
+        catch (Exception exception)
+        {
+            Show("导入失败：" + exception.Message);
+        }
+    }
+
+    private void ImportMaterialCore(
         WorkspaceItem item,
         double x,
         double y)
