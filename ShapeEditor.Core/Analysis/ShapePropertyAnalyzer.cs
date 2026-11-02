@@ -33,7 +33,10 @@ public enum ShapeProperty
     Stable = 1 << 7,
 
     /// <summary>存在合法的交换方向。</summary>
-    Exchangeable = 1 << 8
+    Exchangeable = 1 << 8,
+
+    /// <summary>含循环支撑结构（仅在含循环支撑规则下成立）。</summary>
+    CycleSupported = 1 << 9
 }
 
 /// <summary>
@@ -44,7 +47,8 @@ public static class ShapePropertyAnalyzer
     public static ShapeProperty Analyze(
         Models.ShapeDocument document,
         bool isStable,
-        bool isExchangeable)
+        bool isExchangeable,
+        Physics.CollapseMode mode = Physics.CollapseMode.IncludeCycles)
     {
         ShapeProperty properties = ShapeProperty.None;
 
@@ -159,6 +163,28 @@ public static class ShapePropertyAnalyzer
             properties |= ShapeProperty.Exchangeable;
         }
 
+        // 含循环支撑结构：两种规则下落后结果不同，说明有部件靠循环支撑站住
+        if (mode == Physics.CollapseMode.IncludeCycles)
+        {
+            Models.ShapeDocument? withCycles = Physics.ShapePhysics
+                .Collapse(document, Physics.CollapseMode.IncludeCycles)
+                .Document;
+
+            Models.ShapeDocument? floorOnly = Physics.ShapePhysics
+                .Collapse(document, Physics.CollapseMode.FloorOnly)
+                .Document;
+
+            if (withCycles is not null && floorOnly is not null)
+            {
+                var exporter = new Services.ShortCodeExporter();
+
+                if (exporter.Export(withCycles) != exporter.Export(floorOnly))
+                {
+                    properties |= ShapeProperty.CycleSupported;
+                }
+            }
+        }
+
         return properties;
     }
 
@@ -177,6 +203,7 @@ public static class ShapePropertyAnalyzer
             ShapeProperty.MixedCrystalColorsSameLayer => "同层异色晶体",
             ShapeProperty.Stable => "稳定",
             ShapeProperty.Exchangeable => "可交换",
+            ShapeProperty.CycleSupported => "循环支撑结构",
             _ => property.ToString()
         };
     }

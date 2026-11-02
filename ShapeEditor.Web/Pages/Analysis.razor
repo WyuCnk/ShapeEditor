@@ -196,6 +196,7 @@
         ShapeProperty.GapBelowCrystal,
         ShapeProperty.MixedCrystalColorsSameLayer,
         ShapeProperty.Stable,
+        ShapeProperty.CycleSupported,
         ShapeProperty.Exchangeable
     };
 
@@ -215,7 +216,8 @@
             _properties = ShapePropertyAnalyzer.Analyze(
                 _document,
                 _analysis?.IsStable ?? false,
-                _half?.IsExchangeable ?? false);
+                _half?.IsExchangeable ?? false,
+                mode);
         }
     }
 
@@ -254,6 +256,7 @@
         _properties = ShapePropertyAnalyzer.Analyze(
             _document,
             _analysis?.IsStable ?? false,
-            _half?.IsExchangeable ?? false);
+            _half?.IsExchangeable ?? false,
+            _mode);
     }
 }

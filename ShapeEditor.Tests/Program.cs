@@ -100,6 +100,7 @@ internal static class Program
             ("分析:悬空形状不可交换", AnalysisTests.HalfStabilityRejectsFloatingShape),
             ("分析:性质-间隙", AnalysisTests.PropertiesDetectGaps),
             ("分析:性质-晶下间隙", AnalysisTests.PropertiesDetectCrystalGap),
+            ("分析:性质-循环支撑", AnalysisTests.PropertiesMarkCycleSupport),
             ("工作区:素材跨工作区共享", WorkspaceStorePersistenceTests.MaterialSurvivesNewProject),
             ("物理:堆叠拒绝不同象限数", PhysicsTests.StackRejectsDifferentPartCount),
             ("物理:堆叠清晶并使用上限", PhysicsTests.StackClearsTopCrystalsAndUsesLimit),

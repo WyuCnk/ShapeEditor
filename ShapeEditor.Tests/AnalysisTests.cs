@@ -203,6 +203,33 @@ internal static class AnalysisTests
         Assert.True((properties & ShapeProperty.GapBelowCrystal) != 0);
         Assert.True((properties & ShapeProperty.Stable) == 0);
     }
+    public static void PropertiesMarkCycleSupport()
+    {
+        var parser = new ShapeEditor.Core.Services.ShortCodeParser();
+
+        var parsed = parser.Parse(
+            "------Cu:--------:----Cucr:----P-cr:----Cucr",
+            5,
+            4);
+
+        Assert.True(parsed.Success);
+
+        ShapeProperty withCycles = ShapePropertyAnalyzer.Analyze(
+            parsed.Document!,
+            false,
+            false,
+            ShapeEditor.Core.Physics.CollapseMode.IncludeCycles);
+
+        Assert.True((withCycles & ShapeProperty.CycleSupported) != 0);
+
+        ShapeProperty floorOnly = ShapePropertyAnalyzer.Analyze(
+            parsed.Document!,
+            false,
+            false,
+            ShapeEditor.Core.Physics.CollapseMode.FloorOnly);
+
+        Assert.True((floorOnly & ShapeProperty.CycleSupported) == 0);
+    }
     public static void AnalyzeReportsPerAngle()
     {
         var document = new ShapeDocument(2, 2);
