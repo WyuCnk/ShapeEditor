@@ -230,6 +230,36 @@ internal static class AnalysisTests
 
         Assert.True((floorOnly & ShapeProperty.CycleSupported) == 0);
     }
+    public static void ExchangeKeepsPartCount()
+    {
+        var first = new ShapeDocument(2, 4);
+        var second = new ShapeDocument(2, 4);
+
+        for (int layer = 0; layer < 2; layer++)
+        {
+            for (int part = 0; part < 4; part++)
+            {
+                first[layer, part] = ShapeCell.Shape('C', 'u');
+                second[layer, part] = ShapeCell.Crystal('r');
+            }
+        }
+
+        var result = ShapeExchange.Exchange(first, second);
+
+        Assert.True(result.Error is null);
+        Assert.Equal(4, result.First!.PartCount);
+        Assert.Equal(4, result.Second!.PartCount);
+    }
+
+    public static void ExchangeRejectsDifferentPartCount()
+    {
+        var first = new ShapeDocument(2, 4);
+        var second = new ShapeDocument(2, 6);
+
+        var result = ShapeExchange.Exchange(first, second);
+
+        Assert.True(result.Error is not null);
+    }
     public static void AnalyzeReportsPerAngle()
     {
         var document = new ShapeDocument(2, 2);
