@@ -2116,3 +2116,16 @@ button {
     columns: 2;
     column-gap: 24px;
 }
+.property-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.property-chip {
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: #efeaf9;
+    color: #4527a0;
+    font-size: 12px;
+}

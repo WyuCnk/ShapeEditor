@@ -164,6 +164,45 @@ internal static class AnalysisTests
 
         Assert.False(result.IsExchangeable);
     }
+    public static void PropertiesDetectGaps()
+    {
+        var document = new ShapeDocument(4, 2);
+
+        document[0, 0] = ShapeCell.Shape('C', 'u');
+        document[1, 0] = ShapeCell.Empty();
+        document[2, 0] = ShapeCell.Shape('C', 'u');
+        document[3, 0] = ShapeCell.Crystal('r');
+
+        document[0, 1] = ShapeCell.Pin();
+        document[1, 1] = ShapeCell.Shape('C', 'u');
+        document[2, 1] = ShapeCell.Shape('C', 'u');
+        document[3, 1] = ShapeCell.Crystal('b');
+
+        ShapeProperty properties = ShapePropertyAnalyzer.Analyze(document, false, false);
+
+        Assert.True((properties & ShapeProperty.ContainsCrystal) != 0);
+        Assert.True((properties & ShapeProperty.ContainsPin) != 0);
+        Assert.True((properties & ShapeProperty.GapBelowShape) != 0);
+        Assert.True((properties & ShapeProperty.MixedCrystalColorsSameLayer) != 0);
+    }
+
+    public static void PropertiesDetectCrystalGap()
+    {
+        var document = new ShapeDocument(3, 2);
+
+        document[0, 0] = ShapeCell.Shape('C', 'u');
+        document[1, 0] = ShapeCell.Empty();
+        document[2, 0] = ShapeCell.Crystal('r');
+
+        document[0, 1] = ShapeCell.Shape('C', 'u');
+        document[1, 1] = ShapeCell.Shape('C', 'u');
+        document[2, 1] = ShapeCell.Shape('C', 'u');
+
+        ShapeProperty properties = ShapePropertyAnalyzer.Analyze(document, false, false);
+
+        Assert.True((properties & ShapeProperty.GapBelowCrystal) != 0);
+        Assert.True((properties & ShapeProperty.Stable) == 0);
+    }
     public static void AnalyzeReportsPerAngle()
     {
         var document = new ShapeDocument(2, 2);

@@ -141,7 +141,28 @@
                     }
                 </div>
                 <div class="analysis-card">
-                    <h2>分类</h2>
+                    <h2>图形性质</h2>
+
+                    @if (_properties == ShapeProperty.None)
+                    {
+                        <p class="analysis-summary">没有识别到任何性质。</p>
+                    }
+                    else
+                    {
+                        <div class="property-chips">
+                            @foreach (ShapeProperty property in PropertyList())
+                            {
+                                <span class="property-chip">@ShapePropertyAnalyzer.NameOf(property)</span>
+                            }
+                        </div>
+                    }
+
+                    <p class="analysis-summary analysis-note">
+                        可制作性依赖制作路径算法，暂未接入。
+                    </p>
+                </div>
+                <div class="analysis-card">
+                    <h2>制作路径</h2>
                     <p class="analysis-summary">待接入</p>
                 </div>
 
@@ -168,6 +189,24 @@
 
     private HalfStabilityResult? _half;
 
+    private ShapeProperty _properties = ShapeProperty.None;
+
+    private readonly ShapeProperty[] _propertyOrder =
+    {
+        ShapeProperty.ContainsCrystal,
+        ShapeProperty.ContainsPin,
+        ShapeProperty.CrystalAndEmptySameLayer,
+        ShapeProperty.CrystalAndPinSameLayer,
+        ShapeProperty.GapBelowShape,
+        ShapeProperty.GapBelowCrystal,
+        ShapeProperty.MixedCrystalColorsSameLayer,
+        ShapeProperty.Stable,
+        ShapeProperty.Exchangeable
+    };
+
+    private IEnumerable<ShapeProperty> PropertyList() =>
+        _propertyOrder.Where(property => (_properties & property) == property);
+
     private void SetMode(
         CollapseMode mode)
     {
@@ -177,6 +216,11 @@
         {
             _analysis = ShapeAngleAnalyzer.Analyze(_document, mode);
             _half = HalfStabilityAnalyzer.Analyze(_document, mode);
+
+            _properties = ShapePropertyAnalyzer.Analyze(
+                _document,
+                _analysis?.IsStable ?? false,
+                _half?.IsExchangeable ?? false);
         }
     }
 
@@ -211,5 +255,10 @@
         _document = parsed.Document;
         _analysis = ShapeAngleAnalyzer.Analyze(_document, _mode);
         _half = HalfStabilityAnalyzer.Analyze(_document, _mode);
+
+        _properties = ShapePropertyAnalyzer.Analyze(
+            _document,
+            _analysis?.IsStable ?? false,
+            _half?.IsExchangeable ?? false);
     }
 }
