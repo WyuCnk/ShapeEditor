@@ -2097,3 +2097,13 @@ button {
         grid-template-columns: 1fr;
     }
 }
+.analysis-mode {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.analysis-rules-left {
+    margin-top: 12px;
+    text-align: left;
+}

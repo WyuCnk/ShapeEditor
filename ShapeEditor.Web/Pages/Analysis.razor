@@ -2,6 +2,7 @@
 
 @using System.Globalization
 @using ShapeEditor.Core.Analysis
+@using ShapeEditor.Core.Physics
 @using ShapeEditor.Core.Models
 @using ShapeEditor.Core.Services
 @using ShapeEditor.Web.Services
@@ -50,6 +51,16 @@
                 <div class="analysis-meta">
                     @_document!.LayerCount 层 × @_document.PartCount 象限
                 </div>
+                    <section class="analysis-rules analysis-rules-left">
+            <h2>角的判定规则</h2>
+            <ol>
+                <li>顶针下方相邻格必须非空；顶针在最底层时视为合法。</li>
+                <li>晶体下方若存在顶针，该顶针要么在最底层，要么下方全部是顶针。</li>
+                <li>同列两层晶体之间若存在空层，则两者之间至少有两个非空格，且下方晶体的正上方非空。</li>
+                <li>最低的那层晶体：在最底层、或下方有普通形状、或下方全部是顶针。</li>
+            </ol>
+            <p class="analysis-note">角 = 竖式图的一列。四条规则全部满足才算合法。</p>
+        </section>
             </section>
 
             <section class="analysis-cards">
@@ -84,7 +95,23 @@
 
                 <div class="analysis-card">
                     <h2>稳定性</h2>
-                    <p class="analysis-summary">待接入</p>
+
+                    <div class="analysis-mode">
+                        <button class="@(_mode == CollapseMode.IncludeCycles ? "format-button active" : "format-button")"
+                                @onclick="() => SetMode(CollapseMode.IncludeCycles)">
+                            含循环支撑
+                        </button>
+                        <button class="@(_mode == CollapseMode.FloorOnly ? "format-button active" : "format-button")"
+                                @onclick="() => SetMode(CollapseMode.FloorOnly)">
+                            仅地面
+                        </button>
+                    </div>
+
+                    <p class="analysis-summary">
+                        @(_analysis.IsStable
+                            ? "稳定：按当前规则执行一次下落后，图形与原来完全一致。"
+                            : "不稳定：执行一次下落后图形会发生变化。")
+                    </p>
                 </div>
 
                 <div class="analysis-card">
@@ -100,16 +127,7 @@
             </section>
         </div>
 
-        <section class="analysis-rules">
-            <h2>角的判定规则</h2>
-            <ol>
-                <li>顶针下方相邻格必须非空；顶针在最底层时视为合法。</li>
-                <li>晶体下方若存在顶针，该顶针要么在最底层，要么下方全部是顶针。</li>
-                <li>同列两层晶体之间若存在空层，则两者之间至少有两个非空格，且下方晶体的正上方非空。</li>
-                <li>最低的那层晶体：在最底层、或下方有普通形状、或下方全部是顶针。</li>
-            </ol>
-            <p class="analysis-note">角 = 竖式图的一列。四条规则全部满足才算合法。</p>
-        </section>
+
     }
 </div>
 
@@ -119,6 +137,19 @@
     private ShapeDocument? _document;
 
     private ShapeAnalysisResult? _analysis;
+
+    private CollapseMode _mode = CollapseMode.IncludeCycles;
+
+    private void SetMode(
+        CollapseMode mode)
+    {
+        _mode = mode;
+
+        if (_document is not null)
+        {
+            _analysis = ShapeAngleAnalyzer.Analyze(_document, mode);
+        }
+    }
 
     private void BackToEditor()
     {
@@ -149,6 +180,6 @@
         }
 
         _document = parsed.Document;
-        _analysis = ShapeAngleAnalyzer.Analyze(_document);
+        _analysis = ShapeAngleAnalyzer.Analyze(_document, _mode);
     }
 }

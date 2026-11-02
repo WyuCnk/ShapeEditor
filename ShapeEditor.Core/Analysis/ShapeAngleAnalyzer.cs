@@ -19,6 +19,12 @@ public sealed record ShapeAnalysisResult(
     public int LegalCount => Angles.Count(angle => angle.IsLegal);
 
     public bool IsFullyLegal => LegalCount == Angles.Count;
+
+    /// <summary>执行一次下落后图形是否不变。</summary>
+    public bool IsStable { get; init; }
+
+    /// <summary>稳定性判定使用的下落规则。</summary>
+    public Physics.CollapseMode Mode { get; init; }
 }
 
 /// <summary>
@@ -41,7 +47,8 @@ public static class ShapeAngleAnalyzer
     public const string RuleFour = "规则四：最低晶体下方既不是普通形状，也不是连续的顶针。";
 
     public static ShapeAnalysisResult Analyze(
-        Models.ShapeDocument document)
+        Models.ShapeDocument document,
+        Physics.CollapseMode mode = Physics.CollapseMode.IncludeCycles)
     {
         var angles = new List<AngleResult>();
 
@@ -53,7 +60,32 @@ public static class ShapeAngleAnalyzer
         return new ShapeAnalysisResult(
             document.PartCount,
             document.LayerCount,
-            angles);
+            angles)
+        {
+            IsStable = IsStable(document, mode),
+            Mode = mode
+        };
+    }
+
+    /// <summary>
+    /// 稳定性：执行一次下落后与原图形完全一致。
+    /// </summary>
+    public static bool IsStable(
+        Models.ShapeDocument document,
+        Physics.CollapseMode mode)
+    {
+        Models.ShapeDocument? collapsed = Physics.ShapePhysics
+            .Collapse(document, mode)
+            .Document;
+
+        if (collapsed is null)
+        {
+            return false;
+        }
+
+        var exporter = new Services.ShortCodeExporter();
+
+        return exporter.Export(document) == exporter.Export(collapsed);
     }
 
     public static AngleResult AnalyzeAngle(

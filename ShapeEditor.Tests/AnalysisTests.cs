@@ -108,6 +108,30 @@ internal static class AnalysisTests
         Assert.True(angle.IsLegal);
     }
 
+    public static void FilledColumnIsStable()
+    {
+        var document = new ShapeDocument(3, 2);
+
+        for (int layer = 0; layer < 3; layer++)
+        {
+            for (int part = 0; part < 2; part++)
+            {
+                document[layer, part] = ShapeCell.Shape('C', 'u');
+            }
+        }
+
+        Assert.True(ShapeAngleAnalyzer.IsStable(document, ShapeEditor.Core.Physics.CollapseMode.IncludeCycles));
+        Assert.True(ShapeAngleAnalyzer.IsStable(document, ShapeEditor.Core.Physics.CollapseMode.FloorOnly));
+    }
+
+    public static void FloatingCrystalIsUnstable()
+    {
+        var document = new ShapeDocument(3, 2);
+
+        document[2, 0] = ShapeCell.Crystal('r');
+
+        Assert.False(ShapeAngleAnalyzer.IsStable(document, ShapeEditor.Core.Physics.CollapseMode.FloorOnly));
+    }
     public static void AnalyzeReportsPerAngle()
     {
         var document = new ShapeDocument(2, 2);
