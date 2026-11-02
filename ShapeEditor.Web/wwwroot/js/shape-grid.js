@@ -2046,6 +2046,478 @@ window.shapeGridTryShare = async function (blob, fileName) {
         return false;
     }
 };
+/*
+ * 分析图导出（单栏版式）。
+ *
+ * payload 结构见 Models/AnalysisExportPayload.cs：
+ * { title, code, state, sections: [{ title, lines, isPlaceholder }], meta, generatedAt }
+ * 页面只会把当前显示的板块放进 sections，隐藏的板块不会出现在图片里。
+ */
+window.shapeGrid.downloadAnalysis = async function (payload, fileName) {
+    const PADDING = 32;
+    const TOP_BAR = 6;
+    const SECTION_GAP = 22;
+    const SECTION_TITLE_HEIGHT = 30;
+    const LINE_HEIGHT = 22;
+    const MAX_SHAPE_WIDTH = 760;
+    const MIN_CONTENT_WIDTH = 720;
+    const MAX_SIDE = 16000;
+
+    const TITLE_FONT = '700 30px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+    const CODE_FONT = '400 13px Consolas, "Courier New", monospace';
+    const SECTION_FONT = '700 18px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+    const TEXT_FONT = '400 14px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+    const FOOTER_FONT = '400 12px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+
+    const data = payload || {};
+    const state = data.state || null;
+
+    // 竖式图尺寸：按列数缩放到最大宽度，避免宽图形把单栏版面撑爆。
+    const shapeTheme = resolveTheme(state);
+    const baseCellWidth = shapeTheme.exportCellWidth || 128;
+    const baseCellHeight = shapeTheme.exportCellHeight || 96;
+    const hasShape = !!state && state.columns > 0 && state.rows > 0;
+    const shapeScale = hasShape
+        ? Math.min(1, MAX_SHAPE_WIDTH / (state.columns * baseCellWidth))
+        : 1;
+    const cellWidth = baseCellWidth * shapeScale;
+    const cellHeight = baseCellHeight * shapeScale;
+    const shapeWidth = hasShape ? state.columns * cellWidth : 0;
+    const shapeHeight = hasShape ? state.rows * cellHeight : 0;
+    const contentWidth = Math.max(MIN_CONTENT_WIDTH, shapeWidth);
+
+    // 先用离屏画布量文本，排版高度确定后再创建正式画布。
+    const measureCanvas = document.createElement("canvas");
+    const measure = measureCanvas.getContext("2d");
+
+    if (!measure) {
+        throw new Error("无法创建画布。");
+    }
+
+    const titleLines = wrapAnalysisText(
+        measure,
+        data.title || "图形分析",
+        TITLE_FONT,
+        contentWidth,
+        false);
+
+    const codeLines = data.code
+        ? wrapAnalysisText(measure, data.code, CODE_FONT, contentWidth, true)
+        : [];
+
+    const headerHeight =
+        titleLines.length * 40 +
+        (codeLines.length > 0 ? codeLines.length * 19 + 6 : 0) +
+        20;
+
+    const blocks = [
+        {
+            kind: "header",
+            height: headerHeight,
+            titleLines: titleLines,
+            codeLines: codeLines
+        }
+    ];
+
+    if (hasShape) {
+        blocks.push({
+            kind: "shape",
+            height: shapeHeight + 26
+        });
+    }
+
+    const sections = Array.isArray(data.sections) ? data.sections : [];
+
+    for (let i = 0; i < sections.length; i++) {
+        const section = sections[i] || {};
+        const title = String(section.title || "");
+
+        if (section.isPlaceholder) {
+            const text = Array.isArray(section.lines) && section.lines.length > 0
+                ? String(section.lines[0])
+                : "制作路径（待接入）";
+
+            blocks.push({
+                kind: "placeholder",
+                height: SECTION_TITLE_HEIGHT + 64 + SECTION_GAP,
+                title: title,
+                text: text
+            });
+
+            continue;
+        }
+
+        const lines = [];
+        const rawLines = Array.isArray(section.lines) ? section.lines : [];
+
+        for (let j = 0; j < rawLines.length; j++) {
+            const wrapped = wrapAnalysisText(
+                measure,
+                rawLines[j],
+                TEXT_FONT,
+                contentWidth,
+                false);
+
+            for (let k = 0; k < wrapped.length; k++) {
+                lines.push(wrapped[k]);
+            }
+        }
+
+        if (lines.length === 0) {
+            lines.push("—");
+        }
+
+        blocks.push({
+            kind: "text",
+            height: SECTION_TITLE_HEIGHT + lines.length * LINE_HEIGHT + SECTION_GAP,
+            title: title,
+            lines: lines
+        });
+    }
+
+    // 底部：分隔线 + 层数/象限数 + 生成时间。
+    blocks.push({
+        kind: "footer",
+        height: 55
+    });
+
+    let contentHeight = 0;
+
+    for (let i = 0; i < blocks.length; i++) {
+        contentHeight += blocks[i].height;
+    }
+
+    const width = contentWidth + PADDING * 2;
+    const height = TOP_BAR + PADDING * 2 + contentHeight;
+
+    if (width > MAX_SIDE || height > MAX_SIDE) {
+        throw new Error("图片尺寸过大：" + width + " × " + height);
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+
+    const ctx = canvas.getContext("2d");
+
+    if (!ctx) {
+        throw new Error("无法创建画布。");
+    }
+
+    ctx.fillStyle = "#FFFFFF";
+    ctx.fillRect(0, 0, width, height);
+
+    // 顶部主色装饰条，与站点的 #512bd4 主色一致。
+    ctx.fillStyle = "#512BD4";
+    ctx.fillRect(0, 0, width, TOP_BAR);
+
+    let y = TOP_BAR + PADDING;
+
+    function drawSectionTitle(title, top) {
+        ctx.fillStyle = "#512BD4";
+        ctx.fillRect(PADDING, top + 5, 4, 18);
+
+        ctx.font = SECTION_FONT;
+        ctx.fillStyle = "#222222";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+        ctx.fillText(title, PADDING + 12, top + 3);
+    }
+
+    for (let i = 0; i < blocks.length; i++) {
+        const block = blocks[i];
+
+        if (block.kind === "header") {
+            ctx.textAlign = "center";
+            ctx.textBaseline = "top";
+
+            ctx.font = TITLE_FONT;
+            ctx.fillStyle = "#222222";
+
+            for (let j = 0; j < block.titleLines.length; j++) {
+                ctx.fillText(block.titleLines[j], width / 2, y);
+                y += 40;
+            }
+
+            if (block.codeLines.length > 0) {
+                y += 6;
+
+                ctx.font = CODE_FONT;
+                ctx.fillStyle = "#4527A0";
+
+                for (let j = 0; j < block.codeLines.length; j++) {
+                    ctx.fillText(block.codeLines[j], width / 2, y);
+                    y += 19;
+                }
+            }
+
+            y += 20;
+            continue;
+        }
+
+        if (block.kind === "shape") {
+            const shapeLeft = PADDING + (contentWidth - shapeWidth) / 2;
+
+            ctx.strokeStyle = "#E6E2F2";
+            ctx.lineWidth = 1;
+            ctx.strokeRect(shapeLeft - 1, y - 1, shapeWidth + 2, shapeHeight + 2);
+
+            window.shapeGrid.drawAnalysisShape(
+                ctx,
+                state,
+                shapeLeft,
+                y,
+                cellWidth,
+                cellHeight);
+
+            y += block.height;
+            continue;
+        }
+
+        if (block.kind === "text") {
+            drawSectionTitle(block.title, y);
+
+            ctx.font = TEXT_FONT;
+            ctx.fillStyle = "#3A3A44";
+            ctx.textAlign = "left";
+            ctx.textBaseline = "top";
+
+            let lineY = y + SECTION_TITLE_HEIGHT;
+
+            for (let j = 0; j < block.lines.length; j++) {
+                if (block.lines[j] !== "") {
+                    ctx.fillText(block.lines[j], PADDING, lineY);
+                }
+
+                lineY += LINE_HEIGHT;
+            }
+
+            // 板块之间的细分隔线
+            ctx.strokeStyle = "#EEEAF7";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(PADDING, lineY + 6);
+            ctx.lineTo(width - PADDING, lineY + 6);
+            ctx.stroke();
+
+            y += block.height;
+            continue;
+        }
+
+        if (block.kind === "placeholder") {
+            drawSectionTitle(block.title, y);
+
+            const boxTop = y + SECTION_TITLE_HEIGHT;
+            const boxHeight = 64;
+
+            ctx.save();
+            ctx.setLineDash([6, 4]);
+            ctx.fillStyle = "#FAF8FF";
+            ctx.strokeStyle = "#B9A9EE";
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.roundRect(PADDING, boxTop, contentWidth, boxHeight, 10);
+            ctx.fill();
+            ctx.stroke();
+            ctx.restore();
+
+            ctx.font = '600 15px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+            ctx.fillStyle = "#512BD4";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(block.text, width / 2, boxTop + boxHeight / 2);
+
+            y += block.height;
+            continue;
+        }
+
+        if (block.kind === "footer") {
+            y += 20;
+
+            ctx.strokeStyle = "#E6E2F2";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(PADDING, y);
+            ctx.lineTo(width - PADDING, y);
+            ctx.stroke();
+
+            y += 16;
+
+            ctx.font = FOOTER_FONT;
+            ctx.fillStyle = "#6B6B76";
+            ctx.textBaseline = "top";
+
+            ctx.textAlign = "left";
+            ctx.fillText(data.meta || "", PADDING, y);
+
+            ctx.textAlign = "right";
+            ctx.fillText(data.generatedAt || "", width - PADDING, y);
+        }
+    }
+
+    const blob = await canvasToBlob(canvas);
+
+    if (await window.shapeGridTryShare(blob, fileName)) {
+        return;
+    }
+
+    const url = URL.createObjectURL(blob);
+
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    link.style.display = "none";
+
+    document.body.appendChild(link);
+
+    // 等分享/下载流程结束后再释放 blob URL，避免移动端 fetch 时链接已失效。
+    await window.shapeGridSaveOrShare(link, fileName);
+
+    link.remove();
+
+    URL.revokeObjectURL(url);
+};
+
+/*
+ * 在指定位置绘制分析用的竖式图。
+ * 复用 shape-grid.js 已有的 drawCell / drawGrid，保持与编辑器一致的配色。
+ */
+window.shapeGrid.drawAnalysisShape = function (
+    ctx,
+    state,
+    left,
+    top,
+    cellWidth,
+    cellHeight) {
+    if (!ctx ||
+        !state ||
+        !state.cells ||
+        state.columns <= 0 ||
+        state.rows <= 0) {
+        return;
+    }
+
+    const theme = resolveTheme(state);
+
+    ctx.save();
+    ctx.translate(left, top);
+
+    for (let row = 0; row < state.rows; row++) {
+        for (let column = 0; column < state.columns; column++) {
+            const cell =
+                state.cells[row * state.columns + column] ||
+                { type: "empty" };
+
+            drawCell(
+                ctx,
+                cell,
+                column * cellWidth,
+                row * cellHeight,
+                cellWidth,
+                cellHeight,
+                theme);
+        }
+    }
+
+    drawGrid(
+        ctx,
+        state.rows,
+        state.columns,
+        cellWidth,
+        cellHeight,
+        theme);
+
+    ctx.restore();
+};
+
+/*
+ * 文本换行：中文按字拆，英文/数字/公式按词拆，
+ * 避免长方向列表或短代码把画布撑出边界。
+ */
+function wrapAnalysisText(
+    measure,
+    text,
+    font,
+    maxWidth,
+    breakAll) {
+    const value =
+        text === null ||
+            text === undefined
+            ? ""
+            : String(text);
+
+    if (!value) {
+        return [""];
+    }
+
+    measure.font = font;
+
+    const tokens =
+        breakAll
+            ? Array.from(value)
+            : tokenizeAnalysisText(value);
+
+    const lines = [];
+
+    let line = "";
+
+    for (let i = 0; i < tokens.length; i++) {
+        const token = tokens[i];
+
+        if (token === "\n") {
+            lines.push(line);
+            line = "";
+            continue;
+        }
+
+        const candidate = line + token;
+
+        if (line !== "" &&
+            measure.measureText(candidate).width > maxWidth) {
+            lines.push(line.replace(/\s+$/, ""));
+            line = token.replace(/^\s+/, "");
+        }
+        else {
+            line = candidate;
+        }
+    }
+
+    lines.push(line);
+
+    return lines;
+}
+
+function tokenizeAnalysisText(text) {
+    const tokens = [];
+
+    let word = "";
+
+    function flush() {
+        if (word !== "") {
+            tokens.push(word);
+            word = "";
+        }
+    }
+
+    for (const ch of Array.from(text)) {
+        if (/[A-Za-z0-9_+\-./#:()=]/.test(ch)) {
+            word += ch;
+        }
+        else if (/\s/.test(ch)) {
+            flush();
+            tokens.push(" ");
+        }
+        else {
+            flush();
+            tokens.push(ch);
+        }
+    }
+
+    flush();
+
+    return tokens;
+}
+
 /* 供 Blazor 回读节点的真实渲染尺寸，箭头锚点据此贴合边框 */
 window.shapeGridMeasureNodes = function () {
     return Array.from(document.querySelectorAll(".graph-node[data-node-id]")).map(function (el) {

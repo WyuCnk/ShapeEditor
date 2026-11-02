@@ -8,6 +8,7 @@
 @using ShapeEditor.Web.Services
 @inject AnalysisRequest Request
 @inject NavigationManager Nav
+@inject IJSRuntime JS
 
 <PageTitle>图形分析</PageTitle>
 
@@ -27,12 +28,24 @@
                     仅地面
                 </button>
             </div>
+            <button class="primary-button"
+                    disabled="@(_document is null)"
+                    @onclick="ExportImageAsync">
+                导出图片
+            </button>
             <button class="secondary-button"
                     @onclick="BackToEditor">
                 返回编辑器
             </button>
         </div>
     </header>
+
+    @if (!string.IsNullOrWhiteSpace(_exportError))
+    {
+        <div class="error-message" role="alert">
+            @_exportError
+        </div>
+    }
 
     @if (_analysis is null)
     {
@@ -61,125 +74,174 @@
                 <div class="analysis-meta">
                     @_document!.LayerCount 层 × @_document.PartCount 象限
                 </div>
-                    <section class="analysis-rules analysis-rules-left">
-            <h2>角的判定规则</h2>
-            <ol>
-                <li>顶针下方相邻格必须非空；顶针在最底层时视为合法。</li>
-                <li>晶体下方若存在顶针，该顶针要么在最底层，要么下方全部是顶针。</li>
-                <li>同列两层晶体之间若存在空层，则两者之间至少有两个非空格，且下方晶体的正上方非空。</li>
-                <li>最低的那层晶体：在最底层、或下方有普通形状、或下方全部是顶针。</li>
-            </ol>
-            <p class="analysis-note">角 = 竖式图的一列。四条规则全部满足才算合法。</p>
-        </section>
+
+                <section class="analysis-rules analysis-rules-left">
+                    <div class="analysis-section-head">
+                        <h2>角的判定规则</h2>
+                        <button type="button" class="analysis-toggle"
+                                @onclick="() => _showRules = !_showRules">
+                            @(_showRules ? "隐藏" : "显示")
+                        </button>
+                    </div>
+
+                    @if (_showRules)
+                    {
+                        <ol>
+                            <li>顶针下方相邻格必须非空；顶针在最底层时视为合法。</li>
+                            <li>晶体下方若存在顶针，该顶针要么在最底层，要么下方全部是顶针。</li>
+                            <li>同列两层晶体之间若存在空层，则两者之间至少有两个非空格，且下方晶体的正上方非空。</li>
+                            <li>最低的那层晶体：在最底层、或下方有普通形状、或下方全部是顶针。</li>
+                        </ol>
+                        <p class="analysis-note">角 = 竖式图的一列。四条规则全部满足才算合法。</p>
+                    }
+                </section>
             </section>
 
             <section class="analysis-cards">
 
                 <div class="analysis-card">
-                    <h2>角的合法性</h2>
-                    <p class="analysis-summary">
-                        共 @_analysis.Angles.Count 个角，@_analysis.LegalCount 个合法
-                        @(_analysis.IsFullyLegal ? "（全部合法）" : "")
-                    </p>
+                    <div class="analysis-section-head">
+                        <h2>图形性质</h2>
+                        <button type="button" class="analysis-toggle"
+                                @onclick="() => _showProperties = !_showProperties">
+                            @(_showProperties ? "隐藏" : "显示")
+                        </button>
+                    </div>
 
-                    <table class="angle-table">
-                        <thead>
-                            <tr>
-                                <th>角</th>
-                                <th>合法性</th>
-                                <th>可制作性</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach (AngleResult angle in _analysis.Angles)
-                            {
-                                <tr class="@(angle.IsLegal ? "ok" : "bad")">
-                                    <td>角 @(angle.Part + 1)</td>
-                                    <td>@(angle.IsLegal ? "合法" : "非法")</td>
-                                    <td>@(angle.IsLegal ? "可制作" : "不可制作")</td>
-                                </tr>
-
-                                @if (!angle.IsLegal)
+                    @if (_showProperties)
+                    {
+                        @if (_properties == ShapeProperty.None)
+                        {
+                            <p class="analysis-summary">没有识别到任何性质。</p>
+                        }
+                        else
+                        {
+                            <div class="property-chips">
+                                @foreach (ShapeProperty property in PropertyList())
                                 {
-                                    <tr class="reason-row">
-                                        <td colspan="3">
-                                            @foreach (string reason in angle.Failures)
-                                            {
-                                                <div>@reason</div>
-                                            }
-                                        </td>
+                                    <span class="property-chip">@ShapePropertyAnalyzer.NameOf(property)</span>
+                                }
+                            </div>
+                        }
+
+                        <p class="analysis-summary analysis-note">
+                            可制作性依赖制作路径算法，暂未接入。
+                        </p>
+                    }
+                </div>
+
+                <div class="analysis-card">
+                    <div class="analysis-section-head">
+                        <h2>角的合法性</h2>
+                        <button type="button" class="analysis-toggle"
+                                @onclick="() => _showAngles = !_showAngles">
+                            @(_showAngles ? "隐藏" : "显示")
+                        </button>
+                    </div>
+
+                    @if (_showAngles)
+                    {
+                        <p class="analysis-summary">
+                            共 @_analysis.Angles.Count 个角，@_analysis.LegalCount 个合法
+                            @(_analysis.IsFullyLegal ? "（全部合法）" : "")
+                        </p>
+
+                        <table class="angle-table">
+                            <thead>
+                                <tr>
+                                    <th>角</th>
+                                    <th>合法性</th>
+                                    <th>可制作性</th>
+                                    <th>备注</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (AngleResult angle in _analysis.Angles)
+                                {
+                                    <tr class="@(angle.IsLegal ? "ok" : "bad")">
+                                        <td>角 @(angle.Part + 1)</td>
+                                        <td>@(angle.IsLegal ? "合法" : "非法")</td>
+                                        <td>@(angle.IsLegal ? "可制作" : "不可制作")</td>
+                                        <td class="angle-note">@string.Join("；", angle.Failures)</td>
                                     </tr>
                                 }
-                            }
-                        </tbody>
-                    </table>
+                            </tbody>
+                        </table>
 
-                    <p class="analysis-note">
-                        角的可制作性暂时等同于合法性，等角的制作算法接入后细化。
-                    </p>
+                        <p class="analysis-note">
+                            角的可制作性暂时等同于合法性，等角的制作算法接入后细化。
+                        </p>
+                    }
                 </div>
 
                 <div class="analysis-card">
-                    <h2>稳定性</h2>
+                    <div class="analysis-section-head">
+                        <h2>稳定性</h2>
+                        <button type="button" class="analysis-toggle"
+                                @onclick="() => _showStability = !_showStability">
+                            @(_showStability ? "隐藏" : "显示")
+                        </button>
+                    </div>
 
-
-                    <p class="analysis-summary">
-                        @(_analysis.IsStable
-                            ? "稳定：按当前规则执行一次下落后，图形与原来完全一致。"
-                            : "不稳定：执行一次下落后图形会发生变化。")
-                    </p>
-                </div>
-
-                <div class="analysis-card">
-                    <h2>半边稳定性</h2>
-
-                    <p class="analysis-summary">
-                        @(_half is null
-                            ? "需要在偶数象限的图形上分析。"
-                            : (_half.IsExchangeable
-                                ? $"可交换：共 {_half.DirectionCount} 个交换方向，其中 {_half.LegalDirections.Count} 个合法。"
-                                : $"不可交换：共 {_half.DirectionCount} 个交换方向，没有合法的。"))
-                    </p>
-
-                    @if (_half is not null && _half.IsExchangeable)
+                    @if (_showStability)
                     {
-                        <ul class="direction-list">
-                            @foreach (string direction in _half.LegalDirections.Take(60))
-                            {
-                                <li>@direction</li>
-                            }
-                        </ul>
+                        <p class="analysis-summary">
+                            @(_analysis.IsStable
+                                ? "稳定：按当前规则执行一次下落后，图形与原来完全一致。"
+                                : "不稳定：执行一次下落后图形会发生变化。")
+                        </p>
+                    }
+                </div>
 
-                        @if (_half.LegalDirections.Count > 60)
+                <div class="analysis-card">
+                    <div class="analysis-section-head">
+                        <h2>半边稳定性</h2>
+                        <button type="button" class="analysis-toggle"
+                                @onclick="() => _showHalf = !_showHalf">
+                            @(_showHalf ? "隐藏" : "显示")
+                        </button>
+                    </div>
+
+                    @if (_showHalf)
+                    {
+                        <p class="analysis-summary">
+                            @(_half is null
+                                ? "需要在偶数象限的图形上分析。"
+                                : (_half.IsExchangeable
+                                    ? $"可交换：共 {_half.DirectionCount} 个交换方向，其中 {_half.LegalDirections.Count} 个合法。"
+                                    : $"不可交换：共 {_half.DirectionCount} 个交换方向，没有合法的。"))
+                        </p>
+
+                        @if (_half is not null && _half.IsExchangeable)
                         {
-                            <p class="analysis-note">仅显示前 60 个。</p>
+                            <ul class="direction-list">
+                                @foreach (string direction in _half.LegalDirections.Take(60))
+                                {
+                                    <li>@direction</li>
+                                }
+                            </ul>
+
+                            @if (_half.LegalDirections.Count > 60)
+                            {
+                                <p class="analysis-note">仅显示前 60 个。</p>
+                            }
                         }
                     }
                 </div>
-                <div class="analysis-card">
-                    <h2>图形性质</h2>
 
-                    @if (_properties == ShapeProperty.None)
-                    {
-                        <p class="analysis-summary">没有识别到任何性质。</p>
-                    }
-                    else
-                    {
-                        <div class="property-chips">
-                            @foreach (ShapeProperty property in PropertyList())
-                            {
-                                <span class="property-chip">@ShapePropertyAnalyzer.NameOf(property)</span>
-                            }
-                        </div>
-                    }
-
-                    <p class="analysis-summary analysis-note">
-                        可制作性依赖制作路径算法，暂未接入。
-                    </p>
-                </div>
                 <div class="analysis-card">
-                    <h2>制作路径</h2>
-                    <p class="analysis-summary">算法接入后以节点图显示</p>
+                    <div class="analysis-section-head">
+                        <h2>制作路径</h2>
+                        <button type="button" class="analysis-toggle"
+                                @onclick="() => _showPath = !_showPath">
+                            @(_showPath ? "隐藏" : "显示")
+                        </button>
+                    </div>
+
+                    @if (_showPath)
+                    {
+                        <p class="analysis-summary">算法接入后以节点图显示</p>
+                    }
                 </div>
 
             </section>
@@ -201,6 +263,22 @@
     private HalfStabilityResult? _half;
 
     private ShapeProperty _properties = ShapeProperty.None;
+
+    // 六个板块的显隐开关，默认全部显示；只影响渲染，不影响分析结果。
+    private bool _showProperties = true;
+
+    private bool _showAngles = true;
+
+    private bool _showStability = true;
+
+    private bool _showHalf = true;
+
+    private bool _showPath = true;
+
+    private bool _showRules = true;
+
+    // 页面没有对话框，导出失败时用顶部提示条显示。
+    private string _exportError = "";
 
     private readonly ShapeProperty[] _propertyOrder =
     {
@@ -235,6 +313,201 @@
                 _half?.IsExchangeable ?? false,
                 mode);
         }
+    }
+
+    /// <summary>
+    /// 导出当前分析图。只把「当前显示」的板块写进 payload，
+    /// 隐藏的板块不会出现在图片里。
+    /// </summary>
+    private async Task ExportImageAsync()
+    {
+        if (_document is null || _analysis is null)
+        {
+            return;
+        }
+
+        _exportError = "";
+
+        try
+        {
+            await JS.InvokeVoidAsync(
+                "shapeGrid.downloadAnalysis",
+                BuildExportPayload(),
+                $"shape-analysis-{DateTime.Now:yyyyMMdd-HHmmss}.png");
+        }
+        catch (Exception exception)
+        {
+            _exportError = $"导出图片失败：{exception.Message}";
+        }
+    }
+
+    private AnalysisExportPayload BuildExportPayload()
+    {
+        ShapeDocument document = _document!;
+
+        var payload = new AnalysisExportPayload
+        {
+            Title = "图形分析",
+            Code = _code,
+            State = ShapeCanvasState.Create(document),
+            Meta = $"{document.LayerCount} 层 × {document.PartCount} 象限",
+            GeneratedAt = $"生成时间：{DateTime.Now:yyyy-MM-dd HH:mm}"
+        };
+
+        if (_showProperties)
+        {
+            payload.Sections.Add(BuildPropertiesSection());
+        }
+
+        if (_showAngles)
+        {
+            payload.Sections.Add(BuildAnglesSection());
+        }
+
+        if (_showStability)
+        {
+            payload.Sections.Add(BuildStabilitySection());
+        }
+
+        if (_showHalf)
+        {
+            payload.Sections.Add(BuildHalfSection());
+        }
+
+        if (_showRules)
+        {
+            payload.Sections.Add(BuildRulesSection());
+        }
+
+        if (_showPath)
+        {
+            // Core 的制作路径还没有接入页面，这里按需求画占位节点框。
+            payload.Sections.Add(new AnalysisExportSection
+            {
+                Title = "制作路径",
+                IsPlaceholder = true,
+                Lines = new List<string> { "制作路径（待接入）" }
+            });
+        }
+
+        return payload;
+    }
+
+    private AnalysisExportSection BuildPropertiesSection()
+    {
+        var section = new AnalysisExportSection
+        {
+            Title = "图形性质"
+        };
+
+        if (_properties == ShapeProperty.None)
+        {
+            section.Lines.Add("没有识别到任何性质。");
+        }
+        else
+        {
+            section.Lines.Add(
+                "性质：" +
+                string.Join(
+                    "、",
+                    PropertyList().Select(ShapePropertyAnalyzer.NameOf)));
+        }
+
+        return section;
+    }
+
+    private AnalysisExportSection BuildAnglesSection()
+    {
+        ShapeAnalysisResult analysis = _analysis!;
+
+        var section = new AnalysisExportSection
+        {
+            Title = "角的合法性"
+        };
+
+        section.Lines.Add(
+            $"共 {analysis.Angles.Count} 个角，{analysis.LegalCount} 个合法" +
+            (analysis.IsFullyLegal ? "（全部合法）" : ""));
+
+        foreach (AngleResult angle in analysis.Angles)
+        {
+            string note = angle.IsLegal
+                ? "—"
+                : string.Join("；", angle.Failures);
+
+            section.Lines.Add(
+                $"角 {angle.Part + 1} {(angle.IsLegal ? "合法" : "非法")} {note}");
+        }
+
+        return section;
+    }
+
+    private AnalysisExportSection BuildStabilitySection()
+    {
+        var section = new AnalysisExportSection
+        {
+            Title = "稳定性"
+        };
+
+        section.Lines.Add(
+            _analysis!.IsStable
+                ? "稳定：按当前规则执行一次下落后，图形与原来完全一致。"
+                : "不稳定：执行一次下落后图形会发生变化。");
+
+        return section;
+    }
+
+    private AnalysisExportSection BuildHalfSection()
+    {
+        var section = new AnalysisExportSection
+        {
+            Title = "半边稳定性"
+        };
+
+        if (_half is null)
+        {
+            section.Lines.Add("需要在偶数象限的图形上分析。");
+
+            return section;
+        }
+
+        section.Lines.Add(
+            _half.IsExchangeable
+                ? $"可交换：共 {_half.DirectionCount} 个交换方向，其中 {_half.LegalDirections.Count} 个合法。"
+                : $"不可交换：共 {_half.DirectionCount} 个交换方向，没有合法的。");
+
+        if (_half.IsExchangeable)
+        {
+            // 与页面保持一致：最多导出前 60 个合法方向。
+            const int limit = 60;
+
+            section.Lines.Add(
+                "合法方向：" +
+                string.Join("、", _half.LegalDirections.Take(limit)));
+
+            if (_half.LegalDirections.Count > limit)
+            {
+                section.Lines.Add($"（仅显示前 {limit} 个）");
+            }
+        }
+
+        return section;
+    }
+
+    private static AnalysisExportSection BuildRulesSection()
+    {
+        var section = new AnalysisExportSection
+        {
+            Title = "角的判定规则"
+        };
+
+        section.Lines.Add("1. 顶针下方相邻格必须非空；顶针在最底层时视为合法。");
+        section.Lines.Add("2. 晶体下方若存在顶针，该顶针要么在最底层，要么下方全部是顶针。");
+        section.Lines.Add("3. 同列两层晶体之间若存在空层，则两者之间至少有两个非空格，且下方晶体的正上方非空。");
+        section.Lines.Add("4. 最低的那层晶体：在最底层、或下方有普通形状、或下方全部是顶针。");
+        section.Lines.Add("角 = 竖式图的一列。四条规则全部满足才算合法。");
+
+        return section;
     }
 
     private void BackToEditor()

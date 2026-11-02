@@ -2156,3 +2156,39 @@ button {
     font-size: 12px;
     padding-top: 0;
 }
+.angle-table td.angle-note {
+    color: #8a8a95;
+    font-size: 12px;
+}
+
+/* 分析页：板块标题右侧的显隐开关 */
+.analysis-section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+    .analysis-section-head h2 {
+        margin: 0;
+    }
+
+.analysis-toggle {
+    flex-shrink: 0;
+    min-height: 26px;
+    padding: 1px 10px;
+    border-radius: 6px;
+    background: #efeaf9;
+    color: #512bd4;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+/* 窄屏下顶部按钮较多，允许换行，避免撑出横向滚动条 */
+@media (max-width: 600px) {
+    .analysis-page .editor-header,
+    .analysis-page .header-actions {
+        flex-wrap: wrap;
+    }
+}
