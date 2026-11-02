@@ -1,0 +1,154 @@
+@page "/analysis"
+
+@using System.Globalization
+@using ShapeEditor.Core.Analysis
+@using ShapeEditor.Core.Models
+@using ShapeEditor.Core.Services
+@using ShapeEditor.Web.Services
+@inject AnalysisRequest Request
+@inject NavigationManager Nav
+
+<PageTitle>图形分析</PageTitle>
+
+<div class="analysis-page">
+
+    <header class="editor-header">
+        <h1>图形分析</h1>
+
+        <div class="header-actions">
+            <button class="secondary-button"
+                    @onclick="BackToEditor">
+                返回编辑器
+            </button>
+        </div>
+    </header>
+
+    @if (_analysis is null)
+    {
+        <div class="analysis-empty">
+            还没有可分析的图形。请先在编辑器里点「分析」。
+        </div>
+    }
+    else
+    {
+        <div class="analysis-body">
+
+            <section class="analysis-shape">
+                <div class="analysis-code">@_code</div>
+
+                @if (_document is not null)
+                {
+                    <div class="ws-preview-scroll fixed"
+                         style="height:@(_document.LayerCount * 30 + 4)px;width:@(_document.PartCount * 30)px;margin:0 auto">
+                        <div class="ws-preview-inner"
+                             style="height:@(_document.LayerCount * 30 + 4)px">
+                            <ShapePreview Document="_document" CssClass="graph-preview" />
+                        </div>
+                    </div>
+                }
+
+                <div class="analysis-meta">
+                    @_document!.LayerCount 层 × @_document.PartCount 象限
+                </div>
+            </section>
+
+            <section class="analysis-cards">
+
+                <div class="analysis-card">
+                    <h2>角的合法性</h2>
+                    <p class="analysis-summary">
+                        共 @_analysis.Angles.Count 个角，@_analysis.LegalCount 个合法
+                        @(_analysis.IsFullyLegal ? "（全部合法）" : "")
+                    </p>
+
+                    <ul class="angle-list">
+                        @foreach (AngleResult angle in _analysis.Angles)
+                        {
+                            <li class="angle-row @(angle.IsLegal ? "ok" : "bad")">
+                                <span class="angle-name">角 @(angle.Part + 1)</span>
+                                <span class="angle-state">@(angle.IsLegal ? "合法" : "非法")</span>
+
+                                @if (!angle.IsLegal)
+                                {
+                                    <ul class="angle-reasons">
+                                        @foreach (string reason in angle.Failures)
+                                        {
+                                            <li>@reason</li>
+                                        }
+                                    </ul>
+                                }
+                            </li>
+                        }
+                    </ul>
+                </div>
+
+                <div class="analysis-card">
+                    <h2>稳定性</h2>
+                    <p class="analysis-summary">待接入</p>
+                </div>
+
+                <div class="analysis-card">
+                    <h2>分类</h2>
+                    <p class="analysis-summary">待接入</p>
+                </div>
+
+                <div class="analysis-card">
+                    <h2>制作路径</h2>
+                    <p class="analysis-summary">算法接入后以节点图显示</p>
+                </div>
+
+            </section>
+        </div>
+
+        <section class="analysis-rules">
+            <h2>角的判定规则</h2>
+            <ol>
+                <li>顶针下方相邻格必须非空；顶针在最底层时视为合法。</li>
+                <li>晶体下方若存在顶针，该顶针要么在最底层，要么下方全部是顶针。</li>
+                <li>同列两层晶体之间若存在空层，则两者之间至少有两个非空格，且下方晶体的正上方非空。</li>
+                <li>最低的那层晶体：在最底层、或下方有普通形状、或下方全部是顶针。</li>
+            </ol>
+            <p class="analysis-note">角 = 竖式图的一列。四条规则全部满足才算合法。</p>
+        </section>
+    }
+</div>
+
+@code {
+    private string _code = "";
+
+    private ShapeDocument? _document;
+
+    private ShapeAnalysisResult? _analysis;
+
+    private void BackToEditor()
+    {
+        Nav.NavigateTo("/");
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (string.IsNullOrWhiteSpace(Request.Code))
+        {
+            return;
+        }
+
+        _code = Request.Code;
+
+        if (!ShortCodeParser.TryInferDimensions(_code, out int layers, out int parts, out _))
+        {
+            return;
+        }
+
+        ParseResult parsed = new ShortCodeParser().Parse(_code, layers, parts);
+
+        if (!parsed.Success || parsed.Document is null)
+        {
+            _analysis = null;
+
+            return;
+        }
+
+        _document = parsed.Document;
+        _analysis = ShapeAngleAnalyzer.Analyze(_document);
+    }
+}

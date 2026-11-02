@@ -1965,3 +1965,135 @@ button {
     min-height: 0;
     overflow-x: hidden;
 }
+.analysis-page {
+    padding: 20px 24px 40px;
+}
+
+.analysis-body {
+    display: grid;
+    grid-template-columns: 320px minmax(0, 1fr);
+    gap: 20px;
+    align-items: start;
+}
+
+.analysis-shape {
+    background: #ffffff;
+    border: 1px solid #e6e2f2;
+    border-radius: 12px;
+    padding: 14px;
+    text-align: center;
+}
+
+.analysis-code {
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 12px;
+    color: #4527a0;
+    word-break: break-all;
+    margin-bottom: 10px;
+}
+
+.analysis-meta {
+    margin-top: 10px;
+    font-size: 12px;
+    color: #6b6b76;
+}
+
+.analysis-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.analysis-card {
+    background: #ffffff;
+    border: 1px solid #e6e2f2;
+    border-radius: 12px;
+    padding: 14px 16px;
+}
+
+.analysis-card h2 {
+    margin: 0 0 6px;
+    font-size: 15px;
+}
+
+.analysis-summary {
+    margin: 0 0 10px;
+    font-size: 13px;
+    color: #6b6b76;
+}
+
+.angle-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.angle-row {
+    border-left: 3px solid #c5c5c5;
+    padding: 4px 0 4px 10px;
+    font-size: 13px;
+}
+
+.angle-row.ok {
+    border-left-color: #2e9e5b;
+}
+
+.angle-row.bad {
+    border-left-color: #d64545;
+}
+
+.angle-name {
+    font-weight: 600;
+    margin-right: 8px;
+}
+
+.angle-state {
+    color: #6b6b76;
+}
+
+.angle-reasons {
+    margin: 4px 0 0;
+    padding-left: 18px;
+    color: #d64545;
+    font-size: 12px;
+}
+
+.analysis-rules {
+    margin-top: 20px;
+    background: #ffffff;
+    border: 1px solid #e6e2f2;
+    border-radius: 12px;
+    padding: 14px 18px;
+    font-size: 13px;
+    color: #3a3a44;
+}
+
+.analysis-rules h2 {
+    margin: 0 0 8px;
+    font-size: 15px;
+}
+
+.analysis-note {
+    color: #6b6b76;
+    margin: 8px 0 0;
+}
+
+.analysis-empty {
+    margin: 40px auto;
+    max-width: 520px;
+    padding: 24px;
+    text-align: center;
+    background: #ffffff;
+    border: 1px dashed #c9bff0;
+    border-radius: 12px;
+    color: #6b6b76;
+}
+
+@media (max-width: 900px) {
+    .analysis-body {
+        grid-template-columns: 1fr;
+    }
+}

@@ -7,6 +7,8 @@
 @using ShapeEditor.Web.Services
 @inject IJSRuntime JS
 @inject WorkspaceStore Workspace
+@inject AnalysisRequest Analysis
+@inject NavigationManager Nav
 @using Microsoft.JSInterop
 @implements IDisposable
 @using System.Text.Json
@@ -252,6 +254,14 @@
     private readonly ShortCodeParser Parser = new();
 
     private readonly ShortCodeExporter Exporter = new();
+
+    private void OpenAnalysis()
+    {
+        Analysis.Set(Exporter.Export(Document, omitTopEmptyLayers: true), "editor");
+
+        Nav.NavigateTo("/analysis");
+    }
+
 
     private ShapeDocument Document =
         new(layerCount: 4, partCount: 4);
