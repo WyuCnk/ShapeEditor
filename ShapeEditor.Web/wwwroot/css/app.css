@@ -2129,3 +2129,30 @@ button {
     color: #4527a0;
     font-size: 12px;
 }
+.angle-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.angle-table th,
+.angle-table td {
+    border-bottom: 1px solid #eeeaf7;
+    padding: 6px 8px;
+    text-align: left;
+}
+
+.angle-table th {
+    color: #6b6b76;
+    font-weight: 600;
+}
+
+.angle-table tr.bad td {
+    color: #d64545;
+}
+
+.angle-table tr.reason-row td {
+    color: #d64545;
+    font-size: 12px;
+    padding-top: 0;
+}

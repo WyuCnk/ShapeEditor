@@ -65,3 +65,23 @@ C123C0 旋转 → 123C0C
 - `ShapeEditor.Core/Analysis/ShapeExchange.cs`：切割 + 交叉拼接（无旋转）
 - `ShapeEditor.Core/Analysis/ProductionPathParser.cs`：骨架，遍历方向并做三次交换比对
 - `ShapeEditor.Core/Analysis/HalfStabilityAnalyzer.cs`：半边稳定性与交换方向合法性
+
+## 旋转与结晶（后续完整制作路径会用到）
+
+### 旋转
+
+短代码象限编号：**1 = 东北象限**（中轴线右上方），之后按顺时针依次 2、3、4……
+
+| 操作 | 含义 |
+| --- | --- |
+| 顺转一个象限 | 所有列按顺时针移到下一象限（等价编辑区「右移」） |
+| 逆转一个象限 | 所有列按逆时针移到上一象限（等价编辑区「左移」） |
+| 反转 | 顺转 n/2 个象限（对角交换） |
+
+实现上可复用 `ShapeDocument.MoveLeftCircular` / `MoveRightCircular`。
+
+### 结晶
+
+输入一个颜色代码（如 `r`），把图形里**所有空位与顶针**替换成该颜色的晶体，其他单元格不变。
+
+用途：制作路径末段把框架结晶成目标晶体结构。

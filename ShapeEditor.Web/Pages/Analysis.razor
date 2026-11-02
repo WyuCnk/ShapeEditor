@@ -82,25 +82,41 @@
                         @(_analysis.IsFullyLegal ? "（全部合法）" : "")
                     </p>
 
-                    <ul class="angle-list">
-                        @foreach (AngleResult angle in _analysis.Angles)
-                        {
-                            <li class="angle-row @(angle.IsLegal ? "ok" : "bad")">
-                                <span class="angle-name">角 @(angle.Part + 1)</span>
-                                <span class="angle-state">@(angle.IsLegal ? "合法" : "非法")</span>
+                    <table class="angle-table">
+                        <thead>
+                            <tr>
+                                <th>角</th>
+                                <th>合法性</th>
+                                <th>可制作性</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (AngleResult angle in _analysis.Angles)
+                            {
+                                <tr class="@(angle.IsLegal ? "ok" : "bad")">
+                                    <td>角 @(angle.Part + 1)</td>
+                                    <td>@(angle.IsLegal ? "合法" : "非法")</td>
+                                    <td>@(angle.IsLegal ? "可制作" : "不可制作")</td>
+                                </tr>
 
                                 @if (!angle.IsLegal)
                                 {
-                                    <ul class="angle-reasons">
-                                        @foreach (string reason in angle.Failures)
-                                        {
-                                            <li>@reason</li>
-                                        }
-                                    </ul>
+                                    <tr class="reason-row">
+                                        <td colspan="3">
+                                            @foreach (string reason in angle.Failures)
+                                            {
+                                                <div>@reason</div>
+                                            }
+                                        </td>
+                                    </tr>
                                 }
-                            </li>
-                        }
-                    </ul>
+                            }
+                        </tbody>
+                    </table>
+
+                    <p class="analysis-note">
+                        角的可制作性暂时等同于合法性，等角的制作算法接入后细化。
+                    </p>
                 </div>
 
                 <div class="analysis-card">
