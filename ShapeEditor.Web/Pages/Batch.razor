@@ -2,8 +2,11 @@
 
 @using ShapeEditor.Core.Models
 @using ShapeEditor.Core.Services
+@using ShapeEditor.Web.Models
 @using ShapeEditor.Web.Services
 @inject WorkspaceStore Workspace
+@inject AnalysisRequest Analysis
+@inject NavigationManager Nav
 
 <PageTitle>批量查看竖式图</PageTitle>
 
@@ -36,6 +39,20 @@
                     @onclick="ImportAllToWorkspace"
                     title="把当前列表里的图形全部加入工作区，重复项会跳过">
                 全部加入工作区
+            </button>
+
+            <button class="primary-button"
+                    disabled="@(!HasSelectedItem)"
+                    @onclick="AddSelectedToEditor"
+                    title="把选中的图形载入编辑器">
+                加入编辑区
+            </button>
+
+            <button class="secondary-button"
+                    disabled="@(!HasSelectedItem)"
+                    @onclick="AnalyzeSelected"
+                    title="分析选中的图形">
+                分析
             </button>
 
             <span class="batch-hint">
@@ -252,6 +269,33 @@
 
     private BatchItemView CurrentItem =>
         _pageItems[_currentIndex - _pageStart];
+
+    /// <summary>
+    /// 当前选中的条目。列表为空或页码尚未同步时返回 null，
+    /// 避免按钮在无选中项时取到越界下标。
+    /// </summary>
+    private BatchItemView? SelectedItem
+    {
+        get
+        {
+            int offset = _currentIndex - _pageStart;
+
+            if (_entries.Count == 0 ||
+                offset < 0 ||
+                offset >= _pageItems.Count)
+            {
+                return null;
+            }
+
+            return _pageItems[offset];
+        }
+    }
+
+    /// <summary>
+    /// 只有选中且解析成功的条目才能加入编辑区或分析。
+    /// </summary>
+    private bool HasSelectedItem =>
+        SelectedItem is { Document: not null };
 
     #region 导入与解析
 
@@ -505,6 +549,56 @@
         _currentIndex = 0;
         _pageIndex = 0;
         _pageStart = 0;
+    }
+
+    #endregion
+
+    #region 选中条目的去向
+
+    /// <summary>
+    /// 把选中的图形作为待载入项交给编辑器，
+    /// 由 Home.razor 的 LoadPendingWorkspaceItemAsync 消费。
+    /// </summary>
+    private void AddSelectedToEditor()
+    {
+        BatchItemView? item = SelectedItem;
+
+        if (item?.Document is null)
+        {
+            return;
+        }
+
+        Workspace.PendingLoad = new WorkspaceItem
+        {
+            Name = item.Code.Length <= 24
+                ? item.Code
+                : item.Code[..24] + '…',
+            Code = item.Code,
+            Format = _format,
+            Layers = item.LayerCount,
+            Parts = item.PartCount,
+            Source = "batch",
+            CreatedAt = DateTime.Now
+        };
+
+        Nav.NavigateTo("/");
+    }
+
+    /// <summary>
+    /// 把选中的短代码交给分析页，来源标记为批量页。
+    /// </summary>
+    private void AnalyzeSelected()
+    {
+        BatchItemView? item = SelectedItem;
+
+        if (item?.Document is null)
+        {
+            return;
+        }
+
+        Analysis.Set(item.Code, "batch");
+
+        Nav.NavigateTo("/analysis");
     }
 
     #endregion
