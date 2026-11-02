@@ -96,6 +96,8 @@ internal static class Program
             ("分析:逐角结果", AnalysisTests.AnalyzeReportsPerAngle),
             ("分析:实心柱稳定", AnalysisTests.FilledColumnIsStable),
             ("分析:悬空晶体不稳定", AnalysisTests.FloatingCrystalIsUnstable),
+            ("分析:实心块可交换", AnalysisTests.HalfStabilityOnSolidBlock),
+            ("分析:悬空形状不可交换", AnalysisTests.HalfStabilityRejectsFloatingShape),
             ("工作区:素材跨工作区共享", WorkspaceStorePersistenceTests.MaterialSurvivesNewProject),
             ("物理:堆叠拒绝不同象限数", PhysicsTests.StackRejectsDifferentPartCount),
             ("物理:堆叠清晶并使用上限", PhysicsTests.StackClearsTopCrystalsAndUsesLimit),

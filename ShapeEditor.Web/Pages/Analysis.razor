@@ -115,6 +115,32 @@
                 </div>
 
                 <div class="analysis-card">
+                    <h2>半边稳定性</h2>
+
+                    <p class="analysis-summary">
+                        @(_half is null
+                            ? "需要在偶数象限的图形上分析。"
+                            : (_half.IsExchangeable
+                                ? $"可交换：共 {_half.DirectionCount} 个交换方向，其中 {_half.LegalDirections.Count} 个合法。"
+                                : $"不可交换：共 {_half.DirectionCount} 个交换方向，没有合法的。"))
+                    </p>
+
+                    @if (_half is not null && _half.IsExchangeable)
+                    {
+                        <ul class="direction-list">
+                            @foreach (string direction in _half.LegalDirections.Take(60))
+                            {
+                                <li>@direction</li>
+                            }
+                        </ul>
+
+                        @if (_half.LegalDirections.Count > 60)
+                        {
+                            <p class="analysis-note">仅显示前 60 个。</p>
+                        }
+                    }
+                </div>
+                <div class="analysis-card">
                     <h2>分类</h2>
                     <p class="analysis-summary">待接入</p>
                 </div>
@@ -140,6 +166,8 @@
 
     private CollapseMode _mode = CollapseMode.IncludeCycles;
 
+    private HalfStabilityResult? _half;
+
     private void SetMode(
         CollapseMode mode)
     {
@@ -148,6 +176,7 @@
         if (_document is not null)
         {
             _analysis = ShapeAngleAnalyzer.Analyze(_document, mode);
+            _half = HalfStabilityAnalyzer.Analyze(_document, mode);
         }
     }
 
@@ -181,5 +210,6 @@
 
         _document = parsed.Document;
         _analysis = ShapeAngleAnalyzer.Analyze(_document, _mode);
+        _half = HalfStabilityAnalyzer.Analyze(_document, _mode);
     }
 }

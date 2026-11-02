@@ -132,6 +132,38 @@ internal static class AnalysisTests
 
         Assert.False(ShapeAngleAnalyzer.IsStable(document, ShapeEditor.Core.Physics.CollapseMode.FloorOnly));
     }
+    public static void HalfStabilityOnSolidBlock()
+    {
+        var document = new ShapeDocument(2, 4);
+
+        for (int layer = 0; layer < 2; layer++)
+        {
+            for (int part = 0; part < 4; part++)
+            {
+                document[layer, part] = ShapeCell.Shape('C', 'u');
+            }
+        }
+
+        HalfStabilityResult result = HalfStabilityAnalyzer.Analyze(
+            document,
+            ShapeEditor.Core.Physics.CollapseMode.FloorOnly);
+
+        Assert.Equal(2, result.DirectionCount);
+        Assert.True(result.IsExchangeable);
+    }
+
+    public static void HalfStabilityRejectsFloatingShape()
+    {
+        var document = new ShapeDocument(3, 4);
+
+        document[2, 0] = ShapeCell.Shape('C', 'u');
+
+        HalfStabilityResult result = HalfStabilityAnalyzer.Analyze(
+            document,
+            ShapeEditor.Core.Physics.CollapseMode.FloorOnly);
+
+        Assert.False(result.IsExchangeable);
+    }
     public static void AnalyzeReportsPerAngle()
     {
         var document = new ShapeDocument(2, 2);
