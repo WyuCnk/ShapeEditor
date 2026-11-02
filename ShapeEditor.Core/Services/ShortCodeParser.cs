@@ -1,4 +1,4 @@
-﻿using ShapeEditor.Core.Models;
+using ShapeEditor.Core.Models;
 
 namespace ShapeEditor.Core.Services;
 
@@ -47,6 +47,12 @@ public sealed class ShortCodeParser
         {
             return ParseResult.Fail(
                 "层数和象限数必须大于 0。");
+        }
+
+        if (partCount % 2 != 0)
+        {
+            return ParseResult.Fail(
+                "象限数必须为偶数。");
         }
 
         string[] layerCodes =

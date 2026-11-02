@@ -17,6 +17,16 @@
         <h1>图形分析</h1>
 
         <div class="header-actions">
+            <div class="code-format">
+                <button class="@(_mode == CollapseMode.IncludeCycles ? "format-button active" : "format-button")"
+                        @onclick="() => SetMode(CollapseMode.IncludeCycles)">
+                    含循环支撑
+                </button>
+                <button class="@(_mode == CollapseMode.FloorOnly ? "format-button active" : "format-button")"
+                        @onclick="() => SetMode(CollapseMode.FloorOnly)">
+                    仅地面
+                </button>
+            </div>
             <button class="secondary-button"
                     @onclick="BackToEditor">
                 返回编辑器
@@ -96,16 +106,6 @@
                 <div class="analysis-card">
                     <h2>稳定性</h2>
 
-                    <div class="analysis-mode">
-                        <button class="@(_mode == CollapseMode.IncludeCycles ? "format-button active" : "format-button")"
-                                @onclick="() => SetMode(CollapseMode.IncludeCycles)">
-                            含循环支撑
-                        </button>
-                        <button class="@(_mode == CollapseMode.FloorOnly ? "format-button active" : "format-button")"
-                                @onclick="() => SetMode(CollapseMode.FloorOnly)">
-                            仅地面
-                        </button>
-                    </div>
 
                     <p class="analysis-summary">
                         @(_analysis.IsStable
