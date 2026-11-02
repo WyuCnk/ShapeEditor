@@ -14,6 +14,7 @@
 @implements IDisposable
 @inject WorkspaceStore Store
 @inject NavigationManager Nav
+@inject AnalysisRequest Analysis
 @inject IJSRuntime JS
 
 <PageTitle>图形工作区</PageTitle>
@@ -42,6 +43,12 @@
 
             <button class="mini-button" disabled="@(Store.SelectedNode is null)"
                     @onclick="BeginStackFromToolbar">堆叠</button>
+
+            <button class="mini-button" disabled="@(!HasSelectableShape)"
+                    @onclick="OpenSelectedInEditor">加到编辑区</button>
+
+            <button class="mini-button" disabled="@(!HasSelectableShape)"
+                    @onclick="AnalyzeSelected">分析</button>
 
             <button class="mini-button"
                     disabled="@(Store.Nodes.Count == 0)"
@@ -485,6 +492,61 @@
         }
     }
 
+    /// <summary>当前是否选中了带图形的素材或节点。</summary>
+    private bool HasSelectableShape =>
+        (Store.SelectedNode is not null && NodeDocument(Store.SelectedNode) is not null) ||
+        _selectedMaterial is not null;
+
+    private (string Code, ShortCodeFormat Format, int Layers, int Parts)? SelectedShape()
+    {
+        if (Store.SelectedNode is WorkspaceNode node &&
+            NodeDocument(node) is ShapeDocument document)
+        {
+            return (
+                new ShapeEditor.Core.Services.ShortCodeExporter()
+                    .Export(document, omitTopEmptyLayers: true),
+                ShortCodeFormat.Full,
+                document.LayerCount,
+                document.PartCount);
+        }
+
+        if (_selectedMaterial is WorkspaceItem material)
+        {
+            return (material.Code, material.Format, material.Layers, material.Parts);
+        }
+
+        return null;
+    }
+
+    private void OpenSelectedInEditor()
+    {
+        if (SelectedShape() is not (string code, ShortCodeFormat format, int layers, int parts))
+        {
+            return;
+        }
+
+        Store.PendingLoad = new WorkspaceItem
+        {
+            Code = code,
+            Format = format,
+            Layers = layers,
+            Parts = parts
+        };
+
+        Nav.NavigateTo("/");
+    }
+
+    private void AnalyzeSelected()
+    {
+        if (SelectedShape() is not (string code, ShortCodeFormat format, int layers, int parts))
+        {
+            return;
+        }
+
+        Analysis.Set(code, "workspace");
+
+        Nav.NavigateTo("/analysis");
+    }
     private string? _stackBaseId;
 
     private string? _stackHint;
