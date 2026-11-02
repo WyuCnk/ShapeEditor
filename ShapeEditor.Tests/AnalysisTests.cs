@@ -260,6 +260,27 @@ internal static class AnalysisTests
 
         Assert.True(result.Error is not null);
     }
+    public static void ProductionPathSmokeTest()
+    {
+        var document = new ShapeDocument(2, 4);
+
+        for (int layer = 0; layer < 2; layer++)
+        {
+            for (int part = 0; part < 4; part++)
+            {
+                document[layer, part] = ShapeCell.Shape('C', 'u');
+            }
+        }
+
+        ProductionPathResult result = ProductionPathParser.Parse(document);
+
+        System.Console.WriteLine(
+            "producible=" + result.IsProducible +
+            " error=" + (result.Error ?? "-") +
+            " direction=" + (result.Path?.Direction ?? "-"));
+
+        Assert.True(result.IsProducible || result.Error is not null);
+    }
     public static void AnalyzeReportsPerAngle()
     {
         var document = new ShapeDocument(2, 2);

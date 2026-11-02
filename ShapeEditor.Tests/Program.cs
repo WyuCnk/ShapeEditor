@@ -103,6 +103,7 @@ internal static class Program
             ("分析:性质-循环支撑", AnalysisTests.PropertiesMarkCycleSupport),
             ("分析:交换保持象限数", AnalysisTests.ExchangeKeepsPartCount),
             ("分析:交换拒绝不同象限", AnalysisTests.ExchangeRejectsDifferentPartCount),
+            ("分析:制作路径冒烟", AnalysisTests.ProductionPathSmokeTest),
             ("工作区:素材跨工作区共享", WorkspaceStorePersistenceTests.MaterialSurvivesNewProject),
             ("物理:堆叠拒绝不同象限数", PhysicsTests.StackRejectsDifferentPartCount),
             ("物理:堆叠清晶并使用上限", PhysicsTests.StackClearsTopCrystalsAndUsesLimit),
