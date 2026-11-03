@@ -388,7 +388,7 @@
 
         if (_showHalf)
         {
-            payload.Sections.Add(BuildHalfSection());
+            payload.Sections.AddRange(BuildHalfSections());
         }
 
         if (_showRules)
@@ -442,19 +442,33 @@
             Title = "角的合法性"
         };
 
+        // 汇总行仍作为表格上方的说明文本，表格只放每个角的结果。
         section.Lines.Add(
             $"共 {analysis.Angles.Count} 个角，{analysis.LegalCount} 个合法" +
             (analysis.IsFullyLegal ? "（全部合法）" : ""));
 
+        // 与页面上的角分析表格保持相同的列。
+        var table = new AnalysisExportTable
+        {
+            Headers = new List<string> { "角", "合法性", "可制作性", "备注" }
+        };
+
         foreach (AngleResult angle in analysis.Angles)
         {
-            string note = angle.IsLegal
-                ? "—"
-                : string.Join("；", angle.Failures);
+            table.Rows.Add(new List<string>
+            {
+                $"角 {angle.Part + 1}",
+                angle.IsLegal ? "合法" : "非法",
 
-            section.Lines.Add(
-                $"角 {angle.Part + 1} {(angle.IsLegal ? "合法" : "非法")} {note}");
+                // 可制作性暂时等同于合法性，等角的制作算法接入后细化。
+                angle.IsLegal ? "可制作" : "不可制作",
+                angle.Failures.Count == 0
+                    ? "—"
+                    : string.Join("；", angle.Failures)
+            });
         }
+
+        section.Table = table;
 
         return section;
     }
@@ -474,41 +488,63 @@
         return section;
     }
 
-    private AnalysisExportSection BuildHalfSection()
+    /// <summary>
+    /// 半边稳定性导出成多个板块：最前面一个说明板块（汇总 + 定义），
+    /// 之后每个轴一个表格板块，与页面按轴分组的表格一致。
+    /// </summary>
+    private List<AnalysisExportSection> BuildHalfSections()
     {
-        var section = new AnalysisExportSection
+        var sections = new List<AnalysisExportSection>
         {
-            Title = "半边稳定性"
+            new AnalysisExportSection
+            {
+                Title = "半边稳定性"
+            }
         };
+
+        AnalysisExportSection summary = sections[0];
+
+        summary.Lines.Add(
+            "交换方向合法的定义：两个半边都稳定，并且该方向上左右各两个带柱子的半半边也全部稳定。");
 
         if (_half is null)
         {
-            section.Lines.Add("需要在偶数象限的图形上分析。");
+            summary.Lines.Insert(0, "需要在偶数象限的图形上分析。");
 
-            return section;
+            return sections;
         }
 
-        section.Lines.Add(
+        summary.Lines.Insert(
+            0,
             _half.IsExchangeable
                 ? $"可交换：共 {_half.DirectionCount} 个交换方向，其中 {_half.LegalDirections.Count} 个合法。"
                 : $"不可交换：共 {_half.DirectionCount} 个交换方向，没有合法的。");
 
-        if (_half.IsExchangeable)
+        foreach (IGrouping<int, ExchangeDirection> group in
+                 _half.Directions.GroupBy(direction => direction.Axis))
         {
-            // 与页面保持一致：最多导出前 60 个合法方向。
-            const int limit = 60;
-
-            section.Lines.Add(
-                "合法方向：" +
-                string.Join("、", _half.LegalDirections.Take(limit)));
-
-            if (_half.LegalDirections.Count > limit)
+            var table = new AnalysisExportTable
             {
-                section.Lines.Add($"（仅显示前 {limit} 个）");
+                Headers = new List<string> { "交换方向", "合法" }
+            };
+
+            foreach (ExchangeDirection direction in group)
+            {
+                table.Rows.Add(new List<string>
+                {
+                    direction.Display,
+                    direction.IsLegal ? "是" : "否"
+                });
             }
+
+            sections.Add(new AnalysisExportSection
+            {
+                Title = $"轴 {group.Key + 1}",
+                Table = table
+            });
         }
 
-        return section;
+        return sections;
     }
 
     private static AnalysisExportSection BuildRulesSection()

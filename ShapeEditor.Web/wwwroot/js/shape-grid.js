@@ -2050,7 +2050,9 @@ window.shapeGridTryShare = async function (blob, fileName) {
  * 分析图导出（单栏版式）。
  *
  * payload 结构见 Models/AnalysisExportPayload.cs：
- * { title, code, state, sections: [{ title, lines, isPlaceholder }], meta, generatedAt }
+ * { title, code, state, sections: [{ title, lines, table, isPlaceholder }], meta, generatedAt }
+ * section.table = { headers: [...], rows: [[...], ...] } 时按等宽列表格绘制，
+ * 否则（或同时还有 lines 时先画文本行）沿用文本行绘制。
  * 页面只会把当前显示的板块放进 sections，隐藏的板块不会出现在图片里。
  */
 window.shapeGrid.downloadAnalysis = async function (payload, fileName) {
@@ -2161,6 +2163,25 @@ window.shapeGrid.downloadAnalysis = async function (payload, fileName) {
             for (let k = 0; k < wrapped.length; k++) {
                 lines.push(wrapped[k]);
             }
+        }
+
+        const table = normalizeAnalysisTable(section.table);
+
+        if (table) {
+            // 先画 lines（汇总/说明），再画表格；表格高度按行数算，文本宽度在绘制时截断。
+            blocks.push({
+                kind: "table",
+                height:
+                    SECTION_TITLE_HEIGHT +
+                    lines.length * LINE_HEIGHT +
+                    analysisTableHeight(table) +
+                    SECTION_GAP,
+                title: title,
+                lines: lines,
+                table: table
+            });
+
+            continue;
         }
 
         if (lines.length === 0) {
@@ -2298,6 +2319,40 @@ window.shapeGrid.downloadAnalysis = async function (payload, fileName) {
             ctx.beginPath();
             ctx.moveTo(PADDING, lineY + 6);
             ctx.lineTo(width - PADDING, lineY + 6);
+            ctx.stroke();
+
+            y += block.height;
+            continue;
+        }
+
+        if (block.kind === "table") {
+            drawSectionTitle(block.title, y);
+
+            ctx.font = TEXT_FONT;
+            ctx.fillStyle = "#3A3A44";
+            ctx.textAlign = "left";
+            ctx.textBaseline = "top";
+
+            let lineY = y + SECTION_TITLE_HEIGHT;
+
+            for (let j = 0; j < block.lines.length; j++) {
+                if (block.lines[j] !== "") {
+                    ctx.fillText(block.lines[j], PADDING, lineY);
+                }
+
+                lineY += LINE_HEIGHT;
+            }
+
+            drawAnalysisTable(ctx, block.table, PADDING, lineY, contentWidth);
+
+            const tableBottom = lineY + analysisTableHeight(block.table);
+
+            // 板块之间的细分隔线
+            ctx.strokeStyle = "#EEEAF7";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(PADDING, tableBottom + 6);
+            ctx.lineTo(width - PADDING, tableBottom + 6);
             ctx.stroke();
 
             y += block.height;
@@ -2516,6 +2571,182 @@ function tokenizeAnalysisText(text) {
     flush();
 
     return tokens;
+}
+
+/*
+ * 分析导出表格的版式：行高 22px、字号 12px，中文沿用同一套字体栈。
+ * 表格列等宽，列宽 = 画布内容宽度 / 列数，文本过长时截断并加省略号。
+ */
+const ANALYSIS_TABLE_ROW_HEIGHT = 22;
+
+const ANALYSIS_TABLE_FONT = '400 12px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+
+const ANALYSIS_TABLE_HEADER_FONT = '700 12px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+
+/* 表格总高度：表头一行 + 表体若干行，末尾留 8px 给板块分隔线。 */
+function analysisTableHeight(table) {
+    const bodyRows = table && Array.isArray(table.rows) ? table.rows.length : 0;
+
+    return (1 + bodyRows) * ANALYSIS_TABLE_ROW_HEIGHT + 8;
+}
+
+/* 把 section.table 归一化成 { headers: string[], rows: string[][] }，空表格返回 null。 */
+function normalizeAnalysisTable(table) {
+    if (!table || typeof table !== "object") {
+        return null;
+    }
+
+    const headers = Array.isArray(table.headers)
+        ? table.headers.map(function (value) {
+            return value === null || value === undefined ? "" : String(value);
+        })
+        : [];
+
+    const rows = [];
+
+    if (Array.isArray(table.rows)) {
+        for (let i = 0; i < table.rows.length; i++) {
+            const rawRow = table.rows[i];
+
+            rows.push(
+                Array.isArray(rawRow)
+                    ? rawRow.map(function (value) {
+                        return value === null || value === undefined ? "" : String(value);
+                    })
+                    : []);
+        }
+    }
+
+    if (headers.length === 0 && rows.length === 0) {
+        return null;
+    }
+
+    return { headers: headers, rows: rows };
+}
+
+/*
+ * 单元格文本截断：超出列宽时从尾部删字并补一个省略号。
+ * 用 Array.from 拆字，避免把中文/emoji 的代理对截成半个。
+ */
+function truncateAnalysisText(ctx, text, font, maxWidth) {
+    const value = text === null || text === undefined ? "" : String(text);
+
+    if (!value || maxWidth <= 0) {
+        return "";
+    }
+
+    ctx.font = font;
+
+    if (ctx.measureText(value).width <= maxWidth) {
+        return value;
+    }
+
+    const chars = Array.from(value);
+    const ellipsis = "…";
+
+    let length = chars.length;
+
+    while (length > 0 &&
+        ctx.measureText(chars.slice(0, length).join("") + ellipsis).width > maxWidth) {
+        length--;
+    }
+
+    return length > 0
+        ? chars.slice(0, length).join("") + ellipsis
+        : "";
+}
+
+/*
+ * 在画布上画一个等宽列表格：表头底色 + 行间分隔线 + 外框。
+ * 表格左边界和宽度由调用方给出，不含标题和说明文本。
+ */
+function drawAnalysisTable(ctx, table, left, top, tableWidth) {
+    const headers = table.headers;
+    const rows = table.rows;
+
+    let columnCount = headers.length;
+
+    for (let i = 0; i < rows.length; i++) {
+        if (rows[i].length > columnCount) {
+            columnCount = rows[i].length;
+        }
+    }
+
+    if (columnCount === 0) {
+        columnCount = 1;
+    }
+
+    const columnWidth = tableWidth / columnCount;
+    const cellPadding = 8;
+    const textWidth = Math.max(0, columnWidth - cellPadding * 2);
+    const rowMiddle = ANALYSIS_TABLE_ROW_HEIGHT / 2;
+
+    let rowTop = top;
+
+    // 表头：淡紫底色，与站点主色 #512bd4 同一色系。
+    ctx.fillStyle = "#F3F0FC";
+    ctx.fillRect(left, rowTop, tableWidth, ANALYSIS_TABLE_ROW_HEIGHT);
+
+    ctx.font = ANALYSIS_TABLE_HEADER_FONT;
+    ctx.fillStyle = "#4A3F72";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+
+    for (let column = 0; column < columnCount; column++) {
+        const text = truncateAnalysisText(
+            ctx,
+            headers[column] || "",
+            ANALYSIS_TABLE_HEADER_FONT,
+            textWidth);
+
+        ctx.fillText(
+            text,
+            left + column * columnWidth + cellPadding,
+            rowTop + rowMiddle);
+    }
+
+    rowTop += ANALYSIS_TABLE_ROW_HEIGHT;
+
+    // 表体：隔行浅色底 + 每行下方一条分隔线。
+    ctx.font = ANALYSIS_TABLE_FONT;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+
+    for (let row = 0; row < rows.length; row++) {
+        if (row % 2 === 1) {
+            ctx.fillStyle = "#FBFAFE";
+            ctx.fillRect(left, rowTop, tableWidth, ANALYSIS_TABLE_ROW_HEIGHT);
+        }
+
+        ctx.fillStyle = "#3A3A44";
+
+        for (let column = 0; column < columnCount; column++) {
+            const text = truncateAnalysisText(
+                ctx,
+                rows[row][column] || "",
+                ANALYSIS_TABLE_FONT,
+                textWidth);
+
+            ctx.fillText(
+                text,
+                left + column * columnWidth + cellPadding,
+                rowTop + rowMiddle);
+        }
+
+        rowTop += ANALYSIS_TABLE_ROW_HEIGHT;
+
+        ctx.strokeStyle = "#EEEAF7";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(left, rowTop);
+        ctx.lineTo(left + tableWidth, rowTop);
+        ctx.stroke();
+    }
+
+    // 外框：让表格与上下文本行区分开。
+    ctx.strokeStyle = "#E6E2F2";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(left, top, tableWidth, (1 + rows.length) * ANALYSIS_TABLE_ROW_HEIGHT);
 }
 
 /* 供 Blazor 回读节点的真实渲染尺寸，箭头锚点据此贴合边框 */
