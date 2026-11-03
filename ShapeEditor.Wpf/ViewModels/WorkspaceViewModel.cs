@@ -75,6 +75,7 @@ public sealed class WorkspaceViewModel : ObservableObject
         DeleteNodeCommand = new RelayCommand(p => DeleteNode(p));
         AutoLayoutCommand = new RelayCommand(_ => AutoLayout());
         SelectNodeCommand = new RelayCommand(p => SelectNode(p));
+        RemoveMaterialCommand = new RelayCommand(p => RemoveMaterial(p));
 
         NewNodeCommand = new RelayCommand(() => _store.CreateNode());
         NewProjectCommand = new RelayCommand(NewProject);
@@ -111,6 +112,9 @@ public sealed class WorkspaceViewModel : ObservableObject
     public System.Windows.Input.ICommand AutoLayoutCommand { get; }
 
     public System.Windows.Input.ICommand SelectNodeCommand { get; }
+
+    /// <summary>删除素材库中的一条素材，执行前会二次确认。</summary>
+    public System.Windows.Input.ICommand RemoveMaterialCommand { get; }
 
     public System.Windows.Input.ICommand NewNodeCommand { get; }
 
@@ -204,6 +208,9 @@ public sealed class WorkspaceViewModel : ObservableObject
     public bool IsCycleMode => _store.Mode == CollapseMode.IncludeCycles;
 
     public bool IsFloorMode => _store.Mode == CollapseMode.FloorOnly;
+
+    /// <summary>当前工作区使用的下落类型，分析窗口会沿用同一规则。</summary>
+    public CollapseMode Mode => _store.Mode;
 
     /// <summary>
     /// 高度上限，绑定到输入框。
@@ -878,6 +885,101 @@ public sealed class WorkspaceViewModel : ObservableObject
             material,
             x,
             y);
+    }
+
+    /// <summary>
+    /// 删除素材库中的一条素材；删除前用 MessageBox 二次确认。
+    /// 如果被删的正好是当前选中的素材，删除后清空选中。
+    /// </summary>
+    private void RemoveMaterial(
+        object? parameter)
+    {
+        MaterialViewModel? material = parameter as MaterialViewModel
+            ?? _selectedMaterial;
+
+        if (material is null)
+        {
+            return;
+        }
+
+        MessageBoxResult answer = MessageBox.Show(
+            $"将从素材库删除「{material.Name}」。\n\n此操作不可撤销，继续？",
+            "删除素材",
+            MessageBoxButton.OKCancel,
+            MessageBoxImage.Warning);
+
+        if (answer != MessageBoxResult.OK)
+        {
+            return;
+        }
+
+        bool wasSelected = _selectedMaterial?.Id == material.Id;
+
+        _store.RemoveMaterial(material.Id);
+
+        if (wasSelected)
+        {
+            SelectedMaterial = null;
+        }
+    }
+
+    /// <summary>
+    /// 取当前选中节点或选中素材的短代码，供分析窗口使用。
+    /// 节点优先；节点没有图形时退回当前选中的素材。
+    /// </summary>
+    public bool TryGetAnalysisTarget(
+        out AnalysisTarget target)
+    {
+        target = default!;
+
+        WorkspaceNode? node = _store.SelectedNode;
+
+        if (node is not null)
+        {
+            ShapeDocument? document = _store.GetEffectiveDocument(node);
+
+            if (document is not null)
+            {
+                target = new AnalysisTarget(
+                    _exporter.Export(document, omitTopEmptyLayers: false),
+                    document.LayerCount,
+                    document.PartCount,
+                    ShortCodeFormat.Full);
+
+                return true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(node.Code) &&
+                node.Layers > 0 &&
+                node.Parts > 0)
+            {
+                target = new AnalysisTarget(
+                    node.Code,
+                    node.Layers,
+                    node.Parts,
+                    node.Format);
+
+                return true;
+            }
+        }
+
+        MaterialViewModel? material = _selectedMaterial;
+
+        if (material is not null &&
+            !string.IsNullOrWhiteSpace(material.Code) &&
+            material.Layers > 0 &&
+            material.Parts > 0)
+        {
+            target = new AnalysisTarget(
+                material.Code,
+                material.Layers,
+                material.Parts,
+                material.Format);
+
+            return true;
+        }
+
+        return false;
     }
 
     private static void ShowMessage(

@@ -184,6 +184,11 @@
                     ToolTip="按依赖关系重新排列所有节点"
                     Command="{Binding AutoLayoutCommand}"
                     IsEnabled="{Binding HasNodes}" />
+
+            <Button Style="{StaticResource MiniButton}"
+                    Content="分析"
+                    ToolTip="对选中节点或选中素材打开分析窗口"
+                    Click="OnAnalyzeClick" />
         </WrapPanel>
 
         <!-- 工具行 -->
@@ -289,10 +294,27 @@
                                            TextTrimming="CharacterEllipsis"
                                            Margin="2,4,0,0" />
 
-                                <TextBlock Text="{Binding DimensionText}"
-                                           FontSize="11"
-                                           Foreground="#6B6B76"
-                                           Margin="2,2,0,0" />
+                                <Grid Margin="2,2,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <TextBlock Text="{Binding DimensionText}"
+                                               FontSize="11"
+                                               Foreground="#6B6B76"
+                                               VerticalAlignment="Center" />
+
+                                    <Button Grid.Column="1"
+                                            Content="删除"
+                                            Style="{StaticResource MiniButton}"
+                                            Padding="6,1"
+                                            Margin="0"
+                                            FontSize="11"
+                                            ToolTip="从素材库删除（需确认）"
+                                            Command="{Binding DataContext.RemoveMaterialCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                            CommandParameter="{Binding}" />
+                                </Grid>
                             </StackPanel>
                         </DataTemplate>
                     </ListBox.ItemTemplate>

@@ -24,6 +24,12 @@
             <StackPanel Orientation="Horizontal"
                         HorizontalAlignment="Right"
                         VerticalAlignment="Center">
+                <Button Content="分析"
+                        Click="OnAnalysisClick"
+                        Style="{StaticResource Button.Secondary}"
+                        ToolTip="分析当前图形的角、稳定性与半边稳定性"
+                        Margin="0,0,8,0" />
+
                 <Button Content="加入工作区"
                         Command="{Binding AddToWorkspaceCommand}"
                         Style="{StaticResource Button.Secondary}"

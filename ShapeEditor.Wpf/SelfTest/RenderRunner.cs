@@ -71,6 +71,12 @@ public static class RenderRunner
             RenderWorkspaceView(
                 Path.Combine(outputDirectory, "ui-workspace.png"));
 
+            RenderAnalysisWindow(
+                Path.Combine(outputDirectory, "ui-analysis.png"));
+
+            CheckAnalysis(
+                Path.Combine(outputDirectory, "analysis-check.txt"));
+
             RenderWorkspaceExport(
                 Path.Combine(outputDirectory, "workspace-export.png"));
 
@@ -312,6 +318,125 @@ public static class RenderRunner
         };
 
         RenderElement(view, 1280, 800, path);
+    }
+
+    private static void RenderAnalysisWindow(
+        string path)
+    {
+        ShapeDocument document = CreateSampleDocument();
+
+        string code = new ShortCodeExporter().Export(
+            document,
+            omitTopEmptyLayers: false);
+
+        /*
+         * 分析窗口的入口在编辑器和工作区，这里直接按同样的参数构造，
+         * 显示到屏幕外再离屏渲染，检查 XAML、绑定与表格布局。
+         */
+        var window = new AnalysisWindow(
+            code,
+            document.LayerCount,
+            document.PartCount,
+            Core.Models.ShortCodeFormat.Full,
+            Core.Physics.CollapseMode.IncludeCycles)
+        {
+            ShowInTaskbar = false,
+            WindowStyle = WindowStyle.None,
+            ResizeMode = ResizeMode.NoResize,
+            WindowStartupLocation = WindowStartupLocation.Manual,
+            Left = -20000,
+            Top = -20000,
+            Width = 1000,
+            Height = 700,
+            Opacity = 0
+        };
+
+        window.Show();
+
+        window.UpdateLayout();
+
+        if (window.Content is FrameworkElement content)
+        {
+            int width = (int)Math.Max(1, content.ActualWidth);
+
+            int height = (int)Math.Max(1, content.ActualHeight);
+
+            var bitmap = new RenderTargetBitmap(
+                width,
+                height,
+                96,
+                96,
+                PixelFormats.Pbgra32);
+
+            bitmap.Render(content);
+
+            SaveBitmap(bitmap, path);
+        }
+
+        window.Close();
+    }
+
+    /// <summary>
+    /// 分析窗口的自检：确认短代码被解析、三个分析器都产出了内容，
+    /// 并且切换下落类型后结果会重新计算。
+    /// </summary>
+    private static void CheckAnalysis(
+        string path)
+    {
+        var lines = new List<string>();
+
+        bool ok = false;
+
+        try
+        {
+            ShapeDocument document = CreateSampleDocument();
+
+            string code = new ShortCodeExporter().Export(
+                document,
+                omitTopEmptyLayers: false);
+
+            var viewModel = new AnalysisViewModel(
+                code,
+                document.LayerCount,
+                document.PartCount,
+                Core.Models.ShortCodeFormat.Full,
+                Core.Physics.CollapseMode.IncludeCycles);
+
+            bool loaded =
+                viewModel.HasDocument &&
+                !viewModel.HasError &&
+                viewModel.PreviewImage is not null &&
+                viewModel.Angles.Count == document.PartCount;
+
+            bool properties = viewModel.PropertyNames.Count > 0;
+
+            bool stability = !string.IsNullOrWhiteSpace(viewModel.StabilityText);
+
+            bool half = !string.IsNullOrWhiteSpace(viewModel.HalfSummary);
+
+            viewModel.IsFloorMode = true;
+
+            bool modeSwitched =
+                viewModel.IsFloorMode &&
+                !viewModel.IsCycleMode &&
+                !string.IsNullOrWhiteSpace(viewModel.StabilityText);
+
+            lines.Add($"解析与预览：{(loaded ? "成功" : "失败")}");
+            lines.Add($"图形性质：{viewModel.PropertyNames.Count} 项，{(properties ? "成功" : "失败")}");
+            lines.Add($"稳定性：{viewModel.StabilityText}");
+            lines.Add($"半边稳定性：{viewModel.HalfSummary}");
+            lines.Add($"切换仅地面：{(modeSwitched ? "成功" : "失败")}");
+
+            ok = loaded && properties && stability && half && modeSwitched;
+        }
+        catch (Exception exception)
+        {
+            lines.Add(exception.ToString());
+        }
+
+        lines.Insert(0, ok ? "PASS" : "FAIL");
+
+        File.WriteAllLines(path, lines);
     }
 
     private static void RenderWorkspaceExport(

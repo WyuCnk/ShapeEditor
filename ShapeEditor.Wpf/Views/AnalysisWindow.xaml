@@ -1,0 +1,422 @@
+<Window x:Class="ShapeEditor.Wpf.Views.AnalysisWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:ShapeEditor.Wpf.Views"
+        Title="图形分析"
+        Width="1000"
+        Height="700"
+        MinWidth="760"
+        MinHeight="520"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource Brush.PageBackground}"
+        FontFamily="Microsoft YaHei UI, Segoe UI"
+        ResizeMode="CanResize"
+        UseLayoutRounding="True">
+
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+        <local:InverseBooleanToVisibilityConverter x:Key="InverseBoolToVis" />
+
+        <Style x:Key="TableHeaderText" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{StaticResource Brush.TextMuted}" />
+            <Setter Property="Margin" Value="0,0,8,0" />
+        </Style>
+
+        <Style x:Key="TableCellText" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{StaticResource Brush.Text}" />
+            <Setter Property="Margin" Value="0,0,8,0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <Style x:Key="SectionPanel" TargetType="Border">
+            <Setter Property="BorderBrush" Value="#EEEAF7" />
+            <Setter Property="BorderThickness" Value="0,0,0,1" />
+            <Setter Property="Padding" Value="0,0,0,12" />
+            <Setter Property="Margin" Value="0,0,0,12" />
+        </Style>
+
+        <Style x:Key="PropertyChip" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource Brush.PrimarySoft}" />
+            <Setter Property="CornerRadius" Value="10" />
+            <Setter Property="Padding" Value="9,4" />
+            <Setter Property="Margin" Value="0,0,6,6" />
+        </Style>
+
+        <Style x:Key="DirectionChip" TargetType="Border">
+            <Setter Property="Background" Value="#F3F1FA" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Padding" Value="8,3" />
+            <Setter Property="Margin" Value="0,0,6,6" />
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- 顶部：标题、当前短代码、下落类型切换 -->
+        <Grid Grid.Row="0" Margin="0,0,0,12">
+            <StackPanel Orientation="Horizontal"
+                        VerticalAlignment="Center">
+                <TextBlock Text="图形分析"
+                           Style="{StaticResource Text.PageTitle}"
+                           VerticalAlignment="Center" />
+
+                <Border Background="{StaticResource Brush.PrimarySoft}"
+                        CornerRadius="8"
+                        Padding="10,5"
+                        Margin="14,3,0,0"
+                        MaxWidth="360">
+                    <TextBlock Text="{Binding Code}"
+                               FontFamily="Consolas, Microsoft YaHei UI"
+                               FontSize="12"
+                               Foreground="{StaticResource Brush.PrimaryDark}"
+                               TextTrimming="CharacterEllipsis"
+                               ToolTip="{Binding Code}" />
+                </Border>
+            </StackPanel>
+
+            <StackPanel Orientation="Horizontal"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Center">
+                <TextBlock Text="下落规则"
+                           FontSize="12"
+                           Foreground="{StaticResource Brush.TextMuted}"
+                           VerticalAlignment="Center"
+                           Margin="0,0,8,0" />
+
+                <RadioButton Content="含循环支撑"
+                             GroupName="analysisMode"
+                             Style="{StaticResource Toggle.Mode}"
+                             Padding="14,6"
+                             Margin="0,0,6,0"
+                             IsChecked="{Binding IsCycleMode, Mode=TwoWay}" />
+
+                <RadioButton Content="仅地面"
+                             GroupName="analysisMode"
+                             Style="{StaticResource Toggle.Mode}"
+                             Padding="14,6"
+                             Margin="0,0,12,0"
+                             IsChecked="{Binding IsFloorMode, Mode=TwoWay}" />
+
+                <Button Content="关闭"
+                        Style="{StaticResource Button.Secondary}"
+                        Padding="14,7"
+                        IsCancel="True"
+                        Click="OnCloseClick" />
+            </StackPanel>
+        </Grid>
+
+        <Border Grid.Row="1"
+                Style="{StaticResource Card.Panel}"
+                Padding="0"
+                ClipToBounds="True">
+            <ScrollViewer VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <Grid Margin="14">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="340" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- 左：竖式图与角的判定规则 -->
+                    <StackPanel Grid.Column="0"
+                                Margin="0,0,16,0">
+                        <TextBlock Text="竖式图"
+                                   Style="{StaticResource Text.SectionTitle}"
+                                   Margin="0,0,0,6" />
+
+                        <Border Height="320"
+                                Background="#FFFFFF"
+                                BorderBrush="{StaticResource Brush.Border}"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="8">
+                            <Grid>
+                                <Image Source="{Binding PreviewImage}"
+                                       Stretch="Uniform"
+                                       RenderOptions.BitmapScalingMode="HighQuality" />
+
+                                <TextBlock Text="没有可显示的图形"
+                                           FontSize="12"
+                                           Foreground="#B0B0BA"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
+                                           Visibility="{Binding HasDocument, Converter={StaticResource InverseBoolToVis}}" />
+                            </Grid>
+                        </Border>
+
+                        <TextBlock Text="{Binding DimensionText}"
+                                   Style="{StaticResource Text.Hint}"
+                                   HorizontalAlignment="Center"
+                                   Margin="0,6,0,0" />
+
+                        <Border Background="#FAF8FF"
+                                BorderBrush="#EEEAF7"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="12"
+                                Margin="0,14,0,0">
+                            <StackPanel>
+                                <TextBlock Text="角的判定规则"
+                                           Style="{StaticResource Text.SectionTitle}"
+                                           Margin="0,0,0,6" />
+
+                                <TextBlock Style="{StaticResource Text.Hint}"
+                                           Margin="0,0,0,4"
+                                           Text="一、顶针下方相邻格必须非空；顶针在最底层时视为合法。" />
+
+                                <TextBlock Style="{StaticResource Text.Hint}"
+                                           Margin="0,0,0,4"
+                                           Text="二、晶体下方若存在顶针，该顶针要么在最底层，要么下方全部是顶针。" />
+
+                                <TextBlock Style="{StaticResource Text.Hint}"
+                                           Margin="0,0,0,4"
+                                           Text="三、同列两层晶体之间若存在空层，则两者之间至少有两个非空格，且下方晶体的正上方非空。" />
+
+                                <TextBlock Style="{StaticResource Text.Hint}"
+                                           Margin="0,0,0,4"
+                                           Text="四、最低的那层晶体：在最底层、或下方有普通形状、或下方全部是顶针。" />
+
+                                <TextBlock Style="{StaticResource Text.Hint}"
+                                           Margin="0,4,0,0"
+                                           Text="角 = 竖式图的一列。四条规则全部满足才算合法。" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+
+                    <!-- 右：分板块展示分析结果 -->
+                    <StackPanel Grid.Column="1">
+                        <Border Background="{StaticResource Brush.DangerSoft}"
+                                BorderBrush="{StaticResource Brush.Danger}"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="12,8"
+                                Margin="0,0,0,12"
+                                Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}">
+                            <TextBlock Text="{Binding ErrorMessage}"
+                                       Foreground="{StaticResource Brush.Danger}"
+                                       TextWrapping="Wrap" />
+                        </Border>
+
+                        <StackPanel Visibility="{Binding HasDocument, Converter={StaticResource BoolToVis}}">
+
+                            <!-- 图形性质 -->
+                            <Border Style="{StaticResource SectionPanel}">
+                                <StackPanel>
+                                    <TextBlock Text="图形性质"
+                                               Style="{StaticResource Text.SectionTitle}"
+                                               Margin="0,0,0,6" />
+
+                                    <ItemsControl ItemsSource="{Binding PropertyNames}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel />
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Style="{StaticResource PropertyChip}">
+                                                    <TextBlock Text="{Binding}"
+                                                               FontSize="12"
+                                                               Foreground="{StaticResource Brush.PrimaryDark}" />
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+
+                                    <TextBlock Text="{Binding PropertyEmptyText}"
+                                               Style="{StaticResource Text.Hint}" />
+
+                                    <TextBlock Text="可制作性依赖制作路径算法，暂未接入。"
+                                               Style="{StaticResource Text.Hint}"
+                                               Margin="0,4,0,0" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- 角的合法性 -->
+                            <Border Style="{StaticResource SectionPanel}">
+                                <StackPanel>
+                                    <TextBlock Text="角的合法性"
+                                               Style="{StaticResource Text.SectionTitle}"
+                                               Margin="0,0,0,6" />
+
+                                    <TextBlock Text="{Binding AngleSummary}"
+                                               Style="{StaticResource Text.Hint}"
+                                               Margin="0,0,0,8" />
+
+                                    <Grid Margin="0,0,0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="64" />
+                                            <ColumnDefinition Width="70" />
+                                            <ColumnDefinition Width="90" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <TextBlock Grid.Column="0"
+                                                   Text="角"
+                                                   Style="{StaticResource TableHeaderText}" />
+                                        <TextBlock Grid.Column="1"
+                                                   Text="合法性"
+                                                   Style="{StaticResource TableHeaderText}" />
+                                        <TextBlock Grid.Column="2"
+                                                   Text="可制作性"
+                                                   Style="{StaticResource TableHeaderText}" />
+                                        <TextBlock Grid.Column="3"
+                                                   Text="备注"
+                                                   Style="{StaticResource TableHeaderText}"
+                                                   Margin="0" />
+                                    </Grid>
+
+                                    <ItemsControl ItemsSource="{Binding Angles}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border BorderBrush="#F0EDF8"
+                                                        BorderThickness="0,0,0,1"
+                                                        Padding="0,5">
+                                                    <Border.Style>
+                                                        <Style TargetType="Border">
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsLegal}" Value="False">
+                                                                    <Setter Property="Background" Value="{StaticResource Brush.DangerSoft}" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Border.Style>
+
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="64" />
+                                                            <ColumnDefinition Width="70" />
+                                                            <ColumnDefinition Width="90" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+
+                                                        <TextBlock Grid.Column="0"
+                                                                   Text="{Binding AngleText}"
+                                                                   Style="{StaticResource TableCellText}" />
+
+                                                        <TextBlock Grid.Column="1"
+                                                                   Text="{Binding LegalityText}">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock"
+                                                                       BasedOn="{StaticResource TableCellText}">
+                                                                    <Setter Property="Foreground" Value="#2E7D32" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding IsLegal}" Value="False">
+                                                                            <Setter Property="Foreground" Value="{StaticResource Brush.Danger}" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+
+                                                        <TextBlock Grid.Column="2"
+                                                                   Text="{Binding ManufacturabilityText}"
+                                                                   Style="{StaticResource TableCellText}"
+                                                                   Foreground="{StaticResource Brush.TextMuted}" />
+
+                                                        <TextBlock Grid.Column="3"
+                                                                   Text="{Binding NoteText}"
+                                                                   FontSize="11"
+                                                                   Foreground="{StaticResource Brush.TextMuted}"
+                                                                   TextWrapping="Wrap"
+                                                                   VerticalAlignment="Center"
+                                                                   Margin="0" />
+                                                    </Grid>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+
+                                    <TextBlock Text="角的可制作性暂时等同于合法性，等角的制作算法接入后细化。"
+                                               Style="{StaticResource Text.Hint}"
+                                               Margin="0,6,0,0" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- 稳定性 -->
+                            <Border Style="{StaticResource SectionPanel}">
+                                <StackPanel>
+                                    <TextBlock Text="稳定性"
+                                               Style="{StaticResource Text.SectionTitle}"
+                                               Margin="0,0,0,6" />
+
+                                    <TextBlock Text="{Binding StabilityText}"
+                                               FontSize="12"
+                                               Foreground="{StaticResource Brush.Text}"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- 半边稳定性 -->
+                            <Border Style="{StaticResource SectionPanel}">
+                                <StackPanel>
+                                    <TextBlock Text="半边稳定性"
+                                               Style="{StaticResource Text.SectionTitle}"
+                                               Margin="0,0,0,6" />
+
+                                    <TextBlock Text="{Binding HalfSummary}"
+                                               FontSize="12"
+                                               Foreground="{StaticResource Brush.Text}"
+                                               TextWrapping="Wrap" />
+
+                                    <ItemsControl ItemsSource="{Binding LegalDirections}"
+                                                  Margin="0,8,0,0">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel />
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Style="{StaticResource DirectionChip}">
+                                                    <TextBlock Text="{Binding}"
+                                                               FontSize="11"
+                                                               FontFamily="Consolas, Microsoft YaHei UI"
+                                                               Foreground="{StaticResource Brush.TextMuted}" />
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+
+                                    <TextBlock Text="{Binding HalfNote}"
+                                               Style="{StaticResource Text.Hint}"
+                                               Margin="0,2,0,0" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- 制作路径：Core 算法尚未接入，先占位 -->
+                            <Border Style="{StaticResource SectionPanel}"
+                                    BorderThickness="0"
+                                    Padding="0"
+                                    Margin="0">
+                                <StackPanel>
+                                    <TextBlock Text="制作路径"
+                                               Style="{StaticResource Text.SectionTitle}"
+                                               Margin="0,0,0,6" />
+
+                                    <Border Background="#FAFAFA"
+                                            BorderBrush="{StaticResource Brush.Border}"
+                                            BorderThickness="1"
+                                            CornerRadius="8"
+                                            Padding="12">
+                                        <TextBlock Text="制作路径（待接入）"
+                                                   Style="{StaticResource Text.Hint}" />
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </StackPanel>
+                </Grid>
+            </ScrollViewer>
+        </Border>
+    </Grid>
+</Window>

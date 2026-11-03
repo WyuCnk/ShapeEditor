@@ -143,6 +143,38 @@ public partial class WorkspaceView : UserControl
         ViewModel?.SetMode(Core.Physics.CollapseMode.FloorOnly);
     }
 
+    /// <summary>
+    /// 分析选中节点或选中素材：把短代码与原始尺寸交给同一个分析窗口。
+    /// </summary>
+    private void OnAnalyzeClick(
+        object sender,
+        RoutedEventArgs e)
+    {
+        if (ViewModel is not WorkspaceViewModel viewModel)
+        {
+            return;
+        }
+
+        if (!viewModel.TryGetAnalysisTarget(out AnalysisTarget target))
+        {
+            MessageBox.Show(
+                "请先选中一个有图形的节点，或选中一条素材。",
+                "分析",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+
+            return;
+        }
+
+        AnalysisWindow.ShowFor(
+            Window.GetWindow(this),
+            target.Code,
+            target.Layers,
+            target.Parts,
+            target.Format,
+            viewModel.Mode);
+    }
+
     private void OnNodeClick(
         object sender,
         MouseButtonEventArgs e)
@@ -400,6 +432,27 @@ public partial class WorkspaceView : UserControl
         return false;
     }
 
+    /// <summary>判断事件源是否位于任意按钮内部。</summary>
+    private static bool IsInsideButton(
+        object? originalSource)
+    {
+        DependencyObject? current = originalSource as DependencyObject;
+
+        while (current is not null)
+        {
+            if (current is System.Windows.Controls.Primitives.ButtonBase)
+            {
+                return true;
+            }
+
+            current = current is Visual
+                ? VisualTreeHelper.GetParent(current)
+                : null;
+        }
+
+        return false;
+    }
+
     /// <summary>
     /// 双击素材：ViewModel 会在 (80, 80) 新建节点并写入该素材。
     /// </summary>
@@ -427,6 +480,16 @@ public partial class WorkspaceView : UserControl
     {
         if (DataOf<MaterialViewModel>(sender) is not MaterialViewModel material)
         {
+            return;
+        }
+
+        // 素材卡片上的删除按钮自己处理点击，不能顺带进入拖放准备状态
+        if (IsInsideButton(e.OriginalSource))
+        {
+            _materialDragArmed = false;
+
+            _materialDragItem = null;
+
             return;
         }
 
