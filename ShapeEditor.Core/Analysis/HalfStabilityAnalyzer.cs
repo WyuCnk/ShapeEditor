@@ -1,5 +1,6 @@
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Physics;
+using ShapeEditor.Core.Services;
 
 namespace ShapeEditor.Core.Analysis;
 
@@ -30,8 +31,12 @@ public sealed record HalfStabilityResult(
 /// 半边稳定性：
 ///
 /// 交换方向 = 轴（n/2 个）× 左切点（n/2−1）× 右切点（n/2−1）。
-/// 每个方向要求两个半边稳定，且两侧在各自切点处的两个「带柱子子图形」也稳定。
-/// 柱子为满层普通形状，只作固定边界。
+/// 某方向合法 ⇔ 两个半边稳定，且该方向上的四个带柱子半半边（规格 §1）都稳定。
+///
+/// 每个带柱子的半半边只有一根柱子：P1 @(a−1)、P2 @(a+half)、
+/// P3 @(a+half−1)、P4 @a。稳定性判定直接用未旋转的片即可：
+/// 旋转只是列的循环移位，不改变下落结果；真正需要预旋转的是
+/// <see cref="ProductionPathParser"/> 里的交换步骤（规格 §2）。
 /// </summary>
 public static class HalfStabilityAnalyzer
 {
@@ -40,44 +45,50 @@ public static class HalfStabilityAnalyzer
         CollapseMode mode = CollapseMode.IncludeCycles)
     {
         int parts = document.PartCount;
-        int layers = document.LayerCount;
         int half = parts / 2;
 
-        if (half < 2 || parts % 2 != 0)
+        if (parts % 2 != 0 || half < 2)
         {
-            return new HalfStabilityResult(parts, 0, Array.Empty<string>(), Array.Empty<ExchangeDirection>());
+            return new HalfStabilityResult(
+                parts,
+                0,
+                Array.Empty<string>(),
+                Array.Empty<ExchangeDirection>());
         }
-
-        var halves = new bool[parts / 2, 2];
-        var subShapes = new Dictionary<string, bool>();
 
         var legal = new List<string>();
 
         var directionList = new List<ExchangeDirection>();
 
-        for (int axis = 0; axis < parts / 2; axis++)
+        for (int axis = 0; axis < half; axis++)
         {
             int[] left = Contiguous(axis, half, parts);
             int[] right = Contiguous(axis + half, half, parts);
 
-            halves[axis, 0] = IsStable(document, left, mode);
-            halves[axis, 1] = IsStable(document, right, mode);
+            // 两个半边本身也必须稳定，否则 Cut 会把它们塌陷改写。
+            bool halvesStable =
+                IsStable(document, left, mode) &&
+                IsStable(document, right, mode);
 
-            for (int i = 1; i < half; i++)
+            for (int leftSplit = 1; leftSplit < half; leftSplit++)
             {
-                for (int j = 1; j < half; j++)
+                for (int rightSplit = 1; rightSplit < half; rightSplit++)
                 {
                     bool legalDirection =
-                        halves[axis, 0] &&
-                        halves[axis, 1] &&
-                        SubStable(document, axis, left, i, true, mode) &&
-                        SubStable(document, axis, left, i, false, mode) &&
-                        SubStable(document, axis + half, right, j, true, mode) &&
-                        SubStable(document, axis + half, right, j, false, mode);
+                        halvesStable &&
+                        SubStable(document, axis, leftSplit, rightSplit, PillarHalfHalves.First, mode) &&
+                        SubStable(document, axis, leftSplit, rightSplit, PillarHalfHalves.Second, mode) &&
+                        SubStable(document, axis, leftSplit, rightSplit, PillarHalfHalves.Third, mode) &&
+                        SubStable(document, axis, leftSplit, rightSplit, PillarHalfHalves.Fourth, mode);
 
-                    string text = Display(left, i, right, j);
+                    string text = Display(left, leftSplit, right, rightSplit);
 
-                    directionList.Add(new ExchangeDirection(axis, i, j, text, legalDirection));
+                    directionList.Add(new ExchangeDirection(
+                        axis,
+                        leftSplit,
+                        rightSplit,
+                        text,
+                        legalDirection));
 
                     if (legalDirection)
                     {
@@ -87,70 +98,37 @@ public static class HalfStabilityAnalyzer
             }
         }
 
-        int directions = (parts / 2) * (half - 1) * (half - 1);
+        int directions = half * (half - 1) * (half - 1);
 
-        return new HalfStabilityResult(parts, directions, legal, directionList);
+        return new HalfStabilityResult(
+            parts,
+            directions,
+            legal,
+            directionList);
     }
 
     /// <summary>
-    /// 带柱子的子图形是否稳定。前半段包含左柱，后半段包含右柱。
+    /// 第 <paramref name="piece"/> 片带柱子的半半边是否稳定（未旋转）。
     /// </summary>
     private static bool SubStable(
         ShapeDocument document,
         int axis,
-        int[] halfColumns,
-        int split,
-        bool firstHalf,
+        int leftSplit,
+        int rightSplit,
+        int piece,
         CollapseMode mode)
     {
-        int parts = document.PartCount;
-        int layers = document.LayerCount;
-        int half = halfColumns.Length;
-
-        int[] columns;
-
-        if (firstHalf)
-        {
-            columns = new int[split + 1];
-            columns[0] = (axis - 1 + parts) % parts;
-
-            for (int index = 0; index < split; index++)
-            {
-                columns[index + 1] = halfColumns[index];
-            }
-        }
-        else
-        {
-            int rest = half - split;
-            columns = new int[rest + 1];
-
-            for (int index = 0; index < rest; index++)
-            {
-                columns[index] = halfColumns[split + index];
-            }
-
-            columns[rest] = (axis + half) % parts;
-        }
-
-        var shape = new ShapeDocument(layers, parts);
-
-        for (int layer = 0; layer < layers; layer++)
-        {
-            for (int index = 0; index < columns.Length; index++)
-            {
-                int column = columns[index];
-
-                bool isPillar = index == 0 || index == columns.Length - 1;
-
-                shape[layer, column] = isPillar
-                    ? ShapeCell.Shape('C', 'u')
-                    : document[layer, column];
-            }
-        }
+        ShapeDocument shape = PillarHalfHalves.BuildPiece(
+            document,
+            axis,
+            leftSplit,
+            rightSplit,
+            piece);
 
         return IsUnchanged(shape, mode);
     }
 
+    /// <summary>只保留指定列的半边是否稳定。</summary>
     private static bool IsStable(
         ShapeDocument document,
         int[] columns,
@@ -165,7 +143,7 @@ public static class HalfStabilityAnalyzer
         {
             foreach (int column in columns)
             {
-                shape[layer, column] = document[layer, column];
+                shape[layer, column] = document[layer, column].Clone();
             }
         }
 
@@ -183,7 +161,7 @@ public static class HalfStabilityAnalyzer
             return false;
         }
 
-        var exporter = new Services.ShortCodeExporter();
+        var exporter = new ShortCodeExporter();
 
         return exporter.Export(shape) == exporter.Export(collapsed);
     }
