@@ -2228,3 +2228,17 @@ button {
         flex-wrap: wrap;
     }
 }
+.axis-group {
+    margin-bottom: 12px;
+}
+
+.axis-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #4527a0;
+    margin-bottom: 4px;
+}
+
+.angle-table tr.ok td:last-child {
+    color: #2e9e5b;
+}

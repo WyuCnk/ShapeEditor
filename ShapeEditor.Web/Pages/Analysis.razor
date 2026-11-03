@@ -212,19 +212,37 @@
                                     : $"不可交换：共 {_half.DirectionCount} 个交换方向，没有合法的。"))
                         </p>
 
-                        @if (_half is not null && _half.IsExchangeable)
-                        {
-                            <ul class="direction-list">
-                                @foreach (string direction in _half.LegalDirections.Take(60))
-                                {
-                                    <li>@direction</li>
-                                }
-                            </ul>
+                        <p class="analysis-note">
+                            交换方向合法的定义：两个半边都稳定，并且该方向上左右各两个带柱子的半半边也全部稳定。
+                        </p>
 
-                            @if (_half.LegalDirections.Count > 60)
+                        @if (_half is not null && _half.Directions.Count > 0)
+                        {
+                            @foreach (var group in _half.Directions.GroupBy(direction => direction.Axis))
                             {
-                                <p class="analysis-note">仅显示前 60 个。</p>
+                                <div class="axis-group">
+                                    <div class="axis-title">轴 @(group.Key + 1)</div>
+
+                                    <table class="angle-table">
+                                        <thead>
+                                            <tr>
+                                                <th>交换方向</th>
+                                                <th>合法</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var direction in group)
+                                            {
+                                                <tr class="@(direction.IsLegal ? "ok" : "bad")">
+                                                    <td>@direction.Display</td>
+                                                    <td>@(direction.IsLegal ? "是" : "否")</td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
                             }
+                        }                    }
                         }
                     }
                 </div>

@@ -19,7 +19,8 @@ public sealed record ExchangeDirection(
 public sealed record HalfStabilityResult(
     int PartCount,
     int DirectionCount,
-    IReadOnlyList<string> LegalDirections)
+    IReadOnlyList<string> LegalDirections,
+    IReadOnlyList<ExchangeDirection> Directions)
 {
     /// <summary>只要存在一个合法交换方向就称图形可交换。</summary>
     public bool IsExchangeable => LegalDirections.Count > 0;
@@ -44,13 +45,15 @@ public static class HalfStabilityAnalyzer
 
         if (half < 2 || parts % 2 != 0)
         {
-            return new HalfStabilityResult(parts, 0, Array.Empty<string>());
+            return new HalfStabilityResult(parts, 0, Array.Empty<string>(), Array.Empty<ExchangeDirection>());
         }
 
         var halves = new bool[parts / 2, 2];
         var subShapes = new Dictionary<string, bool>();
 
         var legal = new List<string>();
+
+        var directionList = new List<ExchangeDirection>();
 
         for (int axis = 0; axis < parts / 2; axis++)
         {
@@ -72,9 +75,13 @@ public static class HalfStabilityAnalyzer
                         SubStable(document, axis, right, j, true, mode) &&
                         SubStable(document, axis, right, j, false, mode);
 
+                    string text = Display(left, i, right, j);
+
+                    directionList.Add(new ExchangeDirection(axis, i, j, text, legalDirection));
+
                     if (legalDirection)
                     {
-                        legal.Add(Display(left, i, right, j));
+                        legal.Add(text);
                     }
                 }
             }
@@ -82,7 +89,7 @@ public static class HalfStabilityAnalyzer
 
         int directions = (parts / 2) * (half - 1) * (half - 1);
 
-        return new HalfStabilityResult(parts, directions, legal);
+        return new HalfStabilityResult(parts, directions, legal, directionList);
     }
 
     /// <summary>
