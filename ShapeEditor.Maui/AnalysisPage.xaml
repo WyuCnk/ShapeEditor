@@ -1,0 +1,296 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage
+    x:Class="ShapeEditor.Maui.AnalysisPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    Title="图形分析"
+    Shell.NavBarIsVisible="False">
+
+    <ContentPage.Resources>
+
+        <!-- 板块标题 -->
+        <Style x:Key="SectionTitle" TargetType="Label">
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="FontAttributes" Value="Bold" />
+            <Setter Property="TextColor" Value="#333333" />
+            <Setter Property="Margin" Value="0,0,0,6" />
+        </Style>
+
+        <!-- 正文 -->
+        <Style x:Key="BodyText" TargetType="Label">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="TextColor" Value="#333333" />
+            <Setter Property="LineBreakMode" Value="WordWrap" />
+        </Style>
+
+        <!-- 说明 / 次要文字 -->
+        <Style x:Key="MutedText" TargetType="Label">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="TextColor" Value="#6B6B76" />
+            <Setter Property="LineBreakMode" Value="WordWrap" />
+        </Style>
+
+        <!-- 表头 -->
+        <Style x:Key="TableHeader" TargetType="Label">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="FontAttributes" Value="Bold" />
+            <Setter Property="TextColor" Value="#6B6B76" />
+        </Style>
+
+        <!-- 下落规则按钮：默认是未选中的浅紫，选中态在代码里换成主题紫 -->
+        <Style x:Key="ModeButton" TargetType="Button">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="HeightRequest" Value="32" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Padding" Value="10,0" />
+            <Setter Property="MinimumWidthRequest" Value="0" />
+            <Setter Property="MinimumHeightRequest" Value="0" />
+            <Setter Property="BackgroundColor" Value="#EFEAF9" />
+            <Setter Property="TextColor" Value="#512BD4" />
+        </Style>
+
+        <!-- 每个板块的卡片 -->
+        <Style x:Key="SectionCard" TargetType="Border">
+            <Setter Property="Stroke" Value="#E6E2F2" />
+            <Setter Property="StrokeThickness" Value="1" />
+            <Setter Property="Padding" Value="10" />
+            <Setter Property="BackgroundColor" Value="White" />
+        </Style>
+
+    </ContentPage.Resources>
+
+    <Grid Padding="10" RowSpacing="8" RowDefinitions="Auto,*">
+
+        <!-- 顶栏：标题、短代码、下落规则两颗按钮、返回 -->
+        <ScrollView Grid.Row="0"
+                    Orientation="Horizontal"
+                    HorizontalScrollBarVisibility="Never">
+
+            <HorizontalStackLayout Spacing="6"
+                                   VerticalOptions="Center">
+
+                <Label Text="图形分析"
+                       FontSize="15"
+                       FontAttributes="Bold"
+                       VerticalTextAlignment="Center"
+                       Margin="0,0,4,0" />
+
+                <Border BackgroundColor="#EFEAF9"
+                        Stroke="Transparent"
+                        StrokeThickness="0"
+                        Padding="8,4"
+                        VerticalOptions="Center">
+                    <Label x:Name="CodeLabel"
+                           Text="—"
+                           FontSize="11"
+                           TextColor="#512BD4"
+                           MaxLines="1"
+                           LineBreakMode="TailTruncation"
+                           MaximumWidthRequest="180" />
+                </Border>
+
+                <Button x:Name="CycleModeButton"
+                        Text="含循环支撑"
+                        Style="{StaticResource ModeButton}"
+                        Clicked="OnModeClicked" />
+
+                <Button x:Name="FloorModeButton"
+                        Text="仅地面"
+                        Style="{StaticResource ModeButton}"
+                        Clicked="OnModeClicked" />
+
+                <Button Text="返回"
+                        FontSize="12"
+                        HeightRequest="32"
+                        CornerRadius="8"
+                        Padding="12,0"
+                        MinimumWidthRequest="0"
+                        MinimumHeightRequest="0"
+                        BackgroundColor="#512BD4"
+                        TextColor="White"
+                        Clicked="OnBackClicked" />
+            </HorizontalStackLayout>
+        </ScrollView>
+
+        <!-- 单栏滚动内容，从上到下依次是各个分析板块 -->
+        <ScrollView Grid.Row="1"
+                    VerticalScrollBarVisibility="Always">
+
+            <VerticalStackLayout Spacing="10"
+                                 Padding="0,0,0,24">
+
+                <Label x:Name="EmptyLabel"
+                       Text="还没有可分析的图形。请在工作区或批量页点「分析」。"
+                       Style="{StaticResource MutedText}"
+                       IsVisible="False" />
+
+                <Label x:Name="ErrorLabel"
+                       TextColor="#A00000"
+                       FontSize="12"
+                       LineBreakMode="WordWrap"
+                       IsVisible="False" />
+
+                <VerticalStackLayout x:Name="ContentPanel"
+                                     Spacing="10"
+                                     IsVisible="False">
+
+                    <!-- 1. 竖式图：只读，格子固定 30×30 -->
+                    <Border Style="{StaticResource SectionCard}">
+                        <VerticalStackLayout Spacing="6">
+
+                            <Label Text="竖式图"
+                                   Style="{StaticResource SectionTitle}" />
+
+                            <ScrollView x:Name="PreviewScroll"
+                                        Orientation="Horizontal"
+                                        HorizontalScrollBarVisibility="Always">
+                                <GraphicsView x:Name="PreviewView"
+                                              InputTransparent="True"
+                                              HorizontalOptions="Start"
+                                              VerticalOptions="Start" />
+                            </ScrollView>
+
+                            <Label x:Name="DimensionLabel"
+                                   Style="{StaticResource MutedText}"
+                                   HorizontalTextAlignment="Center" />
+                        </VerticalStackLayout>
+                    </Border>
+
+                    <!-- 2. 图形性质 -->
+                    <Border Style="{StaticResource SectionCard}">
+                        <VerticalStackLayout Spacing="2">
+
+                            <Label Text="图形性质"
+                                   Style="{StaticResource SectionTitle}" />
+
+                            <FlexLayout x:Name="PropertyList"
+                                        Wrap="Wrap"
+                                        Direction="Row"
+                                        AlignItems="Start" />
+
+                            <Label x:Name="PropertyEmptyLabel"
+                                   Text="没有识别到任何性质。"
+                                   Style="{StaticResource MutedText}"
+                                   IsVisible="False" />
+                        </VerticalStackLayout>
+                    </Border>
+
+                    <!-- 3. 角的合法性 -->
+                    <Border Style="{StaticResource SectionCard}">
+                        <VerticalStackLayout Spacing="4">
+
+                            <Label Text="角的合法性"
+                                   Style="{StaticResource SectionTitle}" />
+
+                            <Label x:Name="AngleSummaryLabel"
+                                   Style="{StaticResource MutedText}" />
+
+                            <Grid ColumnDefinitions="64,70,90,*"
+                                  ColumnSpacing="8"
+                                  Margin="0,2,0,2">
+                                <Label Grid.Column="0"
+                                       Text="角"
+                                       Style="{StaticResource TableHeader}" />
+                                <Label Grid.Column="1"
+                                       Text="合法性"
+                                       Style="{StaticResource TableHeader}" />
+                                <Label Grid.Column="2"
+                                       Text="可制作性"
+                                       Style="{StaticResource TableHeader}" />
+                                <Label Grid.Column="3"
+                                       Text="备注"
+                                       Style="{StaticResource TableHeader}" />
+                            </Grid>
+
+                            <VerticalStackLayout x:Name="AngleList"
+                                                 Spacing="0" />
+
+                            <Label Text="角的可制作性暂时等同于合法性，等角的制作算法接入后细化。"
+                                   Style="{StaticResource MutedText}"
+                                   Margin="0,4,0,0" />
+                        </VerticalStackLayout>
+                    </Border>
+
+                    <!-- 4. 稳定性 -->
+                    <Border Style="{StaticResource SectionCard}">
+                        <VerticalStackLayout Spacing="0">
+
+                            <Label Text="稳定性"
+                                   Style="{StaticResource SectionTitle}" />
+
+                            <Label x:Name="StabilityLabel"
+                                   Style="{StaticResource BodyText}" />
+                        </VerticalStackLayout>
+                    </Border>
+
+                    <!-- 5. 半边稳定性 -->
+                    <Border Style="{StaticResource SectionCard}">
+                        <VerticalStackLayout Spacing="4">
+
+                            <Label Text="半边稳定性"
+                                   Style="{StaticResource SectionTitle}" />
+
+                            <Label x:Name="HalfSummaryLabel"
+                                   Style="{StaticResource BodyText}" />
+
+                            <Label Text="交换方向合法的定义：两个半边都稳定，并且该方向上左右各两个带柱子的半半边也全部稳定。"
+                                   Style="{StaticResource MutedText}"
+                                   Margin="0,2,0,4" />
+
+                            <VerticalStackLayout x:Name="AxisList"
+                                                 Spacing="10" />
+
+                            <Label x:Name="HalfNoteLabel"
+                                   Style="{StaticResource MutedText}"
+                                   IsVisible="False" />
+                        </VerticalStackLayout>
+                    </Border>
+
+                    <!-- 6. 制作路径 -->
+                    <Border Style="{StaticResource SectionCard}">
+                        <VerticalStackLayout Spacing="4">
+
+                            <Label Text="制作路径"
+                                   Style="{StaticResource SectionTitle}" />
+
+                            <Label x:Name="PathSummaryLabel"
+                                   Style="{StaticResource BodyText}" />
+
+                            <VerticalStackLayout x:Name="PathList"
+                                                 Spacing="4"
+                                                 Margin="0,4,0,0" />
+                        </VerticalStackLayout>
+                    </Border>
+
+                    <!-- 7. 角的判定规则 -->
+                    <Border Style="{StaticResource SectionCard}"
+                            BackgroundColor="#FAF8FF"
+                            Stroke="#EEEAF7">
+                        <VerticalStackLayout Spacing="4">
+
+                            <Label Text="角的判定规则"
+                                   Style="{StaticResource SectionTitle}" />
+
+                            <Label Text="一、顶针下方相邻格必须非空；顶针在最底层时视为合法。"
+                                   Style="{StaticResource MutedText}" />
+
+                            <Label Text="二、晶体下方若存在顶针，该顶针要么在最底层，要么下方全部是顶针。"
+                                   Style="{StaticResource MutedText}" />
+
+                            <Label Text="三、同列两层晶体之间若存在空层，则两者之间至少有两个非空格，且下方晶体的正上方非空。"
+                                   Style="{StaticResource MutedText}" />
+
+                            <Label Text="四、最低的那层晶体：在最底层、或下方有普通形状、或下方全部是顶针。"
+                                   Style="{StaticResource MutedText}" />
+
+                            <Label Text="角 = 竖式图的一列。四条规则全部满足才算合法。"
+                                   Style="{StaticResource MutedText}"
+                                   Margin="0,4,0,0" />
+                        </VerticalStackLayout>
+                    </Border>
+
+                </VerticalStackLayout>
+            </VerticalStackLayout>
+        </ScrollView>
+    </Grid>
+</ContentPage>

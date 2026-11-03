@@ -150,6 +150,15 @@ public partial class WorkspacePage : ContentPage
 
         WorkspaceNode? selected = _store.SelectedNode;
 
+        // 节点与素材二选一：通过任何入口选中节点后都清掉素材选中，
+        // 让「加到编辑区 / 分析」的目标始终唯一。
+        if (selected is not null && _selectedMaterial is not null)
+        {
+            _selectedMaterial = null;
+
+            UpdateMaterialSelection();
+        }
+
         bool waitingSecondInput = _stackFirstId is not null || _exchangeFirstId is not null;
 
         StatusLabel.Text = waitingSecondInput
@@ -181,6 +190,13 @@ public partial class WorkspacePage : ContentPage
 
         // 自动布局不依赖选中项，只要画布上有节点就可用
         AutoLayoutButton.IsEnabled = _store is not null && _store.Nodes.Count > 0;
+
+        // 选中带图形的素材或节点时，才能交给编辑器 / 打开分析页
+        bool hasTarget = HasSelectableShape();
+
+        AddToEditorButton.IsEnabled = hasTarget;
+
+        AnalyzeButton.IsEnabled = hasTarget;
 
         // 粘贴还需要剪贴板里有内容
         PasteButton.IsEnabled = hasSelection && _clipboard is not null;
@@ -249,6 +265,13 @@ public partial class WorkspacePage : ContentPage
 
         _materialBorders.Clear();
 
+        // 素材可能已在别处被删除（例如刚点了卡片上的删除按钮），先清掉失效的选中
+        if (_selectedMaterial is not null &&
+            !_store!.Materials.Any(item => item.Id == _selectedMaterial.Id))
+        {
+            _selectedMaterial = null;
+        }
+
         foreach (WorkspaceItem item in _store!.Materials)
         {
             var preview = new GraphicsView
@@ -261,6 +284,44 @@ public partial class WorkspacePage : ContentPage
 
             bool selected = item.Id == _selectedMaterial?.Id;
 
+            WorkspaceItem captured = item;
+
+            // 名称行：名称 + 删除按钮（用 Button.Clicked，不加任何双击手势）
+            var nameRow = new Grid
+            {
+                ColumnDefinitions =
+                {
+                    new ColumnDefinition(GridLength.Star),
+                    new ColumnDefinition(GridLength.Auto)
+                },
+                ColumnSpacing = 2
+            };
+
+            nameRow.Add(new Label
+            {
+                Text = item.Name,
+                FontSize = 10,
+                LineBreakMode = LineBreakMode.TailTruncation,
+                VerticalTextAlignment = TextAlignment.Center
+            }, 0, 0);
+
+            var delete = new Button
+            {
+                Text = "×",
+                FontSize = 11,
+                WidthRequest = 20,
+                HeightRequest = 20,
+                Padding = 0,
+                MinimumWidthRequest = 0,
+                MinimumHeightRequest = 0,
+                BackgroundColor = Colors.Transparent,
+                TextColor = Color.FromArgb("#A00000")
+            };
+
+            delete.Clicked += async (_, _) => await DeleteMaterialAsync(captured);
+
+            nameRow.Add(delete, 1, 0);
+
             var border = new Border
             {
                 Stroke = selected ? Accent : Color.FromArgb("#E6E2F2"),
@@ -272,17 +333,10 @@ public partial class WorkspacePage : ContentPage
                     Children =
                     {
                         preview,
-                        new Label
-                        {
-                            Text = item.Name,
-                            FontSize = 10,
-                            LineBreakMode = LineBreakMode.TailTruncation
-                        }
+                        nameRow
                     }
                 }
             };
-
-            WorkspaceItem captured = item;
 
             // 单击只切换素材选中；不重建卡片，避免双击/拖拽的手势目标被顶掉
             var tap = new TapGestureRecognizer();
@@ -291,12 +345,19 @@ public partial class WorkspacePage : ContentPage
             {
                 _selectedMaterial = captured;
 
+                // 素材与节点是二选一：选素材时清掉节点选中，
+                // 否则「加到编辑区 / 分析」会分不清目标。
+                if (_store?.SelectedNode is not null)
+                {
+                    _store.SelectNode(null);
+                }
+
                 UpdateMaterialSelection();
+
+                UpdateActionButtons();
             };
 
             border.GestureRecognizers.Add(tap);
-
-
 
             // 拖拽：MAUI 的 DragGestureRecognizer 没有 Data 属性，
             // 素材 Id 通过 DragStarting 的数据包（Properties + Text）交给画布
@@ -317,6 +378,37 @@ public partial class WorkspacePage : ContentPage
 
             MaterialList.Add(border);
         }
+    }
+
+    /// <summary>
+    /// 删除素材：先用 DisplayAlert 二次确认，删除后清空指向它的选中状态。
+    /// 这里始终走 Button.Clicked，不使用双击手势。
+    /// </summary>
+    private async Task DeleteMaterialAsync(
+        WorkspaceItem item)
+    {
+        bool confirmed = await DisplayAlertAsync(
+            "删除素材",
+            $"将从素材库删除「{item.Name}」。\n\n此操作不可撤销，继续？",
+            "删除",
+            "取消");
+
+        if (!confirmed || _store is null)
+        {
+            return;
+        }
+
+        // 先在内存里清掉选中，再让 store 触发重绘，避免重绘后又渲染出选中框
+        if (_selectedMaterial?.Id == item.Id)
+        {
+            _selectedMaterial = null;
+        }
+
+        _store.RemoveMaterial(item.Id);
+
+        UpdateMaterialSelection();
+
+        UpdateActionButtons();
     }
 
     /// <summary>只刷新素材卡片边框，保持卡片视图不被重建。</summary>
@@ -598,6 +690,10 @@ public partial class WorkspacePage : ContentPage
                 return;
             }
 
+            // 节点与素材是二选一：选节点时清掉素材选中，
+            // 让「加到编辑区 / 分析」的目标没有歧义。
+            _selectedMaterial = null;
+
             _store.SelectNode(node);
         };
 
@@ -772,7 +868,7 @@ public partial class WorkspacePage : ContentPage
     #region 素材导入
 
     /// <summary>
-    /// 双击素材或把素材拖到画布：新建节点并写入图形。
+    /// 把素材拖到画布：新建节点并写入图形。
     /// 象限数不符时只提示，不创建节点。
     /// </summary>
     private void ImportMaterial(
@@ -1286,7 +1382,8 @@ public partial class WorkspacePage : ContentPage
         {
             _store.SetMode(mode);
 
-            result = RecomputeAllWithExchange();
+            // Core 的 RecomputeAll 已原生支持交换结果，无需再手工补算
+            result = _store.RecomputeAll();
         }
         finally
         {
@@ -1321,7 +1418,8 @@ public partial class WorkspacePage : ContentPage
         {
             _store.SetMaxLayers(layers);
 
-            result = RecomputeAllWithExchange();
+            // Core 的 RecomputeAll 已原生支持交换结果，无需再手工补算
+            result = _store.RecomputeAll();
         }
         finally
         {

@@ -1994,6 +1994,103 @@ public partial class MainPage : ContentPage
 
     #endregion
 
+    #region 从工作区 / 批量页载入
+
+    /// <summary>
+    /// 消费「加到编辑区」的待载入图形。
+    ///
+    /// 工作区 / 批量页只通过 AppPending 留下一条记录，编辑器在
+    /// OnAppearing 里取用一次：解析、写入撤销栈、自动保存并刷新界面。
+    /// 尺寸优先用素材自带的，缺失时再按短代码推断。
+    /// </summary>
+    private void LoadPendingEditorItem()
+    {
+        EditorLoadTarget? target = AppPending.TakeEditorLoad();
+
+        if (target is null)
+        {
+            return;
+        }
+
+        if (!TryResolveLoadDimensions(
+                target,
+                out int layers,
+                out int parts))
+        {
+            CodeErrorLabel.Text = "待载入图形的尺寸无效。";
+
+            return;
+        }
+
+        ParseResult result = _parser.Parse(
+            target.Code,
+            layers,
+            parts,
+            target.Format);
+
+        if (!result.Success ||
+            result.Document is null)
+        {
+            CodeErrorLabel.Text =
+                result.Error ?? "载入图形失败。";
+
+            return;
+        }
+
+        StopPainting();
+        StopTransform();
+        ResetTouchState();
+
+        SaveUndoState();
+
+        _document = result.Document;
+
+        ClearSelectedCell();
+
+        SyncDimensionInputs();
+
+        // 输入框显示与当前格式一致的规范化代码
+        CodeEntry.Text = _exporter.Export(
+            _document,
+            _codeFormat,
+            omitTopEmptyLayers: true);
+
+        CodeErrorLabel.Text = "";
+
+        SaveCurrentDocument();
+
+        RefreshShapeGrid();
+        RefreshEditorPanel();
+        UpdateUndoRedoState();
+        UpdateStatus();
+    }
+
+    /// <summary>
+    /// 计算载入图形的尺寸：素材自带尺寸优先，缺失时退回短代码推断。
+    /// </summary>
+    private static bool TryResolveLoadDimensions(
+        EditorLoadTarget target,
+        out int layers,
+        out int parts)
+    {
+        layers = target.Layers;
+        parts = target.Parts;
+
+        if (layers > 0 && parts > 0)
+        {
+            return true;
+        }
+
+        return ShortCodeParser.TryInferDimensions(
+            target.Code,
+            target.Format,
+            out layers,
+            out parts,
+            out _);
+    }
+
+    #endregion
+
     #region 自动保存和恢复
 
     /// <summary>
@@ -2145,6 +2242,9 @@ public partial class MainPage : ContentPage
         base.OnAppearing();
 
         RestoreDocument();
+
+        // 工作区 / 批量页可能留下了「加到编辑区」的图形
+        LoadPendingEditorItem();
 
         RefreshShapeGrid();
         RefreshEditorPanel();

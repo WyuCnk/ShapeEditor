@@ -95,6 +95,23 @@
                         CornerRadius="8"
                         IsEnabled="False"
                         Clicked="OnAutoLayout" />
+
+                <!-- 选中素材或节点后可用：交给编辑器 / 打开分析页 -->
+                <Button x:Name="AddToEditorButton"
+                        Text="加到编辑区"
+                        FontSize="12"
+                        HeightRequest="32"
+                        CornerRadius="8"
+                        IsEnabled="False"
+                        Clicked="OnAddToEditor" />
+
+                <Button x:Name="AnalyzeButton"
+                        Text="分析"
+                        FontSize="12"
+                        HeightRequest="32"
+                        CornerRadius="8"
+                        IsEnabled="False"
+                        Clicked="OnAnalyzeSelected" />
             </HorizontalStackLayout>
         </ScrollView>
 

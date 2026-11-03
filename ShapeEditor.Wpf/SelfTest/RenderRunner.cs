@@ -363,7 +363,7 @@ public static class RenderRunner
 
         store.ReplaceNodeShape(
             second.Id,
-            "CuCuCuCu:mmmmmmmm",
+            "CcCcCcCc:ckckckck",
             Core.Models.ShortCodeFormat.Full,
             4,
             4);
@@ -452,9 +452,19 @@ public static class RenderRunner
 
         if (window.Content is FrameworkElement content)
         {
-            int width = (int)Math.Max(1, content.ActualWidth);
+            /*
+             * 元素本身带 Margin，渲染时会保留这段布局偏移；
+             * 位图必须把四周的边距一起算进去，否则右侧和底部会被裁掉。
+             */
+            Thickness margin = content.Margin;
 
-            int height = (int)Math.Max(1, content.ActualHeight);
+            int width = (int)Math.Max(
+                1,
+                content.ActualWidth + margin.Left + margin.Right);
+
+            int height = (int)Math.Max(
+                1,
+                content.ActualHeight + margin.Top + margin.Bottom);
 
             var bitmap = new RenderTargetBitmap(
                 width,
@@ -567,8 +577,8 @@ public static class RenderRunner
             var main = new MainViewModel();
 
             main.Batch.RawText =
-                "CuCu" + Environment.NewLine +
-                "CcCc";
+                "CuCuCuCu" + Environment.NewLine +
+                "CcCcCcCc";
 
             main.Batch.ParseEntries();
 
@@ -591,7 +601,7 @@ public static class RenderRunner
                 !string.IsNullOrWhiteSpace(main.Editor.Code) &&
                 main.Editor.Code.Length > 0;
 
-            bool analyzed = analyzedCode == "CuCu";
+            bool analyzed = analyzedCode == "CuCuCuCu";
 
             /*
              * 清空后没有当前条目：即使命令被触发，
@@ -1016,7 +1026,7 @@ public static class RenderRunner
 
             store.ReplaceNodeShape(
                 second.Id,
-                "CuCuCuCu:mmmmmmmm",
+                "CcCcCcCc:ckckckck",
                 Core.Models.ShortCodeFormat.Full,
                 4,
                 4);
@@ -1057,8 +1067,8 @@ public static class RenderRunner
                 node => node.OpKey == secondKey);
 
             bool titleOk =
-                firstResult?.Label == WorkspaceExchangeService.ResultLabel &&
-                secondResult?.Label == WorkspaceExchangeService.ResultLabel;
+                firstResult?.Label == WorkspaceExchangeGraph.ResultLabel &&
+                secondResult?.Label == WorkspaceExchangeGraph.ResultLabel;
 
             bool inputOk =
                 firstResult is not null &&
@@ -1080,13 +1090,13 @@ public static class RenderRunner
                 firstResult is not null &&
                 secondResult is not null &&
                 store.Edges.Count(
-                    edge => edge.Label == WorkspaceExchangeService.EdgeLabel) == 4 &&
+                    edge => edge.Label == WorkspaceExchangeGraph.EdgeLabel) == 4 &&
                 store.Edges.Count(
                     edge => edge.ToId == firstResult.Id &&
-                            edge.Label == WorkspaceExchangeService.EdgeLabel) == 2 &&
+                            edge.Label == WorkspaceExchangeGraph.EdgeLabel) == 2 &&
                 store.Edges.Count(
                     edge => edge.ToId == secondResult.Id &&
-                            edge.Label == WorkspaceExchangeService.EdgeLabel) == 2;
+                            edge.Label == WorkspaceExchangeGraph.EdgeLabel) == 2;
 
             bool selectedOk =
                 firstResult is not null &&
@@ -1204,6 +1214,22 @@ public static class RenderRunner
                 }
             }
 
+            string cachedFirstCode = firstResult is null
+                ? ""
+                : store.GetEffectiveDocument(firstResult) is ShapeDocument cachedFirst
+                    ? new ShortCodeExporter().Export(cachedFirst, omitTopEmptyLayers: true)
+                    : "";
+
+            string cachedSecondCode = secondResult is null
+                ? ""
+                : store.GetEffectiveDocument(secondResult) is ShapeDocument cachedSecond
+                    ? new ShortCodeExporter().Export(cachedSecond, omitTopEmptyLayers: true)
+                    : "";
+
+            bool cacheOk =
+                cachedFirstCode == expectedFloorFirst &&
+                cachedSecondCode == expectedFloorSecond;
+
             bool recomputeOk =
                 firstResult is not null &&
                 secondResult is not null &&
@@ -1211,9 +1237,10 @@ public static class RenderRunner
                 firstResult.Code == expectedFloorFirst &&
                 secondResult.Code == expectedFloorSecond &&
                 firstResult.OpKey == firstKey &&
-                secondResult.OpKey == secondKey;
+                secondResult.OpKey == secondKey &&
+                cacheOk;
 
-            lines.Add($"仅地面重算：交换1={firstResult?.Code}，交换2={secondResult?.Code}，{(recomputeOk ? "成功" : "失败")}");
+            lines.Add($"仅地面重算：交换1={firstResult?.Code}，交换2={secondResult?.Code}，缓存：{(cacheOk ? "已更新" : "仍是旧图形")}，{(recomputeOk ? "成功" : "失败")}");
 
             ok =
                 hintOk &&

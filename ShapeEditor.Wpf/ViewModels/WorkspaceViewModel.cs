@@ -15,7 +15,7 @@ namespace ShapeEditor.Wpf.ViewModels;
 /// <summary>
 /// 工作区页面：多工作区、素材库、制作路径图。
 ///
-/// 节点卡片只负责显示；下落、顶针、切割、堆叠、复制、粘贴、删除
+/// 节点卡片只负责显示；下落、顶针、切割、堆叠、交换、复制、粘贴、删除
 /// 全部集中到标签行下方的工具条。
 /// </summary>
 public sealed class WorkspaceViewModel : ObservableObject
@@ -243,7 +243,7 @@ public sealed class WorkspaceViewModel : ObservableObject
 
             _store.SetMaxLayers(value);
 
-            (int updated, int failed) = WorkspaceExchangeService.RecomputeAll(_store);
+            (int updated, int failed) = _store.RecomputeAll();
 
             ReportRecompute(updated, failed);
         }
@@ -277,7 +277,7 @@ public sealed class WorkspaceViewModel : ObservableObject
 
         _store.SetMode(mode);
 
-        (int updated, int failed) = WorkspaceExchangeService.RecomputeAll(_store);
+        (int updated, int failed) = _store.RecomputeAll();
 
         ReportRecompute(updated, failed);
 
@@ -1176,10 +1176,10 @@ public sealed class WorkspaceViewModel : ObservableObject
         WorkspaceNode second)
     {
         (NodeActionResult firstResult, NodeActionResult secondResult) =
-            WorkspaceExchangeService.ComputeExchange(
-                _store,
+            _store.ComputeExchange(
                 first.Id,
-                second.Id);
+                second.Id,
+                _store.Mode);
 
         if (firstResult.Node is null || secondResult.Node is null)
         {

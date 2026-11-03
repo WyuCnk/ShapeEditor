@@ -1301,6 +1301,45 @@ public sealed class WorkspaceStore
         return new NodeActionResult(true, created, "已生成堆叠结果。");
     }
 
+    /// <summary>
+    /// 交换：两个输入各切割一次后交叉拼接，生成两个结果节点。
+    ///
+    /// 幂等键为 exchange1:{a}|{b} / exchange2:{a}|{b}，
+    /// 两个结果都已存在时直接定位；节点默认不写坐标，
+    /// 由调用方 SetNodePosition 摆放（与 ComputeStackOf 一致）。
+    /// </summary>
+    public (NodeActionResult First, NodeActionResult Second) ComputeExchange(
+        string firstId,
+        string secondId,
+        CollapseMode mode)
+    {
+        WorkspaceProject project = EnsureActive();
+
+        WorkspaceExchangeOutcome outcome = WorkspaceExchangeGraph.Create(
+            project.Nodes,
+            project.Edges,
+            project.MaxLayers,
+            mode,
+            firstId,
+            secondId,
+            id => FindNode(id),
+            GetEffectiveDocument);
+
+        if (outcome.First.Node is null)
+        {
+            return (outcome.First, outcome.Second);
+        }
+
+        project.Nodes.AddRange(outcome.AddedNodes);
+
+        project.Edges.AddRange(outcome.AddedEdges);
+
+        Save();
+        Changed?.Invoke();
+
+        return (outcome.First, outcome.Second);
+    }
+
     public (int Updated, int Failed) RecomputeAll()
     {
         WorkspaceProject project = EnsureActive();
@@ -1348,6 +1387,20 @@ public sealed class WorkspaceStore
     {
         string key = node.OpKey!;
         string op = key.Split(':')[0];
+
+        /*
+         * 交换结果不能按单输入 collapse 处理：
+         * 必须按节点上记录的 InputAId / InputBId 重新交换，
+         * exchange1 取 First、exchange2 取 Second。
+         */
+        if (WorkspaceExchangeGraph.IsExchangeKey(key))
+        {
+            return WorkspaceExchangeGraph.Recompute(
+                node,
+                id => FindNode(id),
+                GetEffectiveDocument,
+                Mode);
+        }
 
         if (op == "stack")
         {

@@ -86,6 +86,7 @@ internal static class Program
             ("物理:坍塌幂等", PhysicsTests.CollapseIsIdempotent),
             ("物理:循环支撑悬空", PhysicsTests.CycleSupportKeepsFloatingShape),
             ("工作区:保存后可重新加载", WorkspaceStorePersistenceTests.SaveAndReloadKeepsData),
+            ("工作区:交换创建与重算", WorkspaceExchangeTests.ExchangeCreatesTwoResultsAndRecomputes),
             ("分析:顶针在最底层合法", AnalysisTests.LegalAngleWithPinOnBottom),
             ("分析:顶针下方为空非法", AnalysisTests.PinWithEmptyBelowIsIllegal),
             ("分析:顶针未顶到底非法", AnalysisTests.PinUnderCrystalMustReachBottom),

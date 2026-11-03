@@ -10,6 +10,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -44,8 +45,37 @@
                    TextColor="#6B6B76" />
         </HorizontalStackLayout>
 
+        <!-- 选中条目的去向：未选中或解析失败时禁用 -->
+        <HorizontalStackLayout Grid.Row="2" Spacing="8">
+            <Button x:Name="AddToEditorButton"
+                    Text="加到编辑区"
+                    Clicked="OnAddToEditor"
+                    IsEnabled="False"
+                    BackgroundColor="#512BD4"
+                    TextColor="White"
+                    CornerRadius="8"
+                    HeightRequest="36" />
+
+            <Button x:Name="AnalyzeButton"
+                    Text="分析"
+                    Clicked="OnAnalyzeSelected"
+                    IsEnabled="False"
+                    BackgroundColor="#EFEAF9"
+                    TextColor="#512BD4"
+                    CornerRadius="8"
+                    HeightRequest="36" />
+
+            <Label x:Name="SelectionLabel"
+                   Text="先点选一条图形"
+                   VerticalTextAlignment="Center"
+                   FontSize="12"
+                   TextColor="#6B6B76" />
+        </HorizontalStackLayout>
+
         <CollectionView x:Name="List"
-                        Grid.Row="2">
+                        Grid.Row="3"
+                        SelectionMode="Single"
+                        SelectionChanged="OnSelectionChanged">
             <CollectionView.ItemTemplate>
                 <DataTemplate>
                     <Border Stroke="#E6E2F2"
@@ -62,6 +92,7 @@
                             <GraphicsView Grid.Column="0"
                                           HeightRequest="96"
                                           WidthRequest="96"
+                                          InputTransparent="True"
                                           Drawable="{Binding Preview}" />
 
                             <VerticalStackLayout Grid.Column="1" Spacing="4">
