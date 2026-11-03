@@ -597,6 +597,41 @@
 
     private void OnNodeClick(WorkspaceNode node)
     {
+        if (_exchangeBaseId is not null && node.Id != _exchangeBaseId)
+        {
+            string firstId = _exchangeBaseId;
+
+            _exchangeBaseId = null;
+            _stackHint = null;
+
+            var pair = Store.ComputeExchange(firstId, node.Id, Store.Mode);
+
+            if (pair.First.Node is not null)
+            {
+                Store.SetNodePosition(
+                    pair.First.Node.Id,
+                    Math.Max(24, NodeX(node) - 260),
+                    NodeY(node) + 420);
+
+                Store.SelectNode(pair.First.Node);
+            }
+
+            if (pair.Second.Node is not null)
+            {
+                Store.SetNodePosition(
+                    pair.Second.Node.Id,
+                    NodeX(node) + 260,
+                    NodeY(node) + 420);
+            }
+
+            if (pair.First.Node is null && !string.IsNullOrWhiteSpace(pair.First.Message))
+            {
+                ShowDialog("交换失败", pair.First.Message);
+            }
+
+            return;
+        }
+
         if (_stackBaseId is not null && node.Id != _stackBaseId)
         {
             NodeActionResult result = Store.ComputeStackOf(_stackBaseId, node.Id, baseIsTop: true, Store.Mode);
