@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using ShapeEditor.Core.Analysis;
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Services;
@@ -453,5 +454,139 @@ internal static class AnalysisTests
 
         Assert.Equal(2, result.PartCount);
         Assert.Equal(2, result.LegalCount);
+    }
+
+    /// <summary>
+    /// 优化结果一致：n = 8 规格样例（单层 8 色晶体）。
+    ///
+    /// 数值来自优化前的实现（加入旋转归一化缓存之前）：
+    /// 方向数 36，且 36 个方向全部合法；解析器返回第一个可行方向 (1+234)+(5+678)。
+    /// 缓存只应缩短计算，不应改变任何判定。
+    /// </summary>
+    public static void OptimizedHalfStabilityMatchesRecordedBaseline()
+    {
+        var parser = new ShortCodeParser();
+        ParseResult parsed = parser.Parse("CrCgCbCcCmCyCwCk", 1, 8);
+
+        Assert.True(parsed.Success, parsed.Error ?? "解析失败");
+
+        ShapeDocument target = parsed.Document!;
+
+        HalfStabilityResult analysis = HalfStabilityAnalyzer.Analyze(target);
+
+        Assert.Equal(36, analysis.DirectionCount);
+        Assert.Equal(36, analysis.Directions.Count);
+        Assert.Equal(36, analysis.LegalDirections.Count);
+
+        string[] expected =
+        {
+            "(1+234)+(5+678)",
+            "(1+234)+(56+78)",
+            "(1+234)+(567+8)",
+            "(12+34)+(5+678)",
+            "(12+34)+(56+78)",
+            "(12+34)+(567+8)",
+            "(123+4)+(5+678)",
+            "(123+4)+(56+78)",
+            "(123+4)+(567+8)",
+
+            "(2+345)+(6+781)",
+            "(2+345)+(67+81)",
+            "(2+345)+(678+1)",
+            "(23+45)+(6+781)",
+            "(23+45)+(67+81)",
+            "(23+45)+(678+1)",
+            "(234+5)+(6+781)",
+            "(234+5)+(67+81)",
+            "(234+5)+(678+1)",
+
+            "(3+456)+(7+812)",
+            "(3+456)+(78+12)",
+            "(3+456)+(781+2)",
+            "(34+56)+(7+812)",
+            "(34+56)+(78+12)",
+            "(34+56)+(781+2)",
+            "(345+6)+(7+812)",
+            "(345+6)+(78+12)",
+            "(345+6)+(781+2)",
+
+            "(4+567)+(8+123)",
+            "(4+567)+(81+23)",
+            "(4+567)+(812+3)",
+            "(45+67)+(8+123)",
+            "(45+67)+(81+23)",
+            "(45+67)+(812+3)",
+            "(456+7)+(8+123)",
+            "(456+7)+(81+23)",
+            "(456+7)+(812+3)"
+        };
+
+        var actual = new HashSet<string>(
+            analysis.LegalDirections,
+            StringComparer.Ordinal);
+
+        Assert.Equal(expected.Length, actual.Count);
+
+        foreach (string direction in expected)
+        {
+            Assert.True(
+                actual.Contains(direction),
+                $"缺少合法方向 {direction}");
+        }
+
+        ProductionPathResult path = ProductionPathParser.Parse(target);
+
+        Assert.True(path.IsProducible, path.Error ?? "8 象限样例应可制作");
+        Assert.True(path.Path is not null);
+
+        Assert.Equal("(1+234)+(5+678)", path.Path!.Direction);
+        Assert.Equal(1, path.Path.LeftSplit);
+        Assert.Equal(1, path.Path.RightSplit);
+        Assert.True(path.Path.DirectionLegal);
+    }
+
+    /// <summary>
+    /// n = 20 单层全晶体（可构造）：连续解析 3 次，单次平均耗时必须远低于
+    /// 200ms。旋转归一化缓存把稳定性塌陷次数从 3260 次降到 19 次，
+    /// 优化前实测约 38ms/次。
+    /// </summary>
+    public static void ProductionPathTwentyQuadrantsIsFast()
+    {
+        var parser = new ShortCodeParser();
+
+        ParseResult parsed = parser.Parse(
+            "CrCrCrCrCrCrCrCrCrCrCrCrCrCrCrCrCrCrCrCr",
+            1,
+            20);
+
+        Assert.True(parsed.Success, parsed.Error ?? "解析失败");
+
+        ShapeDocument target = parsed.Document!;
+
+        ProductionPathResult first = ProductionPathParser.Parse(target);
+
+        Assert.True(first.IsProducible, first.Error ?? "n = 20 单层全晶体应可制作");
+
+        // 预热一次，避免首次 JIT 计入选时。
+        ProductionPathParser.Parse(target);
+
+        Stopwatch stopwatch = Stopwatch.StartNew();
+
+        for (int run = 0; run < 3; run++)
+        {
+            ProductionPathResult repeated = ProductionPathParser.Parse(target);
+
+            Assert.True(
+                repeated.IsProducible,
+                repeated.Error ?? "n = 20 单层全晶体应可制作");
+        }
+
+        stopwatch.Stop();
+
+        double average = stopwatch.Elapsed.TotalMilliseconds / 3;
+
+        Assert.True(
+            average < 200,
+            $"n = 20 连续解析平均 {average:F2} ms，超过 200 ms");
     }
 }

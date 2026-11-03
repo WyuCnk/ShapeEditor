@@ -109,6 +109,8 @@ internal static class Program
             ("分析:制作路径-4 象限", AnalysisTests.ProductionPathFourQuadrants),
             ("分析:制作路径-2 象限不可制作", AnalysisTests.ProductionPathTwoQuadrantsIsImpossible),
             ("分析:用户样例轴 0 无合法方向", AnalysisTests.UserSampleHasNoLegalAxisZeroDirection),
+            ("分析:制作路径-20 象限性能", AnalysisTests.ProductionPathTwentyQuadrantsIsFast),
+            ("分析:优化结果一致", AnalysisTests.OptimizedHalfStabilityMatchesRecordedBaseline),
             ("工作区:素材跨工作区共享", WorkspaceStorePersistenceTests.MaterialSurvivesNewProject),
             ("物理:堆叠拒绝不同象限数", PhysicsTests.StackRejectsDifferentPartCount),
             ("物理:堆叠清晶并使用上限", PhysicsTests.StackClearsTopCrystalsAndUsesLimit),

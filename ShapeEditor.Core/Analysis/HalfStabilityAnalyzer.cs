@@ -1,6 +1,5 @@
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Physics;
-using ShapeEditor.Core.Services;
 
 namespace ShapeEditor.Core.Analysis;
 
@@ -60,26 +59,54 @@ public static class HalfStabilityAnalyzer
 
         var directionList = new List<ExchangeDirection>();
 
+        // 稳定性在旋转下不变；一次分析内的重复半半边/半边只塌陷一次。
+        var cache = new StabilityCache(mode);
+
         for (int axis = 0; axis < half; axis++)
         {
             int[] left = Contiguous(axis, half, parts);
             int[] right = Contiguous(axis + half, half, parts);
 
             // 两个半边本身也必须稳定，否则 Cut 会把它们塌陷改写。
+            // 半边没有柱子，起始列分别是轴与轴 + half。
             bool halvesStable =
-                IsStable(document, left, mode) &&
-                IsStable(document, right, mode);
+                IsStable(document, left, axis, cache) &&
+                IsStable(document, right, axis + half, cache);
+
+            /*
+             * P1/P2 只依赖 (轴, 左切点)，P3/P4 只依赖 (轴, 右切点)：
+             * 先各算一次，后面的双重循环只查表，不再重复构造同一片。
+             * 传 1 的切点参数不会影响对应片的构造（各片只读自己那一段）。
+             */
+            var leftPiecesStable = new bool[half];
+            var rightPiecesStable = new bool[half];
+
+            if (halvesStable)
+            {
+                for (int leftSplit = 1; leftSplit < half; leftSplit++)
+                {
+                    leftPiecesStable[leftSplit] =
+                        SubStable(document, axis, leftSplit, 1, PillarHalfHalves.First, cache) &&
+                        SubStable(document, axis, leftSplit, 1, PillarHalfHalves.Second, cache);
+                }
+
+                for (int rightSplit = 1; rightSplit < half; rightSplit++)
+                {
+                    rightPiecesStable[rightSplit] =
+                        SubStable(document, axis, 1, rightSplit, PillarHalfHalves.Third, cache) &&
+                        SubStable(document, axis, 1, rightSplit, PillarHalfHalves.Fourth, cache);
+                }
+            }
 
             for (int leftSplit = 1; leftSplit < half; leftSplit++)
             {
                 for (int rightSplit = 1; rightSplit < half; rightSplit++)
                 {
+                    // 四片里任一不稳定就跳过该方向，不进入交换阶段。
                     bool legalDirection =
                         halvesStable &&
-                        SubStable(document, axis, leftSplit, rightSplit, PillarHalfHalves.First, mode) &&
-                        SubStable(document, axis, leftSplit, rightSplit, PillarHalfHalves.Second, mode) &&
-                        SubStable(document, axis, leftSplit, rightSplit, PillarHalfHalves.Third, mode) &&
-                        SubStable(document, axis, leftSplit, rightSplit, PillarHalfHalves.Fourth, mode);
+                        leftPiecesStable[leftSplit] &&
+                        rightPiecesStable[rightSplit];
 
                     string text = Display(left, leftSplit, right, rightSplit);
 
@@ -109,6 +136,9 @@ public static class HalfStabilityAnalyzer
 
     /// <summary>
     /// 第 <paramref name="piece"/> 片带柱子的半半边是否稳定（未旋转）。
+    ///
+    /// 起始列：P1 = 轴、P2 = 轴 + 左切点、P3 = 轴 + half、P4 = 轴 + half + 右切点，
+    /// 与 <see cref="PillarHalfHalves.BuildPiece"/> 的内容区间一致。
     /// </summary>
     private static bool SubStable(
         ShapeDocument document,
@@ -116,8 +146,19 @@ public static class HalfStabilityAnalyzer
         int leftSplit,
         int rightSplit,
         int piece,
-        CollapseMode mode)
+        StabilityCache cache)
     {
+        int half = document.PartCount / 2;
+
+        int contentStart = piece switch
+        {
+            PillarHalfHalves.First => axis,
+            PillarHalfHalves.Second => axis + leftSplit,
+            PillarHalfHalves.Third => axis + half,
+            PillarHalfHalves.Fourth => axis + half + rightSplit,
+            _ => throw new ArgumentOutOfRangeException(nameof(piece))
+        };
+
         ShapeDocument shape = PillarHalfHalves.BuildPiece(
             document,
             axis,
@@ -125,14 +166,15 @@ public static class HalfStabilityAnalyzer
             rightSplit,
             piece);
 
-        return IsUnchanged(shape, mode);
+        return cache.IsStable(shape, contentStart);
     }
 
     /// <summary>只保留指定列的半边是否稳定。</summary>
     private static bool IsStable(
         ShapeDocument document,
         int[] columns,
-        CollapseMode mode)
+        int contentStart,
+        StabilityCache cache)
     {
         int layers = document.LayerCount;
         int parts = document.PartCount;
@@ -147,23 +189,7 @@ public static class HalfStabilityAnalyzer
             }
         }
 
-        return IsUnchanged(shape, mode);
-    }
-
-    private static bool IsUnchanged(
-        ShapeDocument shape,
-        CollapseMode mode)
-    {
-        ShapeDocument? collapsed = ShapePhysics.Collapse(shape, mode).Document;
-
-        if (collapsed is null)
-        {
-            return false;
-        }
-
-        var exporter = new ShortCodeExporter();
-
-        return exporter.Export(shape) == exporter.Export(collapsed);
+        return cache.IsStable(shape, contentStart);
     }
 
     private static int[] Contiguous(

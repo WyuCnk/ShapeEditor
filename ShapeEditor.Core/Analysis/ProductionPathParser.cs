@@ -72,6 +72,9 @@ public static class ProductionPathParser
         // 轴可被最终的旋转等价吸收，固定为 0，只需遍历左右切点。
         const int axis = 0;
 
+        // 稳定性在旋转下不变；一次解析内的重复半半边/半边只塌陷一次。
+        var cache = new StabilityCache(mode);
+
         for (int leftSplit = 1; leftSplit < half; leftSplit++)
         {
             for (int rightSplit = 1; rightSplit < half; rightSplit++)
@@ -79,20 +82,30 @@ public static class ProductionPathParser
                 (ShapeDocument p1, ShapeDocument p2, ShapeDocument p3, ShapeDocument p4) =
                     BuildPillarHalfHalves(target, axis, leftSplit, rightSplit);
 
-                // Cut 会各自 Collapse 一次，四片必须稳定。
-                if (!IsStable(p1, mode) ||
-                    !IsStable(p2, mode) ||
-                    !IsStable(p3, mode) ||
-                    !IsStable(p4, mode))
+                // Cut 会各自 Collapse 一次，四片必须稳定；
+                // 任一片不稳定就直接跳过该方向，不进入交换阶段。
+                // 稳定性与旋转无关，因此这里判定未旋转的片（起始列见 BuildPillarHalfHalves）。
+                if (!IsStable(p1, cache, axis) ||
+                    !IsStable(p2, cache, axis + leftSplit) ||
+                    !IsStable(p3, cache, axis + half) ||
+                    !IsStable(p4, cache, axis + half + rightSplit))
                 {
                     continue;
                 }
 
+                // 通过稳定性判定后，再做规格 §2 的预旋转。
+                int leftRotation = half - leftSplit;
+
+                p1 = PillarHalfHalves.RotateRight(p1, leftRotation);
+                p2 = PillarHalfHalves.RotateRight(p2, leftRotation);
+                p3 = PillarHalfHalves.RotateRight(p3, -rightSplit);
+                p4 = PillarHalfHalves.RotateRight(p4, -rightSplit);
+
                 // 同侧配对交换，再按 §2 转回。
                 ShapeDocument? leftHalf = ExchangeAndRotate(
-                    p1, p2, -(half - leftSplit), mode);
+                    p1, p2, -leftRotation, mode);
 
-                if (leftHalf is null || !IsStable(leftHalf, mode))
+                if (leftHalf is null || !IsStable(leftHalf, cache, 0))
                 {
                     continue;
                 }
@@ -100,7 +113,7 @@ public static class ProductionPathParser
                 ShapeDocument? rightHalf = ExchangeAndRotate(
                     p3, p4, rightSplit, mode);
 
-                if (rightHalf is null || !IsStable(rightHalf, mode))
+                if (rightHalf is null || !IsStable(rightHalf, cache, half))
                 {
                     continue;
                 }
@@ -169,10 +182,12 @@ public static class ProductionPathParser
     }
 
     /// <summary>
-    /// 按规格 §5 构造四个带柱子的半半边：切片 + 单柱 + 预旋转。
+    /// 按规格 §1 构造四个带柱子的半半边（未做 §2 的预旋转）。
     ///
-    /// P1/P2 各自顺转 (half − ls)，把内部切点转到底部刀口（n/2）；
-    /// P3/P4 各自逆转 rs。柱子按 §1 的柱位放置。
+    /// 返回的片保持构造时的列位置，起始列分别为：
+    /// P1 = 轴、P2 = 轴 + 左切点、P3 = 轴 + half、P4 = 轴 + half + 右切点。
+    /// 稳定性与旋转无关，缓存键用这些起始列做旋转归一化；
+    /// 通过判定后再由调用方按 §2 预旋转。
     /// </summary>
     private static (ShapeDocument P1, ShapeDocument P2, ShapeDocument P3, ShapeDocument P4)
         BuildPillarHalfHalves(
@@ -181,8 +196,6 @@ public static class ProductionPathParser
             int leftSplit,
             int rightSplit)
     {
-        int half = target.PartCount / 2;
-
         ShapeDocument p1 = PillarHalfHalves.BuildPiece(
             target, axis, leftSplit, rightSplit, PillarHalfHalves.First);
 
@@ -194,14 +207,6 @@ public static class ProductionPathParser
 
         ShapeDocument p4 = PillarHalfHalves.BuildPiece(
             target, axis, leftSplit, rightSplit, PillarHalfHalves.Fourth);
-
-        int leftRotation = half - leftSplit;
-
-        p1 = PillarHalfHalves.RotateRight(p1, leftRotation);
-        p2 = PillarHalfHalves.RotateRight(p2, leftRotation);
-
-        p3 = PillarHalfHalves.RotateRight(p3, -rightSplit);
-        p4 = PillarHalfHalves.RotateRight(p4, -rightSplit);
 
         return (p1, p2, p3, p4);
     }
@@ -277,11 +282,16 @@ public static class ProductionPathParser
                left.ColorCode == right.ColorCode;
     }
 
+    /// <summary>
+    /// 稳定性判定，走本次解析共享的缓存。
+    /// <paramref name="contentStart"/> 是该片的起始列，用于旋转归一化缓存键。
+    /// </summary>
     private static bool IsStable(
         ShapeDocument shape,
-        CollapseMode mode)
+        StabilityCache cache,
+        int contentStart)
     {
-        return ShapeAngleAnalyzer.IsStable(shape, mode);
+        return cache.IsStable(shape, contentStart);
     }
 
     private static string Display(
