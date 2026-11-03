@@ -72,8 +72,8 @@ public static class HalfStabilityAnalyzer
                         halves[axis, 1] &&
                         SubStable(document, axis, left, i, true, mode) &&
                         SubStable(document, axis, left, i, false, mode) &&
-                        SubStable(document, axis, right, j, true, mode) &&
-                        SubStable(document, axis, right, j, false, mode);
+                        SubStable(document, axis + half, right, j, true, mode) &&
+                        SubStable(document, axis + half, right, j, false, mode);
 
                     string text = Display(left, i, right, j);
 
