@@ -44,6 +44,9 @@
             <button class="mini-button" disabled="@(Store.SelectedNode is null)"
                     @onclick="BeginStackFromToolbar">堆叠</button>
 
+            <button class="mini-button" disabled="@(Store.SelectedNode is null)"
+                    @onclick="BeginExchangeFromToolbar">交换</button>
+
             <button class="mini-button" disabled="@(!HasSelectableShape)"
                     @onclick="OpenSelectedInEditor">加到编辑区</button>
 
@@ -557,10 +560,30 @@
 
         Nav.NavigateTo("/analysis");
     }
+    private string? _exchangeBaseId;
+
     private string? _stackBaseId;
 
     private string? _stackHint;
 
+    private void BeginExchangeFromToolbar()
+    {
+        if (Store.SelectedNode is null)
+        {
+            return;
+        }
+
+        if (_exchangeBaseId is not null)
+        {
+            _exchangeBaseId = null;
+            _stackHint = null;
+
+            return;
+        }
+
+        _exchangeBaseId = Store.SelectedNode.Id;
+        _stackHint = "再点一个节点作为第二个输入（Esc 取消）";
+    }
     private void BeginStackFromToolbar()
     {
         if (Store.SelectedNode is null)

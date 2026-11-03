@@ -507,6 +507,88 @@ public sealed partial class WorkspaceStore
     }
 
     /// <summary>直接按两个节点堆叠，不需要引用槽。</summary>
+    /// <summary>
+    /// 交换：两个输入各切割一次后交叉拼接，生成两个结果节点。
+    /// </summary>
+    public (NodeActionResult First, NodeActionResult Second) ComputeExchange(
+        string firstId,
+        string secondId,
+        CollapseMode mode)
+    {
+        WorkspaceNode? a = FindNode(firstId);
+        WorkspaceNode? b = FindNode(secondId);
+
+        if (a is null || b is null)
+        {
+            var missing = new NodeActionResult(false, null, "交换输入不存在。");
+
+            return (missing, missing);
+        }
+
+        ShapeDocument? documentA = GetEffectiveDocument(a);
+        ShapeDocument? documentB = GetEffectiveDocument(b);
+
+        if (documentA is null || documentB is null)
+        {
+            var empty = new NodeActionResult(false, null, "交换输入缺少图形。");
+
+            return (empty, empty);
+        }
+
+        string key1 = $"exchange1:{firstId}|{secondId}";
+        string key2 = $"exchange2:{firstId}|{secondId}";
+
+        WorkspaceNode? existing1 = _nodes.FirstOrDefault(node => node.OpKey == key1);
+        WorkspaceNode? existing2 = _nodes.FirstOrDefault(node => node.OpKey == key2);
+
+        if (existing1 is not null && existing2 is not null)
+        {
+            var again = new NodeActionResult(false, existing1, "该组合已交换过，已定位到结果。");
+
+            return (again, new NodeActionResult(false, existing2, "该组合已交换过，已定位到结果。"));
+        }
+
+        var exchanged = ShapeEditor.Core.Analysis.ShapeExchange.Exchange(documentA, documentB, mode);
+
+        if (exchanged.First is null || exchanged.Second is null)
+        {
+            var failed = new NodeActionResult(false, null, exchanged.Error ?? "交换失败。");
+
+            return (failed, failed);
+        }
+
+        WorkspaceNode first = AddResultNode(
+            a,
+            ApplyLimit(exchanged.First),
+            key1,
+            "交换结果",
+            0);
+
+        first.InputAId = firstId;
+        first.InputBId = secondId;
+
+        WorkspaceNode second = AddResultNode(
+            a,
+            ApplyLimit(exchanged.Second),
+            key2,
+            "交换结果",
+            0);
+
+        second.InputAId = firstId;
+        second.InputBId = secondId;
+
+        AddEdge(a.Id, first.Id, "交换输入");
+        AddEdge(b.Id, first.Id, "交换输入");
+        AddEdge(a.Id, second.Id, "交换输入");
+        AddEdge(b.Id, second.Id, "交换输入");
+
+        PersistGraph();
+        Changed?.Invoke();
+
+        return (
+            new NodeActionResult(true, first, "已生成交换结果。"),
+            new NodeActionResult(true, second, "已生成交换结果。"));
+    }
     public NodeActionResult ComputeStackOf(
         string baseId,
         string otherId,
@@ -1000,6 +1082,25 @@ public sealed partial class WorkspaceStore
                     mode);
 
                 computed = result.Document;
+            }
+            else if (op == "exchange1" || op == "exchange2")
+            {
+                WorkspaceNode? sourceA = node.InputAId is null ? null : FindNode(node.InputAId);
+                WorkspaceNode? sourceB = node.InputBId is null ? null : FindNode(node.InputBId);
+
+                ShapeDocument? docA = sourceA is null ? null : GetEffectiveDocument(sourceA);
+                ShapeDocument? docB = sourceB is null ? null : GetEffectiveDocument(sourceB);
+
+                if (docA is null || docB is null)
+                {
+                    failed++;
+
+                    continue;
+                }
+
+                var pair = ShapeEditor.Core.Analysis.ShapeExchange.Exchange(docA, docB, mode);
+
+                computed = op == "exchange1" ? pair.First : pair.Second;
             }
             else
             {
