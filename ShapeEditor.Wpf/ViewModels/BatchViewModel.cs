@@ -52,7 +52,20 @@ public sealed class BatchViewModel : ObservableObject
         NextCommand = new RelayCommand(ShowNext);
         PreviousPageCommand = new RelayCommand(ShowPreviousPage);
         NextPageCommand = new RelayCommand(ShowNextPage);
+        AddToEditorCommand = new RelayCommand(AddCurrentToEditor);
+        AnalyzeCommand = new RelayCommand(AnalyzeCurrent);
     }
+
+    /// <summary>
+    /// 由主窗口注入：把选中的图形载入编辑器。
+    /// 返回 false 表示载入失败，错误信息由编辑器负责显示。
+    /// </summary>
+    public Func<BatchItemViewModel, bool>? AddToEditorHandler { get; set; }
+
+    /// <summary>
+    /// 由主窗口注入：用宿主窗口打开分析窗口。
+    /// </summary>
+    public Action<BatchItemViewModel>? AnalyzeHandler { get; set; }
 
     public ObservableCollection<BatchItemViewModel> PageItems { get; }
 
@@ -69,6 +82,10 @@ public sealed class BatchViewModel : ObservableObject
     public ICommand PreviousPageCommand { get; }
 
     public ICommand NextPageCommand { get; }
+
+    public ICommand AddToEditorCommand { get; }
+
+    public ICommand AnalyzeCommand { get; }
 
     public string RawText
     {
@@ -188,7 +205,7 @@ public sealed class BatchViewModel : ObservableObject
         {
             if (SetProperty(ref _currentIndex, value))
             {
-                OnPropertyChanged(nameof(CurrentItem));
+                NotifyCurrentItemChanged();
                 OnPropertyChanged(nameof(IndexText));
                 OnPropertyChanged(nameof(CanPrevious));
                 OnPropertyChanged(nameof(CanNext));
@@ -224,6 +241,20 @@ public sealed class BatchViewModel : ObservableObject
     public bool CanPrevious => CurrentIndex > 0;
 
     public bool CanNext => CurrentIndex < _entries.Count - 1;
+
+    /// <summary>
+    /// 当前条目是否已经解析成功；「加入编辑区」「分析」据此启用。
+    /// </summary>
+    public bool HasCurrentDocument => CurrentItem?.Document is not null;
+
+    /// <summary>
+    /// 当前条目对象或其解析结果变化：一次性通知依赖它的展示属性。
+    /// </summary>
+    private void NotifyCurrentItemChanged()
+    {
+        OnPropertyChanged(nameof(CurrentItem));
+        OnPropertyChanged(nameof(HasCurrentDocument));
+    }
 
     public bool CanPreviousPage => PageIndex > 0;
 
@@ -340,9 +371,18 @@ public sealed class BatchViewModel : ObservableObject
         {
             ErrorMessage = "没有找到包含短代码的行。";
 
+            _currentIndex = 0;
+            _pageIndex = 0;
+            _pageStart = 0;
+
             OnPropertyChanged(nameof(HasEntries));
             OnPropertyChanged(nameof(EntryCount));
             OnPropertyChanged(nameof(PageCount));
+            OnPropertyChanged(nameof(CurrentIndex));
+            OnPropertyChanged(nameof(PageIndex));
+            OnPropertyChanged(nameof(IndexText));
+
+            NotifyCurrentItemChanged();
 
             return;
         }
@@ -386,8 +426,9 @@ public sealed class BatchViewModel : ObservableObject
         OnPropertyChanged(nameof(PageCount));
         OnPropertyChanged(nameof(CurrentIndex));
         OnPropertyChanged(nameof(PageIndex));
-        OnPropertyChanged(nameof(CurrentItem));
         OnPropertyChanged(nameof(IndexText));
+
+        NotifyCurrentItemChanged();
     }
 
     private BatchEntry CreateEntry(
@@ -433,6 +474,36 @@ public sealed class BatchViewModel : ObservableObject
 
     #endregion
 
+    #region 选中条目的去向
+
+    /// <summary>
+    /// 当前条目加入编辑器：交给主窗口注入的处理器完成载入与切页。
+    /// </summary>
+    public void AddCurrentToEditor()
+    {
+        if (CurrentItem is not { Document: not null } item)
+        {
+            return;
+        }
+
+        AddToEditorHandler?.Invoke(item);
+    }
+
+    /// <summary>
+    /// 用当前条目打开分析窗口。
+    /// </summary>
+    public void AnalyzeCurrent()
+    {
+        if (CurrentItem is not { Document: not null } item)
+        {
+            return;
+        }
+
+        AnalyzeHandler?.Invoke(item);
+    }
+
+    #endregion
+
     #region 分页与条目缓存
 
     private void BuildPage(
@@ -454,7 +525,7 @@ public sealed class BatchViewModel : ObservableObject
                 CreateView(_entries[index], index));
         }
 
-        OnPropertyChanged(nameof(CurrentItem));
+        NotifyCurrentItemChanged();
         OnPropertyChanged(nameof(PageText));
         OnPropertyChanged(nameof(SelectedPageOffset));
     }
@@ -553,7 +624,7 @@ public sealed class BatchViewModel : ObservableObject
          * 同一页内切换时 CurrentItem 的取法不变，
          * 但对象本身会变，需要显式通知。
          */
-        OnPropertyChanged(nameof(CurrentItem));
+        NotifyCurrentItemChanged();
         OnPropertyChanged(nameof(SelectedPageOffset));
     }
 

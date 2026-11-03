@@ -56,6 +56,14 @@
                         IsEnabled="False"
                         Clicked="OnStackNode" />
 
+                <Button x:Name="ExchangeButton"
+                        Text="交换"
+                        FontSize="12"
+                        HeightRequest="32"
+                        CornerRadius="8"
+                        IsEnabled="False"
+                        Clicked="OnExchangeNode" />
+
                 <Button x:Name="CopyButton"
                         Text="复制"
                         FontSize="12"
@@ -178,7 +186,7 @@
                         <!-- 素材拖到画布时，在落点创建节点 -->
                         <DropGestureRecognizer AllowDrop="True" Drop="OnCanvasDrop" />
 
-                        <!-- 点空白处取消堆叠的第二输入选择 -->
+                        <!-- 点空白处取消堆叠 / 交换的第二输入选择 -->
                         <TapGestureRecognizer Tapped="OnCanvasTapped" />
                     </AbsoluteLayout.GestureRecognizers>
                 </AbsoluteLayout>

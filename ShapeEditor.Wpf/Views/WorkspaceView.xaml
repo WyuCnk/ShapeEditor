@@ -161,6 +161,12 @@
                     IsEnabled="{Binding HasSelectedNode}" />
 
             <Button Style="{StaticResource MiniButton}"
+                    Content="交换"
+                    ToolTip="先选中第一个输入，点“交换”，再点第二个输入；Esc 取消"
+                    Command="{Binding ExchangeCommand}"
+                    IsEnabled="{Binding HasSelectedNode}" />
+
+            <Button Style="{StaticResource MiniButton}"
                     Content="复制"
                     ToolTip="复制选中节点的短代码"
                     Command="{Binding CopyCommand}"

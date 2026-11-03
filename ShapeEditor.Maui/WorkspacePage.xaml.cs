@@ -137,15 +137,22 @@ public partial class WorkspacePage : ContentPage
 
         MaxLayersEntry.Text = _store.MaxLayers.ToString();
 
-        // 等第二个输入期间如果底节点被删掉，自动退出堆叠状态
+        // 等第二个输入期间如果底节点被删掉，自动退出堆叠 / 交换状态
         if (_stackFirstId is not null && _store.FindNode(_stackFirstId) is null)
         {
             _stackFirstId = null;
         }
 
+        if (_exchangeFirstId is not null && _store.FindNode(_exchangeFirstId) is null)
+        {
+            _exchangeFirstId = null;
+        }
+
         WorkspaceNode? selected = _store.SelectedNode;
 
-        StatusLabel.Text = _stackFirstId is not null
+        bool waitingSecondInput = _stackFirstId is not null || _exchangeFirstId is not null;
+
+        StatusLabel.Text = waitingSecondInput
             ? "再点一个节点作为第二个输入"
             : $"素材 {_store.Materials.Count} 条 · 节点 {_store.Nodes.Count} 个" +
               (selected is null ? "" : $" · 已选中 #{selected.Seq}");
@@ -165,6 +172,10 @@ public partial class WorkspacePage : ContentPage
 
         // 等待第二输入时也要能再点一次「堆叠」取消
         StackButton.IsEnabled = hasSelection || _stackFirstId is not null;
+
+        // 等待第二输入时也要能再点一次「交换」取消
+        ExchangeButton.IsEnabled = hasSelection || _exchangeFirstId is not null;
+
         CopyButton.IsEnabled = hasSelection;
         DeleteButton.IsEnabled = hasSelection;
 
@@ -568,6 +579,14 @@ public partial class WorkspacePage : ContentPage
             // 删除按钮和卡片点击可能落在同一帧里，先确认节点还在
             if (_store!.FindNode(node.Id) is null)
             {
+                return;
+            }
+
+            // 交换第二步：这个节点作为第二个输入
+            if (_exchangeFirstId is not null)
+            {
+                CompleteExchange(node);
+
                 return;
             }
 
@@ -1015,6 +1034,9 @@ public partial class WorkspacePage : ContentPage
             return;
         }
 
+        // 「堆叠」和「交换」共用第二次点击，进入堆叠前先退出交换状态
+        CancelExchange();
+
         _stackFirstId = node.Id;
 
         Render();
@@ -1097,12 +1119,12 @@ public partial class WorkspacePage : ContentPage
         Render();
     }
 
-    /// <summary>点画布空白处取消堆叠；点在节点卡片上时交给卡片的点击处理。</summary>
+    /// <summary>点画布空白处取消堆叠 / 交换；点在节点卡片上时交给卡片的点击处理。</summary>
     private void OnCanvasTapped(
         object? sender,
         TappedEventArgs e)
     {
-        if (_stackFirstId is null)
+        if (_stackFirstId is null && _exchangeFirstId is null)
         {
             return;
         }
@@ -1115,6 +1137,8 @@ public partial class WorkspacePage : ContentPage
         }
 
         CancelStack();
+
+        CancelExchange();
     }
 
     /// <summary>判断画布坐标是否落在任一节点卡片里。</summary>
@@ -1242,17 +1266,38 @@ public partial class WorkspacePage : ContentPage
         object? sender,
         EventArgs e)
     {
-        CollapseMode mode = _store!.Mode == CollapseMode.IncludeCycles
+        if (_store is null)
+        {
+            return;
+        }
+
+        CollapseMode mode = _store.Mode == CollapseMode.IncludeCycles
             ? CollapseMode.FloorOnly
             : CollapseMode.IncludeCycles;
 
-        _store.SetMode(mode);
+        (int Updated, int Failed) result = (0, 0);
 
-        (int updated, int failed) = _store.RecomputeAll();
+        // 重算过程中会连续触发 Changed，先压住整页重绘，结束后统一 Render
+        bool wasRendering = _rendering;
 
-        if (failed > 0)
+        _rendering = true;
+
+        try
         {
-            Show($"已重算 {updated} 个节点，{failed} 个因输入缺失被跳过。");
+            _store.SetMode(mode);
+
+            result = RecomputeAllWithExchange();
+        }
+        finally
+        {
+            _rendering = wasRendering;
+        }
+
+        Render();
+
+        if (result.Failed > 0)
+        {
+            Show($"已重算 {result.Updated} 个节点，{result.Failed} 个因输入缺失被跳过。");
         }
     }
 
@@ -1260,18 +1305,34 @@ public partial class WorkspacePage : ContentPage
         object? sender,
         EventArgs e)
     {
-        if (!int.TryParse(MaxLayersEntry.Text, out int layers))
+        if (!int.TryParse(MaxLayersEntry.Text, out int layers) || _store is null)
         {
             return;
         }
 
-        _store!.SetMaxLayers(layers);
+        (int Updated, int Failed) result = (0, 0);
 
-        (int updated, int failed) = _store.RecomputeAll();
+        // 高度上限变了同样要按新规则重算交换节点
+        bool wasRendering = _rendering;
 
-        if (failed > 0)
+        _rendering = true;
+
+        try
         {
-            Show($"已重算 {updated} 个节点，{failed} 个因输入缺失被跳过。");
+            _store.SetMaxLayers(layers);
+
+            result = RecomputeAllWithExchange();
+        }
+        finally
+        {
+            _rendering = wasRendering;
+        }
+
+        Render();
+
+        if (result.Failed > 0)
+        {
+            Show($"已重算 {result.Updated} 个节点，{result.Failed} 个因输入缺失被跳过。");
         }
     }
 

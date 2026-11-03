@@ -107,6 +107,7 @@
                         <RowDefinition Height="*" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
                     <!-- 头部 -->
@@ -167,8 +168,29 @@
                                TextWrapping="Wrap"
                                Margin="2,0,2,10" />
 
+                    <!-- 选中条目的去向：未选中或解析失败时禁用 -->
+                    <StackPanel Grid.Row="3"
+                                Orientation="Horizontal"
+                                HorizontalAlignment="Right"
+                                Margin="0,0,0,4">
+                        <Button Content="加入编辑区"
+                                Command="{Binding AddToEditorCommand}"
+                                IsEnabled="{Binding HasCurrentDocument}"
+                                Style="{StaticResource Button.Primary}"
+                                Padding="16,7"
+                                Margin="0,0,8,0"
+                                ToolTip="把当前图形载入编辑器" />
+
+                        <Button Content="分析"
+                                Command="{Binding AnalyzeCommand}"
+                                IsEnabled="{Binding HasCurrentDocument}"
+                                Style="{StaticResource Button.Secondary}"
+                                Padding="16,7"
+                                ToolTip="用当前图形打开分析窗口" />
+                    </StackPanel>
+
                     <!-- 缩略图分页 -->
-                    <DockPanel Grid.Row="3">
+                    <DockPanel Grid.Row="4">
                         <StackPanel DockPanel.Dock="Bottom"
                                     Orientation="Horizontal"
                                     HorizontalAlignment="Center"

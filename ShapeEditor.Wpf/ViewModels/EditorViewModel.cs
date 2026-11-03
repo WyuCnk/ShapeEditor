@@ -1024,6 +1024,91 @@ public sealed class EditorViewModel : ObservableObject
         ScheduleAutoSave();
     }
 
+    /// <summary>
+    /// 从批量查看页载入一条图形。
+    ///
+    /// 与编辑器自己的解析入口共用同一套 Core 解析逻辑，
+    /// 但保留批量条目里的原始尺寸，不强制放大到 4×4；
+    /// 载入成功后由主窗口切到编辑器页。
+    /// </summary>
+    public bool LoadFromBatch(
+        string code,
+        int layers,
+        int parts,
+        ShortCodeFormat format)
+    {
+        ErrorMessage = "";
+
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            ErrorMessage = "没有可载入的短代码。";
+
+            return false;
+        }
+
+        if (!ShortCodeParser.TryInferDimensions(
+                code,
+                format,
+                out int inferredLayers,
+                out int inferredParts,
+                out string? inferError))
+        {
+            ErrorMessage = inferError ?? "短代码尺寸无法推断。";
+
+            return false;
+        }
+
+        /*
+         * 传入的尺寸来自批量解析结果，优先使用；
+         * 与短代码自身推断出的尺寸取较大值，避免越界。
+         */
+        int layerCount = Math.Max(
+            layers > 0 ? layers : inferredLayers,
+            inferredLayers);
+
+        int partCount = Math.Max(
+            parts > 0 ? parts : inferredParts,
+            inferredParts);
+
+        ParseResult result = _parser.Parse(
+            code.Trim(),
+            layerCount,
+            partCount,
+            format);
+
+        if (!result.Success ||
+            result.Document is null)
+        {
+            ErrorMessage = result.Error ?? "短代码解析失败。";
+
+            return false;
+        }
+
+        SaveUndoState();
+
+        Format = format;
+
+        Document = result.Document;
+
+        Code = _exporter.Export(
+            Document,
+            format,
+            omitTopEmptyLayers: true);
+
+        ClearSelection();
+
+        ResetView();
+
+        InvalidateGrid();
+
+        ScheduleAutoSave();
+
+        StatusMessage =
+            $"已载入批量查看中的图形：{Document.LayerCount} 层 × {Document.PartCount} 象限。";
+
+        return true;
+    }
+
     public void ExportCode()
     {
         ErrorMessage = "";

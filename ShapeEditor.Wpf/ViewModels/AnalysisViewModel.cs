@@ -57,6 +57,10 @@ public sealed class AnalysisViewModel : ObservableObject
 
     private HalfStabilityResult? _half;
 
+    private ProductionPathResult? _pathResult;
+
+    private bool _pathComputed;
+
     private ShapeProperty _properties;
 
     private string _errorMessage = "";
@@ -146,6 +150,40 @@ public sealed class AnalysisViewModel : ObservableObject
     public string HalfSummary => _halfSummary;
 
     public string HalfNote => _halfNote;
+
+    /// <summary>
+    /// 全部交换方向（不截断），导出分析图时按轴分组使用。
+    /// 奇数象限时为空。
+    /// </summary>
+    public IReadOnlyList<ExchangeDirection> ExchangeDirections =>
+        _half?.Directions ?? Array.Empty<ExchangeDirection>();
+
+    public bool HasHalfDirections =>
+        _half is not null &&
+        _half.Directions.Count > 0;
+
+    /// <summary>
+    /// 懒计算制作路径：只在导出分析图时调用，
+    /// 避免打开分析窗口就对复杂图形做一次完整搜索。
+    /// </summary>
+    public ProductionPathResult? GetProductionPath()
+    {
+        if (_document is null)
+        {
+            return null;
+        }
+
+        if (!_pathComputed)
+        {
+            _pathResult = ProductionPathParser.Parse(
+                _document,
+                _mode);
+
+            _pathComputed = true;
+        }
+
+        return _pathResult;
+    }
 
     public bool HasLegalDirections => LegalDirections.Count > 0;
 
@@ -257,6 +295,14 @@ public sealed class AnalysisViewModel : ObservableObject
 
         _half = HalfStabilityAnalyzer.Analyze(_document, _mode);
 
+        /*
+         * 下落规则变了，制作路径需要重新搜索；
+         * 这里只清掉缓存，真正用到时再算。
+         */
+        _pathResult = null;
+
+        _pathComputed = false;
+
         _properties = ShapePropertyAnalyzer.Analyze(
             _document,
             _analysis.IsStable,
@@ -333,6 +379,10 @@ public sealed class AnalysisViewModel : ObservableObject
         _analysis = null;
 
         _half = null;
+
+        _pathResult = null;
+
+        _pathComputed = false;
 
         _properties = ShapeProperty.None;
 

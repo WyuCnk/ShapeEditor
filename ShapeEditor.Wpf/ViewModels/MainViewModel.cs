@@ -19,6 +19,8 @@ public sealed class MainViewModel : ObservableObject
 
         Editor.AddToWorkspaceHandler = document => Workspace.AddMaterial(document);
 
+        Batch.AddToEditorHandler = AddBatchItemToEditor;
+
         VersionText = "v" +
             (Assembly.GetExecutingAssembly().GetName().Version?.ToString(3)
              ?? "1.1.0");
@@ -34,6 +36,26 @@ public sealed class MainViewModel : ObservableObject
     public BatchViewModel Batch { get; }
 
     public WorkspaceViewModel Workspace { get; }
+
+    /// <summary>
+    /// 批量查看页「加入编辑区」：按原始尺寸载入图形，然后切到编辑器页。
+    /// </summary>
+    private bool AddBatchItemToEditor(
+        BatchItemViewModel item)
+    {
+        if (!Editor.LoadFromBatch(
+                item.Code,
+                item.LayerCount,
+                item.PartCount,
+                Batch.Format))
+        {
+            return false;
+        }
+
+        TabIndex = 0;
+
+        return true;
+    }
 
     public int TabIndex
     {

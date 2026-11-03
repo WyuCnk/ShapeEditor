@@ -212,8 +212,8 @@ public partial class WorkspaceView : UserControl
             return;
         }
 
-        // 堆叠等待第二输入时，点击节点就是选择第二输入，不进入拖动
-        if (viewModel.IsStackPending)
+        // 堆叠或交换等待第二输入时，点击节点就是选择第二输入，不进入拖动
+        if (viewModel.IsStackPending || viewModel.IsExchangePending)
         {
             return;
         }
@@ -572,13 +572,15 @@ public partial class WorkspaceView : UserControl
     }
 
     /// <summary>
-    /// 点击画布空白处取消堆叠待选。
+    /// 点击画布空白处取消堆叠/交换待选。
     /// 节点卡片会先标记事件已处理，不会走到这里。
     /// </summary>
     private void OnCanvasMouseLeftButtonDown(
         object sender,
         MouseButtonEventArgs e)
     {
+        ViewModel?.CancelExchange();
+
         ViewModel?.CancelStack();
     }
 
@@ -594,7 +596,8 @@ public partial class WorkspaceView : UserControl
 
     /// <summary>
     /// 工作区快捷键：
-    /// Ctrl+C 复制选中节点的图形，Ctrl+V 粘贴，Delete 删除选中节点，Esc 取消堆叠待选。
+    /// Ctrl+C 复制选中节点的图形，Ctrl+V 粘贴，Delete 删除选中节点，
+    /// Esc 取消堆叠/交换待选。
     ///
     /// 全部复用 ViewModel 已有的公开命令/方法，不复制实现；
     /// 焦点在文本框时直接返回，避免影响文字输入和文本框自带的复制粘贴。
@@ -643,6 +646,8 @@ public partial class WorkspaceView : UserControl
                 break;
 
             case Key.Escape:
+                viewModel.CancelExchange();
+
                 viewModel.CancelStack();
 
                 e.Handled = true;

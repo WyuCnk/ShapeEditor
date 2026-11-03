@@ -1,7 +1,10 @@
 using System.Windows;
 using System.Windows.Input;
+using Microsoft.Win32;
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Physics;
+using ShapeEditor.Wpf.Rendering;
+using ShapeEditor.Wpf.Services;
 using ShapeEditor.Wpf.ViewModels;
 
 namespace ShapeEditor.Wpf.Views;
@@ -71,6 +74,63 @@ public partial class AnalysisWindow : Window
         RoutedEventArgs e)
     {
         Close();
+    }
+
+    /// <summary>
+    /// 导出分析图：与工作区导出图片一样走 SaveFileDialog，
+    /// 再把当前分析结果画成单栏 PNG。
+    /// </summary>
+    private void OnExportImageClick(
+        object sender,
+        RoutedEventArgs e)
+    {
+        if (ViewModel is not AnalysisViewModel viewModel ||
+            viewModel.Document is null)
+        {
+            MessageBox.Show(
+                "没有可导出的图形。",
+                "导出图片",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+
+            return;
+        }
+
+        var dialog = new SaveFileDialog
+        {
+            Title = "导出分析图",
+            Filter = "PNG 图片 (*.png)|*.png",
+            InitialDirectory = StoragePaths.Root,
+            FileName = $"shape-analysis-{DateTime.Now:yyyyMMdd-HHmmss}.png",
+            AddExtension = true,
+            DefaultExt = ".png"
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        try
+        {
+            AnalysisImageExporter.Export(
+                dialog.FileName,
+                viewModel);
+
+            MessageBox.Show(
+                $"已导出：{dialog.FileName}",
+                "导出图片",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(
+                $"导出图片失败：{exception.Message}",
+                "导出图片",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
     }
 
     protected override void OnPreviewKeyDown(

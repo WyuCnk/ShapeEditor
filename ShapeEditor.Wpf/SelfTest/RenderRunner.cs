@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using ShapeEditor.Core.Analysis;
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Services;
 using ShapeEditor.Wpf.Controls;
@@ -71,11 +72,20 @@ public static class RenderRunner
             RenderWorkspaceView(
                 Path.Combine(outputDirectory, "ui-workspace.png"));
 
+            RenderWorkspaceExchange(
+                Path.Combine(outputDirectory, "ui-workspace-exchange.png"));
+
             RenderAnalysisWindow(
                 Path.Combine(outputDirectory, "ui-analysis.png"));
 
+            RenderAnalysisExport(
+                Path.Combine(outputDirectory, "analysis-export.png"));
+
             CheckAnalysis(
                 Path.Combine(outputDirectory, "analysis-check.txt"));
+
+            CheckBatchActions(
+                Path.Combine(outputDirectory, "batch-actions.txt"));
 
             RenderWorkspaceExport(
                 Path.Combine(outputDirectory, "workspace-export.png"));
@@ -85,6 +95,9 @@ public static class RenderRunner
 
             CheckWorkspaceSync2(
                 Path.Combine(outputDirectory, "workspace-sync2.txt"));
+
+            CheckWorkspaceExchange(
+                Path.Combine(outputDirectory, "workspace-exchange.txt"));
 
             /*
              * 快捷键说明窗口用非模态 Show() 打开，
@@ -320,6 +333,88 @@ public static class RenderRunner
         RenderElement(view, 1280, 800, path);
     }
 
+    /// <summary>
+    /// 交换流程的界面渲染：两个源节点 + 左右两个交换结果节点，
+    /// 用来检查「交换」按钮、结果卡片、四条输入连线与摆放位置。
+    /// </summary>
+    private static void RenderWorkspaceExchange(
+        string path)
+    {
+        string storePath = Path.Combine(
+            Path.GetTempPath(),
+            $"shape-workspace-exchange-view-{Guid.NewGuid():N}.json");
+
+        var store = new WorkspaceStore(storePath);
+
+        WorkspaceNode first = store.CreateNodeAtPoint(
+            80,
+            60);
+
+        store.ReplaceNodeShape(
+            first.Id,
+            "CrP---Gu:ckckckck",
+            Core.Models.ShortCodeFormat.Full,
+            4,
+            4);
+
+        WorkspaceNode second = store.CreateNodeAtPoint(
+            300,
+            60);
+
+        store.ReplaceNodeShape(
+            second.Id,
+            "CuCuCuCu:mmmmmmmm",
+            Core.Models.ShortCodeFormat.Full,
+            4,
+            4);
+
+        var viewModel = new WorkspaceViewModel(store);
+
+        store.SelectNode(first);
+
+        viewModel.ExchangeCommand.Execute(null);
+
+        WorkspaceNodeViewModel? secondView = viewModel.Nodes.FirstOrDefault(
+            node => node.Id == second.Id);
+
+        if (secondView is not null)
+        {
+            viewModel.HandleNodeClick(secondView);
+        }
+
+        var view = new WorkspaceView
+        {
+            DataContext = viewModel,
+            Width = 1280,
+            Height = 800
+        };
+
+        RenderElement(view, 1280, 800, path);
+    }
+
+    /// <summary>
+    /// 分析图导出自检：用与分析窗口相同的数据走同一条导出路径，
+    /// 生成一张单栏 PNG 供人工检查版式。
+    /// </summary>
+    private static void RenderAnalysisExport(
+        string path)
+    {
+        ShapeDocument document = CreateSampleDocument();
+
+        string code = new ShortCodeExporter().Export(
+            document,
+            omitTopEmptyLayers: false);
+
+        var viewModel = new AnalysisViewModel(
+            code,
+            document.LayerCount,
+            document.PartCount,
+            Core.Models.ShortCodeFormat.Full,
+            Core.Physics.CollapseMode.IncludeCycles);
+
+        AnalysisImageExporter.Export(path, viewModel);
+    }
+
     private static void RenderAnalysisWindow(
         string path)
     {
@@ -414,6 +509,15 @@ public static class RenderRunner
 
             bool half = !string.IsNullOrWhiteSpace(viewModel.HalfSummary);
 
+            bool halfDirections =
+                viewModel.HasHalfDirections &&
+                viewModel.ExchangeDirections.Count > 0;
+
+            ProductionPathResult? productionPath =
+                viewModel.GetProductionPath();
+
+            bool pathReady = productionPath is not null;
+
             viewModel.IsFloorMode = true;
 
             bool modeSwitched =
@@ -425,9 +529,100 @@ public static class RenderRunner
             lines.Add($"图形性质：{viewModel.PropertyNames.Count} 项，{(properties ? "成功" : "失败")}");
             lines.Add($"稳定性：{viewModel.StabilityText}");
             lines.Add($"半边稳定性：{viewModel.HalfSummary}");
+            lines.Add($"交换方向表格：{viewModel.ExchangeDirections.Count} 行，{(halfDirections ? "成功" : "失败")}");
+            lines.Add($"制作路径：{(productionPath is null ? "无" : productionPath.IsProducible ? "可制作" : "不可制作：" + productionPath.Error)}");
             lines.Add($"切换仅地面：{(modeSwitched ? "成功" : "失败")}");
 
-            ok = loaded && properties && stability && half && modeSwitched;
+            ok = loaded &&
+                 properties &&
+                 stability &&
+                 half &&
+                 halfDirections &&
+                 pathReady &&
+                 modeSwitched;
+        }
+        catch (Exception exception)
+        {
+            lines.Add(exception.ToString());
+        }
+
+        lines.Insert(0, ok ? "PASS" : "FAIL");
+
+        File.WriteAllLines(path, lines);
+    }
+
+    /// <summary>
+    /// 批量查看页动作的自检：确认选中条目可以加入编辑区、
+    /// 可以交给分析入口，并且空列表时两个动作都不会生效。
+    /// </summary>
+    private static void CheckBatchActions(
+        string path)
+    {
+        var lines = new List<string>();
+
+        bool ok = false;
+
+        try
+        {
+            var main = new MainViewModel();
+
+            main.Batch.RawText =
+                "CuCu" + Environment.NewLine +
+                "CcCc";
+
+            main.Batch.ParseEntries();
+
+            bool selected =
+                main.Batch.HasCurrentDocument &&
+                main.Batch.CurrentItem is { Document: not null };
+
+            string? analyzedCode = null;
+
+            main.Batch.AnalyzeHandler = item => analyzedCode = item.Code;
+
+            main.Batch.AddToEditorCommand.Execute(null);
+
+            main.Batch.AnalyzeCommand.Execute(null);
+
+            bool editorLoaded =
+                main.TabIndex == 0 &&
+                main.Editor.Document.LayerCount == 1 &&
+                main.Editor.Document.PartCount == 4 &&
+                !string.IsNullOrWhiteSpace(main.Editor.Code) &&
+                main.Editor.Code.Length > 0;
+
+            bool analyzed = analyzedCode == "CuCu";
+
+            /*
+             * 清空后没有当前条目：即使命令被触发，
+             * 也不应改动编辑器或调用分析入口。
+             */
+            main.Batch.ClearAll();
+
+            int layerBefore = main.Editor.Document.LayerCount;
+
+            string? analyzedAfterClear = null;
+
+            main.Batch.AnalyzeHandler = item => analyzedAfterClear = item.Code;
+
+            main.Batch.AddToEditorCommand.Execute(null);
+
+            main.Batch.AnalyzeCommand.Execute(null);
+
+            bool emptyIgnored =
+                !main.Batch.HasCurrentDocument &&
+                analyzedAfterClear is null &&
+                main.Editor.Document.LayerCount == layerBefore;
+
+            lines.Add($"选中条目：{(selected ? "成功" : "失败")}");
+            lines.Add(
+                $"加入编辑区：{(editorLoaded ? "成功" : "失败")}" +
+                $"（{main.Editor.Document.LayerCount} 层 × {main.Editor.Document.PartCount} 象限，" +
+                $"标签页={main.TabIndex}）");
+            lines.Add($"打开分析：{(analyzed ? "成功" : "失败")}（{analyzedCode ?? "无"}）");
+            lines.Add($"空列表禁用：{(emptyIgnored ? "成功" : "失败")}");
+
+            ok = selected && editorLoaded && analyzed && emptyIgnored;
         }
         catch (Exception exception)
         {
@@ -771,6 +966,267 @@ public static class RenderRunner
                 dropOk &&
                 cancelOk &&
                 stackOk;
+        }
+        catch (Exception exception)
+        {
+            lines.Add(exception.ToString());
+        }
+
+        lines.Insert(0, ok ? "PASS" : "FAIL");
+
+        File.WriteAllLines(path, lines);
+    }
+
+    /// <summary>
+    /// 交换自检：两击流程、标题/幂等键/输入记录、连线与摆放、
+    /// 重复定位、取消，以及切换下落规则后按两个输入重算。
+    /// 全部走 ViewModel 的公开入口，不弹窗，输出逐项结果。
+    /// </summary>
+    private static void CheckWorkspaceExchange(
+        string path)
+    {
+        var lines = new List<string>();
+
+        bool ok = false;
+
+        try
+        {
+            string storePath = Path.Combine(
+                Path.GetTempPath(),
+                $"shape-workspace-exchange-{Guid.NewGuid():N}.json");
+
+            var store = new WorkspaceStore(storePath);
+
+            var viewModel = new WorkspaceViewModel(store);
+
+            WorkspaceNode first = store.CreateNodeAtPoint(
+                80,
+                60);
+
+            store.ReplaceNodeShape(
+                first.Id,
+                "CrP---Gu:ckckckck",
+                Core.Models.ShortCodeFormat.Full,
+                4,
+                4);
+
+            WorkspaceNode second = store.CreateNodeAtPoint(
+                300,
+                60);
+
+            store.ReplaceNodeShape(
+                second.Id,
+                "CuCuCuCu:mmmmmmmm",
+                Core.Models.ShortCodeFormat.Full,
+                4,
+                4);
+
+            // 第一击：进入待选并给出提示
+            store.SelectNode(first);
+
+            viewModel.ExchangeCommand.Execute(null);
+
+            bool hintOk =
+                viewModel.IsExchangePending &&
+                viewModel.HintText.Contains(
+                    "再点一个节点作为第二个输入",
+                    StringComparison.Ordinal) &&
+                viewModel.HintText.Contains(
+                    "Esc 取消",
+                    StringComparison.Ordinal);
+
+            lines.Add($"交换提示：{(hintOk ? "成功" : "失败")}（{viewModel.HintText}）");
+
+            // 第二击：点另一个节点完成交换
+            WorkspaceNodeViewModel? secondView = viewModel.Nodes.FirstOrDefault(
+                node => node.Id == second.Id);
+
+            if (secondView is not null)
+            {
+                viewModel.HandleNodeClick(secondView);
+            }
+
+            string firstKey = $"exchange1:{first.Id}|{second.Id}";
+
+            string secondKey = $"exchange2:{first.Id}|{second.Id}";
+
+            WorkspaceNode? firstResult = store.Nodes.FirstOrDefault(
+                node => node.OpKey == firstKey);
+
+            WorkspaceNode? secondResult = store.Nodes.FirstOrDefault(
+                node => node.OpKey == secondKey);
+
+            bool titleOk =
+                firstResult?.Label == WorkspaceExchangeService.ResultLabel &&
+                secondResult?.Label == WorkspaceExchangeService.ResultLabel;
+
+            bool inputOk =
+                firstResult is not null &&
+                secondResult is not null &&
+                firstResult.InputAId == first.Id &&
+                firstResult.InputBId == second.Id &&
+                secondResult.InputAId == first.Id &&
+                secondResult.InputBId == second.Id;
+
+            bool positionOk =
+                firstResult is not null &&
+                secondResult is not null &&
+                Math.Abs((firstResult.X ?? -1) - 40) < 0.1 &&
+                Math.Abs((firstResult.Y ?? -1) - 480) < 0.1 &&
+                Math.Abs((secondResult.X ?? -1) - 560) < 0.1 &&
+                Math.Abs((secondResult.Y ?? -1) - 480) < 0.1;
+
+            bool edgeOk =
+                firstResult is not null &&
+                secondResult is not null &&
+                store.Edges.Count(
+                    edge => edge.Label == WorkspaceExchangeService.EdgeLabel) == 4 &&
+                store.Edges.Count(
+                    edge => edge.ToId == firstResult.Id &&
+                            edge.Label == WorkspaceExchangeService.EdgeLabel) == 2 &&
+                store.Edges.Count(
+                    edge => edge.ToId == secondResult.Id &&
+                            edge.Label == WorkspaceExchangeService.EdgeLabel) == 2;
+
+            bool selectedOk =
+                firstResult is not null &&
+                store.SelectedNode?.Id == firstResult.Id;
+
+            bool pendingCleared =
+                !viewModel.IsExchangePending &&
+                !viewModel.HintText.Contains("Esc 取消", StringComparison.Ordinal);
+
+            // 初始结果应与 IncludeCycles 下的 Exchange 完全一致
+            ShapeDocument? firstDocument = store.GetEffectiveDocument(first);
+
+            ShapeDocument? secondDocument = store.GetEffectiveDocument(second);
+
+            string expectedFirstCode = "";
+
+            string expectedSecondCode = "";
+
+            if (firstDocument is not null && secondDocument is not null)
+            {
+                var initial = ShapeExchange.Exchange(
+                    firstDocument,
+                    secondDocument,
+                    Core.Physics.CollapseMode.IncludeCycles);
+
+                if (initial.First is not null && initial.Second is not null)
+                {
+                    expectedFirstCode = new ShortCodeExporter().Export(
+                        initial.First,
+                        omitTopEmptyLayers: true);
+
+                    expectedSecondCode = new ShortCodeExporter().Export(
+                        initial.Second,
+                        omitTopEmptyLayers: true);
+                }
+            }
+
+            bool contentOk =
+                firstResult is not null &&
+                secondResult is not null &&
+                !string.IsNullOrEmpty(expectedFirstCode) &&
+                firstResult.Code == expectedFirstCode &&
+                secondResult.Code == expectedSecondCode;
+
+            lines.Add($"交换结果：{Describe(firstResult)} / {Describe(secondResult)}（期望 40,480 / 560,480）");
+            lines.Add($"标题/输入/内容：{(titleOk && inputOk && contentOk ? "成功" : "失败")}");
+            lines.Add($"连线：{(edgeOk ? "成功" : "失败")}，选中左结果：{(selectedOk ? "成功" : "失败")}，待选：{(pendingCleared ? "已清除" : "仍在")}");
+
+            int nodeCount = store.Nodes.Count;
+
+            // 同一组合再交换一次：定位到已有节点，不新增节点
+            store.SelectNode(first);
+
+            viewModel.ExchangeCommand.Execute(null);
+
+            secondView = viewModel.Nodes.FirstOrDefault(
+                node => node.Id == second.Id);
+
+            if (secondView is not null)
+            {
+                viewModel.HandleNodeClick(secondView);
+            }
+
+            bool idempotent =
+                store.Nodes.Count == nodeCount &&
+                store.Nodes.Count(node => node.OpKey == firstKey) == 1 &&
+                store.Nodes.Count(node => node.OpKey == secondKey) == 1 &&
+                viewModel.HintText.Contains("已定位到结果", StringComparison.Ordinal);
+
+            lines.Add($"重复交换：{viewModel.HintText}（{(idempotent ? "成功" : "失败")}）");
+
+            // 再点一次「交换」按钮取消待选
+            store.SelectNode(first);
+
+            viewModel.ExchangeCommand.Execute(null);
+
+            bool pendingBeforeCancel = viewModel.IsExchangePending;
+
+            viewModel.ExchangeCommand.Execute(null);
+
+            bool cancelOk =
+                pendingBeforeCancel &&
+                !viewModel.IsExchangePending &&
+                !viewModel.HintText.Contains("Esc 取消", StringComparison.Ordinal);
+
+            lines.Add($"交换取消：{(cancelOk ? "成功" : "失败")}");
+
+            // 切换下落规则：两个结果节点按两个输入重新 Exchange
+            viewModel.SetMode(Core.Physics.CollapseMode.FloorOnly);
+
+            ShapeDocument? floorFirstDocument = store.GetEffectiveDocument(first);
+
+            ShapeDocument? floorSecondDocument = store.GetEffectiveDocument(second);
+
+            string expectedFloorFirst = "";
+
+            string expectedFloorSecond = "";
+
+            if (floorFirstDocument is not null && floorSecondDocument is not null)
+            {
+                var exchanged = ShapeExchange.Exchange(
+                    floorFirstDocument,
+                    floorSecondDocument,
+                    Core.Physics.CollapseMode.FloorOnly);
+
+                if (exchanged.First is not null && exchanged.Second is not null)
+                {
+                    expectedFloorFirst = new ShortCodeExporter().Export(
+                        exchanged.First,
+                        omitTopEmptyLayers: true);
+
+                    expectedFloorSecond = new ShortCodeExporter().Export(
+                        exchanged.Second,
+                        omitTopEmptyLayers: true);
+                }
+            }
+
+            bool recomputeOk =
+                firstResult is not null &&
+                secondResult is not null &&
+                !string.IsNullOrEmpty(expectedFloorFirst) &&
+                firstResult.Code == expectedFloorFirst &&
+                secondResult.Code == expectedFloorSecond &&
+                firstResult.OpKey == firstKey &&
+                secondResult.OpKey == secondKey;
+
+            lines.Add($"仅地面重算：交换1={firstResult?.Code}，交换2={secondResult?.Code}，{(recomputeOk ? "成功" : "失败")}");
+
+            ok =
+                hintOk &&
+                titleOk &&
+                inputOk &&
+                positionOk &&
+                edgeOk &&
+                selectedOk &&
+                pendingCleared &&
+                contentOk &&
+                idempotent &&
+                cancelOk &&
+                recomputeOk;
         }
         catch (Exception exception)
         {

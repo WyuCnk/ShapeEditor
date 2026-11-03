@@ -26,6 +26,9 @@ public sealed class WorkspaceViewModel : ObservableObject
     private const string StackHint =
         "堆叠：再点一个节点作为第二个输入，Esc 取消。数据目录：";
 
+    private const string ExchangeHint =
+        "交换：再点一个节点作为第二个输入，Esc 取消。数据目录：";
+
     /// <summary>素材拖放时使用的数据格式，值为素材 Id。</summary>
     public const string MaterialDragFormat = "ShapeEditor.Material";
 
@@ -57,6 +60,9 @@ public sealed class WorkspaceViewModel : ObservableObject
     /// <summary>正在进行中的堆叠：第一个输入的节点 Id；为空表示没有待选的第二输入。</summary>
     private string? _stackFirstId;
 
+    /// <summary>正在进行中的交换：第一个输入的节点 Id；为空表示没有待选的第二输入。</summary>
+    private string? _exchangeFirstId;
+
     private string _hintText = DefaultHint;
 
     public WorkspaceViewModel(
@@ -70,6 +76,7 @@ public sealed class WorkspaceViewModel : ObservableObject
         PinCommand = new RelayCommand(p => ApplyNode(p, "pin"));
         CutCommand = new RelayCommand(p => ApplyNode(p, "cut"));
         StackCommand = new RelayCommand(_ => BeginStackFromToolbar());
+        ExchangeCommand = new RelayCommand(_ => BeginExchangeFromToolbar());
         CopyCommand = new RelayCommand(_ => CopySelected());
         PasteCommand = new RelayCommand(_ => PasteClipboard());
         DeleteNodeCommand = new RelayCommand(p => DeleteNode(p));
@@ -102,6 +109,9 @@ public sealed class WorkspaceViewModel : ObservableObject
     public System.Windows.Input.ICommand CutCommand { get; }
 
     public System.Windows.Input.ICommand StackCommand { get; }
+
+    /// <summary>交换：先选中第一个输入，点一次进入待选，再点第二个节点完成。</summary>
+    public System.Windows.Input.ICommand ExchangeCommand { get; }
 
     public System.Windows.Input.ICommand CopyCommand { get; }
 
@@ -186,6 +196,12 @@ public sealed class WorkspaceViewModel : ObservableObject
     /// </summary>
     public bool IsStackPending => _stackFirstId is not null;
 
+    /// <summary>
+    /// 是否正在等待交换的第二个输入。
+    /// 与堆叠一样，此时点击节点只用于选第二输入，不进入拖动。
+    /// </summary>
+    public bool IsExchangePending => _exchangeFirstId is not null;
+
     public double CanvasWidth
     {
         get => _canvasWidth;
@@ -227,7 +243,7 @@ public sealed class WorkspaceViewModel : ObservableObject
 
             _store.SetMaxLayers(value);
 
-            (int updated, int failed) = _store.RecomputeAll();
+            (int updated, int failed) = WorkspaceExchangeService.RecomputeAll(_store);
 
             ReportRecompute(updated, failed);
         }
@@ -261,7 +277,7 @@ public sealed class WorkspaceViewModel : ObservableObject
 
         _store.SetMode(mode);
 
-        (int updated, int failed) = _store.RecomputeAll();
+        (int updated, int failed) = WorkspaceExchangeService.RecomputeAll(_store);
 
         ReportRecompute(updated, failed);
 
@@ -293,6 +309,14 @@ public sealed class WorkspaceViewModel : ObservableObject
         {
             // 第一个输入被删除或切换了工作区，堆叠待选自动取消
             _stackFirstId = null;
+
+            HintText = DefaultHint;
+        }
+
+        if (_exchangeFirstId is not null && _store.FindNode(_exchangeFirstId) is null)
+        {
+            // 第一个输入被删除或切换了工作区，交换待选自动取消
+            _exchangeFirstId = null;
 
             HintText = DefaultHint;
         }
@@ -603,11 +627,33 @@ public sealed class WorkspaceViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 处理节点点击：堆叠待选时把该节点作为第二输入，否则只做选中。
+    /// 处理节点点击：交换/堆叠待选时把该节点作为第二输入，否则只做选中。
     /// </summary>
     public void HandleNodeClick(
         WorkspaceNodeViewModel node)
     {
+        if (_exchangeFirstId is not null)
+        {
+            WorkspaceNode? first = _store.FindNode(_exchangeFirstId);
+
+            if (first is null)
+            {
+                CancelExchange();
+            }
+            else if (node.Id == first.Id)
+            {
+                HintText = "交换：不能用同一个节点作为第二个输入，请选择另一个节点（Esc 取消）。数据目录：";
+
+                return;
+            }
+            else if (_store.FindNode(node.Id) is WorkspaceNode second)
+            {
+                CompleteExchange(first, second);
+
+                return;
+            }
+        }
+
         if (_stackFirstId is not null)
         {
             WorkspaceNode? first = _store.FindNode(_stackFirstId);
@@ -1013,6 +1059,9 @@ public sealed class WorkspaceViewModel : ObservableObject
             return;
         }
 
+        // 同一时间只保留一个待选流程；点“堆叠”会取消进行中的交换
+        CancelExchange();
+
         if (_store.GetEffectiveDocument(source) is null)
         {
             MessageBox.Show(
@@ -1086,6 +1135,104 @@ public sealed class WorkspaceViewModel : ObservableObject
         }
 
         _stackFirstId = null;
+
+        HintText = DefaultHint;
+    }
+
+    /// <summary>
+    /// 交换第一击：记住当前选中节点，提示再点第二个输入。
+    /// 已经在等待第二输入时，再点按钮等于取消。
+    /// </summary>
+    private void BeginExchangeFromToolbar()
+    {
+        if (_exchangeFirstId is not null)
+        {
+            CancelExchange();
+
+            return;
+        }
+
+        WorkspaceNode? source = _store.SelectedNode;
+
+        if (source is null)
+        {
+            return;
+        }
+
+        // 同一时间只保留一个待选流程；点“交换”会取消进行中的堆叠
+        CancelStack();
+
+        _exchangeFirstId = source.Id;
+
+        HintText = ExchangeHint;
+    }
+
+    /// <summary>
+    /// 交换第二击：生成（或定位）两个交换结果节点，并按第二个输入摆放在下方左右。
+    /// 左结果对应 exchange1（First），右结果对应 exchange2（Second）。
+    /// </summary>
+    private void CompleteExchange(
+        WorkspaceNode first,
+        WorkspaceNode second)
+    {
+        (NodeActionResult firstResult, NodeActionResult secondResult) =
+            WorkspaceExchangeService.ComputeExchange(
+                _store,
+                first.Id,
+                second.Id);
+
+        if (firstResult.Node is null || secondResult.Node is null)
+        {
+            MessageBox.Show(
+                firstResult.Message,
+                "交换",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+
+            // 输入仍不完整时留在待选状态，方便换一个第二输入重试
+            return;
+        }
+
+        _exchangeFirstId = null;
+
+        ShapeDocument? secondDocument = _store.GetEffectiveDocument(second);
+
+        Rect secondBounds = WorkspaceLayout.BoundsFor(
+            second,
+            WorkspaceLayout.SizeFor(second, secondDocument, FallbackParts));
+
+        double resultY = secondBounds.Top + 420;
+
+        // 左结果放在第二个输入下方左侧，最左不小于画布留白
+        _store.SetNodePosition(
+            firstResult.Node.Id,
+            Math.Max(WorkspaceLayout.Padding, secondBounds.Left - 260),
+            resultY);
+
+        // 右结果放在第二个输入下方右侧
+        _store.SetNodePosition(
+            secondResult.Node.Id,
+            secondBounds.Left + 260,
+            resultY);
+
+        HintText = firstResult.Created || secondResult.Created
+            ? "已生成交换结果。数据目录："
+            : $"{firstResult.Message}数据目录：";
+
+        _store.SelectNode(firstResult.Node);
+    }
+
+    /// <summary>
+    /// 取消进行中的交换（Esc、再点“交换”或点画布空白处）。
+    /// </summary>
+    public void CancelExchange()
+    {
+        if (_exchangeFirstId is null)
+        {
+            return;
+        }
+
+        _exchangeFirstId = null;
 
         HintText = DefaultHint;
     }

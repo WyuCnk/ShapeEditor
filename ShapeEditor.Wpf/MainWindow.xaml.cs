@@ -17,6 +17,18 @@ public partial class MainWindow : Window
         InitializeComponent();
 
         DataContext = _viewModel;
+
+        /*
+         * 批量查看页的「分析」使用主窗口作为宿主，
+         * 与编辑器、工作区的分析入口共用同一个分析窗口。
+         */
+        _viewModel.Batch.AnalyzeHandler = item =>
+            AnalysisWindow.ShowFor(
+                this,
+                item.Code,
+                item.LayerCount,
+                item.PartCount,
+                _viewModel.Batch.Format);
     }
 
     private void OnShortcutHelpClick(
