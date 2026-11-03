@@ -22,6 +22,15 @@ public static class ShapeExchange
             return (null, null, "两个输入的象限数不一致。");
         }
 
+        // 层数不同时补齐到较大值，避免拼接失败
+        if (first.LayerCount != second.LayerCount)
+        {
+            int layers = Math.Max(first.LayerCount, second.LayerCount);
+
+            first = PadLayers(first, layers);
+            second = PadLayers(second, layers);
+        }
+
         CutResult firstCut = ShapePhysics.Cut(first, mode);
         CutResult secondCut = ShapePhysics.Cut(second, mode);
 
@@ -42,6 +51,28 @@ public static class ShapeExchange
         }
 
         return (merged1, merged2, null);
+    }
+
+    private static ShapeDocument PadLayers(
+        ShapeDocument source,
+        int layers)
+    {
+        if (source.LayerCount == layers)
+        {
+            return source;
+        }
+
+        var padded = new ShapeDocument(layers, source.PartCount);
+
+        for (int layer = 0; layer < source.LayerCount; layer++)
+        {
+            for (int part = 0; part < source.PartCount; part++)
+            {
+                padded[layer, part] = source[layer, part].Clone();
+            }
+        }
+
+        return padded;
     }
 
     /// <summary>
