@@ -2242,3 +2242,19 @@ button {
 .angle-table tr.ok td:last-child {
     color: #2e9e5b;
 }
+.path-steps {
+    margin: 0;
+    padding-left: 20px;
+    font-size: 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.path-step-code {
+    display: block;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 11px;
+    color: #6b6b76;
+    word-break: break-all;
+}
