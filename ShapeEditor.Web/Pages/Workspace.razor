@@ -182,8 +182,18 @@
                     </div>
 
                     <div class="ws-info">
-                        <div class="ws-name-plain">@item.Name</div>
-                        <div class="ws-meta">@item.DimensionText</div>
+                        <div class="ws-info-text">
+                            <div class="ws-name-plain">@item.Name</div>
+                            <div class="ws-meta">@item.DimensionText</div>
+                        </div>
+
+                        <button class="ws-card-delete"
+                                title="删除该素材"
+                                @onclick:stopPropagation="true"
+                                @ondblclick:stopPropagation="true"
+                                @onclick="() => ConfirmDeleteMaterial(item)">
+                            ×
+                        </button>
                     </div>
                 </div>
             }
@@ -1193,6 +1203,32 @@
             "清空画布",
             "将删除画布上的所有节点，素材列表不受影响。",
             () => Store.ClearGraph());
+    }
+
+    /// <summary>
+    /// 删除素材前二次确认，复用页面现有的 ShowConfirm 对话框。
+    /// </summary>
+    private void ConfirmDeleteMaterial(WorkspaceItem item)
+    {
+        ShowConfirm(
+            "删除素材",
+            $"将从素材列表删除「{item.Name}」，画布上已创建的节点不受影响，继续？",
+            () => RemoveMaterial(item));
+    }
+
+    /// <summary>
+    /// 删除素材：调用 Store 的移除方法（内部负责 Persist 与 Changed）。
+    /// 若被删素材正是当前选中项，先清空选中，避免工具栏继续引用已删除的素材；
+    /// 画布节点保存的是图形副本，不受素材删除影响。
+    /// </summary>
+    private void RemoveMaterial(WorkspaceItem item)
+    {
+        if (_selectedMaterial?.Id == item.Id)
+        {
+            _selectedMaterial = null;
+        }
+
+        Store.Remove(item.Id);
     }
 
     /// <summary>

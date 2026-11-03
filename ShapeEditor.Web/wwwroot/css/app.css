@@ -1775,6 +1775,42 @@ button {
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+
+/* 素材卡片底部：左侧名称/尺寸，右侧删除按钮，不遮挡上方缩略图 */
+.ws-info {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.ws-info-text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.ws-card-delete {
+    flex: 0 0 auto;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: #a00000;
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.ws-card-delete:hover {
+    border-color: #e8b9b9;
+    background: #fdf2f2;
+}
 @media (max-width: 820px) {
     .workspace-body {
         grid-template-columns: 1fr;
