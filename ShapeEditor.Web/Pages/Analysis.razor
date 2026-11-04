@@ -198,6 +198,13 @@
                         </button>
                     </div>
 
+                    @if (!_showHalf && _half is not null)
+                    {
+                        <p class="analysis-summary">
+                            @($"共 {_half.DirectionCount} 个交换方向，其中 {_half.LegalDirections.Count} 个合法。")
+                        </p>
+                    }
+
                     @if (_showHalf)
                     {
                         <p class="analysis-summary">
@@ -729,6 +736,8 @@
         summary.Lines.Add(
             "交换方向合法的定义：两个半边都稳定，并且该方向上左右各两个带柱子的半半边也全部稳定。");
 
+        summary.Lines.Add("绿色为合法方向，红色为不合法方向。");
+
         if (_half is null)
         {
             summary.Lines.Insert(0, "需要在偶数象限的图形上分析。");
@@ -747,16 +756,14 @@
         {
             var table = new AnalysisExportTable
             {
-                Headers = new List<string> { "交换方向", "合法" }
+                Headers = new List<string> { "交换方向" }
             };
 
             foreach (ExchangeDirection direction in group)
             {
-                table.Rows.Add(new List<string>
-                {
-                    direction.Display,
-                    direction.IsLegal ? "是" : "否"
-                });
+                table.Rows.Add(new List<string> { direction.Display });
+
+                table.RowStyles.Add(direction.IsLegal ? "ok" : "bad");
             }
 
             sections.Add(new AnalysisExportSection

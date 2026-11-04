@@ -128,4 +128,7 @@ public sealed class AnalysisExportTable
 
     /// <summary>表体行，每行的列数与 <see cref="Headers"/> 一一对应。</summary>
     public List<List<string>> Rows { get; set; } = new();
+
+    /// <summary>每行样式：ok / bad / 空。</summary>
+    public List<string> RowStyles { get; set; } = new();
 }

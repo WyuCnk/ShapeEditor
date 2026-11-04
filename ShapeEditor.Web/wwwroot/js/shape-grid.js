@@ -2333,7 +2333,11 @@ window.shapeGrid.downloadAnalysis = async function (payload, fileName) {
             drawSectionTitle(block.title, y);
 
             ctx.font = TEXT_FONT;
-            ctx.fillStyle = "#3A3A44";
+            const rowStyle = table.rowStyles && table.rowStyles[row];
+
+        ctx.fillStyle = rowStyle === "ok"
+            ? "#2E9E5B"
+            : (rowStyle === "bad" ? "#D64545" : "#3A3A44");
             ctx.textAlign = "left";
             ctx.textBaseline = "top";
 
@@ -2363,7 +2367,11 @@ window.shapeGrid.downloadAnalysis = async function (payload, fileName) {
             drawSectionTitle(block.title, y);
 
             ctx.font = TEXT_FONT;
-            ctx.fillStyle = "#3A3A44";
+            const rowStyle = table.rowStyles && table.rowStyles[row];
+
+        ctx.fillStyle = rowStyle === "ok"
+            ? "#2E9E5B"
+            : (rowStyle === "bad" ? "#D64545" : "#3A3A44");
             ctx.textAlign = "left";
             ctx.textBaseline = "top";
 
@@ -2397,7 +2405,11 @@ window.shapeGrid.downloadAnalysis = async function (payload, fileName) {
             drawSectionTitle(block.title, y);
 
             ctx.font = TEXT_FONT;
-            ctx.fillStyle = "#3A3A44";
+            const rowStyle = table.rowStyles && table.rowStyles[row];
+
+        ctx.fillStyle = rowStyle === "ok"
+            ? "#2E9E5B"
+            : (rowStyle === "bad" ? "#D64545" : "#3A3A44");
             ctx.textAlign = "left";
             ctx.textBaseline = "top";
 
@@ -3170,7 +3182,11 @@ function drawAnalysisTable(ctx, table, left, top, tableWidth) {
             ctx.fillRect(left, rowTop, tableWidth, ANALYSIS_TABLE_ROW_HEIGHT);
         }
 
-        ctx.fillStyle = "#3A3A44";
+        const rowStyle = table.rowStyles && table.rowStyles[row];
+
+        ctx.fillStyle = rowStyle === "ok"
+            ? "#2E9E5B"
+            : (rowStyle === "bad" ? "#D64545" : "#3A3A44");
 
         for (let column = 0; column < columnCount; column++) {
             const text = truncateAnalysisText(
