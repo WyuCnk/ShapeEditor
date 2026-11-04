@@ -142,9 +142,58 @@ public partial class WorkspacePage
             return 0;
         }
 
+        return ViewportToContentAxis(
+            viewport / 2,
+            content,
+            scale,
+            offset);
+    }
+
+    /// <summary>
+    /// 视口坐标 → 画布内容坐标（拖放素材的落点换算用）。
+    ///
+    /// 与 <see cref="ContentAtViewportCenter"/> 是同一个式子，只是允许任意落点：
+    /// 先扣掉视觉左上角偏移（含缩放与平移），再除以缩放比例。
+    /// 缩放、平移都只是显示变换，换回来的内容坐标才是节点坐标所在的坐标系。
+    /// </summary>
+    private Point ViewportToCanvas(
+        Point viewportPoint)
+    {
+        return new Point(
+            ViewportToContentAxis(
+                viewportPoint.X,
+                Canvas.WidthRequest,
+                _canvasScale,
+                Canvas.TranslationX),
+            ViewportToContentAxis(
+                viewportPoint.Y,
+                Canvas.HeightRequest,
+                _canvasScale,
+                Canvas.TranslationY));
+    }
+
+    /// <summary>
+    /// 单个方向：视口坐标 → 内容坐标。
+    ///
+    /// 画布按 1 倍尺寸布局、以中心为锚点缩放，
+    /// 视觉左上角 = content × (1 − scale) / 2 + 平移量，
+    /// 所以 contentPoint = (viewportPoint − 视觉左上角) ÷ scale。
+    /// </summary>
+    private static double ViewportToContentAxis(
+        double viewportPoint,
+        double content,
+        double scale,
+        double offset)
+    {
+        // 画布还没量出尺寸 / 比例异常：按 1 倍原样返回，避免除零
+        if (content <= 0 || scale <= 0)
+        {
+            return viewportPoint;
+        }
+
         double visualLeft = content * (1 - scale) / 2 + offset;
 
-        return (viewport / 2 - visualLeft) / scale;
+        return (viewportPoint - visualLeft) / scale;
     }
 
     /// <summary>让指定内容坐标落在视口中心所需的平移量。</summary>

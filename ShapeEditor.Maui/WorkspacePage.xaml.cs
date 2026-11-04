@@ -737,8 +737,9 @@ public partial class WorkspacePage : ContentPage
         border.GestureRecognizers.Add(tap);
 
         /*
-         * 拖动节点：PanUpdated 里只改内存坐标和两个连线层，
-         * 松手后才调用 SetNodePosition 落盘，避免拖动过程中整页 Render。
+         * 拖动节点：PanUpdated 里只改卡片的 Translation 和两个连线层，
+         * 不碰布局、不碰节点坐标；松手后才调用 SetNodePosition 落盘，
+         * 整页 Render 也只发生在松手之后。
          */
         var pan = new PanGestureRecognizer();
 
@@ -766,7 +767,8 @@ public partial class WorkspacePage : ContentPage
     /// <summary>
     /// 拖动节点卡片。
     ///
-    /// Running 阶段只更新节点坐标、卡片布局和线段/箭头 Drawable，不重建卡片；
+    /// Running 阶段只挪卡片的显示位移（Translation）并重绘两个连线层，
+    /// 不改 LayoutBounds、不重建卡片、不整页重绘、不落盘；
     /// Completed / Canceled 时把最终坐标交给 store，由 store 负责 10px 吸附与保存。
     /// 捏合期间（及刚结束的冷却期）不处理拖动，双指缩放不会把节点带走。
     /// </summary>
@@ -839,15 +841,22 @@ public partial class WorkspacePage : ContentPage
         }
 
         /*
-         * 手势重启（父容器抢手势后归还、第二根手指按下等）时，
-         * 同一张卡片上的起点保持不变，只把累计位移的基准清掉；
-         * 否则「拖动起点 + 从 0 开始的 Total」会把已经走过的距离再走一遍，
-         * 表现就是节点越拖越偏、原地来回跳。
+         * 手势重启（父容器抢手势后归还、第二根手指按下又抬起等）时，
+         * 平台会把累计位移重新从 0 开始发。这里不能只是「清掉基准」：
+         * 那样已经走过的位移会被丢掉，卡片会往回跳一段，
+         * 而这一段正好是「累计位移 ÷ 缩放」，缩放越小跳得越远，
+         * 拖起来就是明显的来回抖动。
+         *
+         * 正确做法：把已经走过的位移冻结进 Rebase，再让下一帧重新取基准，
+         * 卡片就会停在原地，后续位移接着累加。
          */
         if (_nodeDrag is not null &&
             _nodeDrag.NodeId == nodeId &&
             ReferenceEquals(_nodeDrag.Card, card))
         {
+            _nodeDrag.FreezeDisplacement(
+                _canvasScale > 0 ? 1d / _canvasScale : 1d);
+
             _nodeDrag.ResetTotalBase();
 
             return;
@@ -859,6 +868,14 @@ public partial class WorkspacePage : ContentPage
             origin,
             node.X,
             node.Y);
+
+        /*
+         * 上一次拖动如果没走到 Completed（例如被整页重绘打断），
+         * 卡片上可能还挂着临时位移；这里归零，回到它的真实布局位置。
+         */
+        card.TranslationX = 0;
+
+        card.TranslationY = 0;
     }
 
     /// <summary>
@@ -866,6 +883,8 @@ public partial class WorkspacePage : ContentPage
     ///
     /// 只用「起点 + 累计位移」算绝对位置，绝不把每帧位移加到当前位置上，
     /// 这样误差不会累积，平台重发手势也不会把位移重复计入。
+    /// 算出来的位置只写进卡片的 Translation，布局与节点坐标都不动，
+    /// 落盘留到 <see cref="EndNodeDrag"/> 一次完成。
     /// </summary>
     private void MoveNodeDrag(
         string nodeId,
@@ -927,40 +946,55 @@ public partial class WorkspacePage : ContentPage
         /*
          * 左、上边界按画布外边距夹取：
          * 拖动过程中不重算整体平移，夹住可以避免松手重绘时画布突然跳位。
+         *
+         * 位置始终按「起点 + 累计位移 ÷ 缩放」一次算出来，不是逐帧累加，
+         * 也绝不在这里做 Math.Round：缩放后坐标本来就是小数，
+         * 中途取整会让卡片在「吸附点」和手指位置之间来回跳。
          */
         double x = Math.Max(
             WorkspaceLayout.Margin,
-            session.Origin.X + (totalX - session.BaseTotalX) * dragScale);
+            session.Origin.X + session.RebaseX + (totalX - session.BaseTotalX) * dragScale);
 
         double y = Math.Max(
             WorkspaceLayout.Margin,
-            session.Origin.Y + (totalY - session.BaseTotalY) * dragScale);
+            session.Origin.Y + session.RebaseY + (totalY - session.BaseTotalY) * dragScale);
 
-        var bounds = new Rect(
+        var current = new Rect(
             x,
             y,
             session.Origin.Width,
             session.Origin.Height);
 
-        _nodeBounds[nodeId] = bounds;
+        // 记下当前视觉矩形：松手时用它换算节点坐标，不必每帧写 store
+        session.Current = current;
 
-        // 只移动卡片本身，不重建视图
-        AbsoluteLayout.SetLayoutBounds(card, bounds);
+        _nodeBounds[nodeId] = current;
 
-        // 视觉坐标扣掉渲染时的整体平移，才是节点自由坐标
-        if (_store!.FindNode(nodeId) is WorkspaceNode running)
-        {
-            running.X = bounds.X - _canvasShiftX;
-            running.Y = bounds.Y - _canvasShiftY;
-        }
+        /*
+         * 关键：拖动期间只改卡片的 Translation，不改 LayoutBounds。
+         *
+         * AbsoluteLayout.SetLayoutBounds 会把布局标脏，整页要重新测量 / 重排，
+         * 新位置得等下一次布局流程才真正画出来；手指在这期间继续前进，
+         * 表现出来就是「拖到位 → 晚一帧才跟上 → 再拖」的来回抖动，
+         * 缩放越小、一帧对应的位移越大，抖动幅度看起来就越明显。
+         *
+         * Translation 只是原生 view 的渲染层位移（父容器坐标系，会跟画布缩放相乘），
+         * 不触发布局、不重建视图，也不做像素取整，位移量保留完整的小数精度。
+         * 卡片的布局矩形一直停在拖动起点，松手时再一次性落到最终坐标。
+         */
+        card.TranslationX = current.X - session.Origin.X;
+
+        card.TranslationY = current.Y - session.Origin.Y;
 
         session.Moved = true;
 
+        // 只让两个连线层重绘（不重建卡片、不改布局），连线才能跟着卡片走
         UpdateLinkLayers();
     }
 
     /// <summary>
-    /// 拖动结束：把最终坐标交给 store（10px 吸附 + 落盘 + 整页重绘）。
+    /// 拖动结束：按当前手指位置算出最终坐标交给 store（10px 吸附 + 落盘 + 整页重绘）。
+    /// 整页重绘与落盘只在这里发生一次。
     /// </summary>
     private void EndNodeDrag(
         string nodeId,
@@ -977,23 +1011,40 @@ public partial class WorkspacePage : ContentPage
         // 同一个节点的手势结束就一定清状态，否则 IsDraggingNode 会一直为真、画布再也拖不动
         _nodeDrag = null;
 
-        // 卡片已被重绘 / 一次都没移动过：不落盘，位置以重绘或还原结果为准
-        if (!ReferenceEquals(session.Card, card) ||
-            !session.Moved ||
-            _store is null)
+        // 一次都没移动过：什么都不用落盘，把可能存在的临时位移撤掉
+        if (!session.Moved || _store is null)
+        {
+            session.Card.TranslationX = 0;
+
+            session.Card.TranslationY = 0;
+
+            return;
+        }
+
+        // 卡片已被整页重绘替换：新卡片已按 store 坐标摆好，旧卡片不用再管
+        if (!ReferenceEquals(session.Card, card))
         {
             return;
         }
 
-        if (_store.FindNode(nodeId) is not WorkspaceNode finished ||
-            finished.X is not double x ||
-            finished.Y is not double y)
-        {
-            return;
-        }
+        Rect final = session.Current;
 
-        // 松手落盘；store 会吸附 10px 并触发一次完整重绘
-        _store.SetNodePosition(nodeId, x, y);
+        /*
+         * 把卡片钉到最终坐标，再清掉拖动期间的临时位移：
+         * 这两步与下面的 SetNodePosition / 重绘都在同一个回调里完成，
+         * 中间不会插进一帧，所以松手时不会先闪回起点。
+         */
+        AbsoluteLayout.SetLayoutBounds(card, final);
+
+        card.TranslationX = 0;
+
+        card.TranslationY = 0;
+
+        // 视觉坐标扣掉渲染时的整体平移，才是节点自由坐标；吸附与保存由 store 负责
+        _store.SetNodePosition(
+            nodeId,
+            final.X - _canvasShiftX,
+            final.Y - _canvasShiftY);
     }
 
     /// <summary>
@@ -1019,6 +1070,11 @@ public partial class WorkspacePage : ContentPage
             ReferenceEquals(card, session.Card))
         {
             AbsoluteLayout.SetLayoutBounds(card, session.Origin);
+
+            // 拖动期间用的是 Translation，撤销时一起清掉
+            card.TranslationX = 0;
+
+            card.TranslationY = 0;
         }
 
         // 坐标一起还原；原来按行列自动排布的节点要写回 null，不能固化成自由坐标
@@ -1045,7 +1101,8 @@ public partial class WorkspacePage : ContentPage
     /// 手势可能中途重发 Started（父容器抢完手势再归还、多指切换），
     /// Total 也不一定从 0 开始。所以这里不用「拖动起点 + Total」硬算，
     /// 而是把 Started 之后第一帧 Running 的 Total 当作基准，
-    /// 之后按「当前 Total − 基准」换算位移，起点始终是发起拖动时的矩形。
+    /// 之后按「当前 Total − 基准」换算位移，起点始终是发起拖动时的矩形；
+    /// 手势重启时把已走过的位移冻结进 Rebase，卡片就不会跳回原点。
     /// </summary>
     private sealed class NodeDragSession
     {
@@ -1061,6 +1118,7 @@ public partial class WorkspacePage : ContentPage
             Origin = origin;
             OriginNodeX = originNodeX;
             OriginNodeY = originNodeY;
+            Current = origin;
         }
 
         /// <summary>拖动的节点 Id。</summary>
@@ -1071,6 +1129,14 @@ public partial class WorkspacePage : ContentPage
 
         /// <summary>拖动开始时卡片的视觉矩形。</summary>
         public Rect Origin { get; }
+
+        /// <summary>
+        /// 最近一帧卡片的视觉矩形（起点 + 累计位移 ÷ 缩放）。
+        ///
+        /// 拖动期间卡的 LayoutBounds 仍停在 <see cref="Origin"/>，
+        /// 显示位置靠 Translation 叠加，所以松手落盘必须用这里的值。
+        /// </summary>
+        public Rect Current { get; set; }
 
         /// <summary>拖动前的自由坐标；null 表示原来按行列自动排布，还原时要写回 null。</summary>
         public double? OriginNodeX { get; }
@@ -1093,8 +1159,36 @@ public partial class WorkspacePage : ContentPage
         /// <summary>同上，纵向。</summary>
         public double LastTotalY { get; set; }
 
+        /// <summary>
+        /// 手势重启前已经走过的位移（已除以缩放比例）。
+        ///
+        /// 重启后平台会从 0 重新发 Total，位移要接着这里累加，
+        /// 否则卡片会按「累计位移 ÷ 缩放」往回跳一段。
+        /// </summary>
+        public double RebaseX { get; private set; }
+
+        /// <summary>同上，纵向。</summary>
+        public double RebaseY { get; private set; }
+
         /// <summary>本次是否真的移动过；没移动过就不落盘。</summary>
         public bool Moved { get; set; }
+
+        /// <summary>
+        /// 把当前已经走过的位移冻结进 <see cref="RebaseX"/> / <see cref="RebaseY"/>，
+        /// 之后重新取累计位移基准时卡片停在同一位置。
+        /// </summary>
+        public void FreezeDisplacement(
+            double dragScale)
+        {
+            // 还没取过基准：没有位移可冻结
+            if (!HasTotalBase)
+            {
+                return;
+            }
+
+            RebaseX += (LastTotalX - BaseTotalX) * dragScale;
+            RebaseY += (LastTotalY - BaseTotalY) * dragScale;
+        }
 
         /// <summary>用这一帧的累计位移重新取基准（不产生位移）。</summary>
         public void SetTotalBase(
@@ -1262,7 +1356,7 @@ public partial class WorkspacePage : ContentPage
     }
 
     /// <summary>
-    /// 素材拖到画布：按落点（相对画布）创建节点并导入。
+    /// 素材拖到画布视口：把视口落点换算回画布内容坐标，再创建节点并导入。
     /// </summary>
     private async void OnCanvasDrop(
         object? sender,
@@ -1306,12 +1400,22 @@ public partial class WorkspacePage : ContentPage
             return;
         }
 
-        Point? position = e.GetPosition(Canvas);
+        /*
+         * 落点由画布宿主（整个视口）接收，坐标是视口坐标，
+         * 先换算成画布内容坐标：扣掉「以中心为锚点缩放」带来的左上角偏移与平移量，
+         * 再除以缩放比例。换算之后，边框圈出来的任意可见位置都能放素材，
+         * 不会出现「看着在画布里、拖过去却没反应」。
+         */
+        Point? position = e.GetPosition(CanvasHost);
+
+        Point content = position is Point point
+            ? ViewportToCanvas(point)
+            : new Point(80, 80);
 
         // 画布可能因为负坐标整体平移过，落点要扣回平移量
-        double x = Math.Max(0, (position?.X ?? 80) - _canvasShiftX);
+        double x = Math.Max(0, content.X - _canvasShiftX);
 
-        double y = Math.Max(0, (position?.Y ?? 80) - _canvasShiftY);
+        double y = Math.Max(0, content.Y - _canvasShiftY);
 
         ImportMaterial(item, x, y);
 

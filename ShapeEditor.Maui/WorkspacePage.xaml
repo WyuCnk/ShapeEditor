@@ -208,9 +208,21 @@
                   IsClippedToBounds="True"
                   SizeChanged="OnCanvasViewportSizeChanged">
 
-                <!-- 宿主尺寸 = 视口尺寸；画布贴左上角摆放（平移量为 0 时看到左上角），缩放锚点 0.5 -->
+                <!--
+                    宿主尺寸 = 视口尺寸；画布贴左上角摆放（平移量为 0 时看到左上角），缩放锚点 0.5。
+
+                    素材落点挂在宿主上，而不是画布上：画布缩小后只占视口中间一小块，
+                    剩下的白底（宿主背景）看着和画布一样，落点如果只认画布，
+                    拖到边上就会静默失败。宿主铺满整个视口，落点再按缩放 / 平移
+                    换算回画布坐标，和「画布边框」圈出来的范围完全一致。
+                -->
                 <Grid x:Name="CanvasHost"
                       BackgroundColor="White">
+
+                    <Grid.GestureRecognizers>
+                        <!-- 素材拖到画布视口时，在落点创建节点 -->
+                        <DropGestureRecognizer AllowDrop="True" Drop="OnCanvasDrop" />
+                    </Grid.GestureRecognizers>
 
                     <AbsoluteLayout x:Name="Canvas"
                                     AnchorX="0.5"
@@ -219,9 +231,6 @@
                                     VerticalOptions="Start"
                                     BackgroundColor="White">
                         <AbsoluteLayout.GestureRecognizers>
-                            <!-- 素材拖到画布时，在落点创建节点 -->
-                            <DropGestureRecognizer AllowDrop="True" Drop="OnCanvasDrop" />
-
                             <!-- 点空白处取消堆叠 / 交换的第二输入选择 -->
                             <TapGestureRecognizer Tapped="OnCanvasTapped" />
 
@@ -234,6 +243,23 @@
                     </AbsoluteLayout>
                 </Grid>
             </Grid>
+
+            <!--
+                画布边框：钉在视口外圈，用来一眼看出「哪里是画布」。
+
+                它和视口占同一个 Grid 单元，但不参与画布的 Scale / Translation，
+                所以 0.4–2.0 任意缩放、任意平移时边框都严格贴住视口边缘。
+                InputTransparent 保证它不吃手势；只占 1px，不遮挡节点。
+            -->
+            <Border Grid.Column="1"
+                    InputTransparent="True"
+                    Stroke="#C9BFF0"
+                    StrokeThickness="1"
+                    StrokeDashArray="4,3"
+                    StrokeShape="RoundRectangle 2"
+                    BackgroundColor="Transparent"
+                    HorizontalOptions="Fill"
+                    VerticalOptions="Fill" />
 
             <!-- 缩放控件：浮在画布右下角，不参与画布的平移与缩放 -->
             <Border Grid.Column="1"
