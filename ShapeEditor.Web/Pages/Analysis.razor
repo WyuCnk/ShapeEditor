@@ -212,6 +212,17 @@
                             交换方向合法的定义：两个半边都稳定，并且该方向上左右各两个带柱子的半半边也全部稳定。
                         </p>
 
+                        <p class="analysis-note">
+                            <span class="legend-ok">绿色</span> 为合法方向，
+                            <span class="legend-bad">红色</span> 为不合法方向。
+                        </p>
+
+                        <label class="half-toggle">
+                            <input type="checkbox" checked="@_onlyLegalDirections"
+                                   @onchange="OnOnlyLegalDirectionsChanged" />
+                            只显示合法方向
+                        </label>
+
                         @if (_half is not null && _half.Directions.Count > 0)
                         {
                             <div class="half-axis-scroll">
@@ -224,15 +235,13 @@
                                             <thead>
                                                 <tr>
                                                     <th>交换方向</th>
-                                                    <th>合法</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                @foreach (var direction in group)
+                                                @foreach (var direction in group.Where(item => !_onlyLegalDirections || item.IsLegal))
                                                 {
                                                     <tr class="@(direction.IsLegal ? "ok" : "bad")">
                                                         <td>@direction.Display</td>
-                                                        <td>@(direction.IsLegal ? "是" : "否")</td>
                                                     </tr>
                                                 }
                                             </tbody>
@@ -344,6 +353,14 @@
     private CollapseMode _mode = CollapseMode.IncludeCycles;
 
     private HalfStabilityResult? _half;
+
+    private bool _onlyLegalDirections = true;
+
+    private void OnOnlyLegalDirectionsChanged(
+        ChangeEventArgs args)
+    {
+        _onlyLegalDirections = args.Value is bool value && value;
+    }
 
     private ShapeProperty _properties = ShapeProperty.None;
 
