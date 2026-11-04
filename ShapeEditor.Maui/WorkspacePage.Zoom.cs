@@ -308,9 +308,9 @@ public partial class WorkspacePage
     /// <summary>
     /// 捏合开始：抢占当前手势。
     ///
-    /// 双指落在节点卡片上时，卡片自己的 Pan 往往在第一根手指落下时就已经开始拖动，
+    /// 双指落在节点卡片上时，卡片自己的 Pointer 往往在第一根手指落下时就已经开始拖动，
     /// 捏合事件反而是后到的。这里立刻把那次拖动整体撤销（节点放回拖动起点），
-    /// 保证缩放过程中没有拖了一半的节点，之后的 Pan 回调也会被 IsPinching 挡住。
+    /// 保证缩放过程中没有拖了一半的节点；之后的 PointerMoved 也会被 IsPinching 挡住。
     /// </summary>
     private void BeginPinch()
     {
@@ -363,7 +363,8 @@ public partial class WorkspacePage
     #region 手势让路
 
     /// <summary>
-    /// 挂上画布与滚动宿主的原生触摸监听：第二根手指一落下就让 ScrollView 让路。
+    /// 挂上画布与滚动宿主的原生触摸监听：第二根手指一落下就让 ScrollView 让路，
+    /// 同时关掉「多指拆分分发」，保证两根手指落在两张卡片上时也能捏合。
     ///
     /// 捏合手势要等手指移动、两指间距变化超过阈值后才会开始，
     /// 而 ScrollView 在同一帧的移动里就可能已经把触摸抢走；
@@ -378,6 +379,32 @@ public partial class WorkspacePage
         AttachTouchSuppression(Canvas);
 
         AttachTouchSuppression(ScaledHost);
+
+        DisableMotionSplitting(Canvas);
+
+        DisableMotionSplitting(ScaledHost);
+#endif
+    }
+
+    /// <summary>
+    /// 关掉原生视图的「多指拆分分发」。
+    ///
+    /// Android 默认会把第二根手指单独分给落点处的另一张卡片：
+    /// 两张卡片各自只看得见一根手指，谁也不会触发 PinchGestureRecognizer，
+    /// 这就是「两指都落在节点上时不缩放」的根因之一。
+    ///
+    /// 关掉之后，所有触点都沿第一根手指命中的视图分发，
+    /// 第一张卡片自己的 Pinch 就能同时看到两根手指；
+    /// 若第一根手指落在空白处，则由画布 / 滚动宿主上的同一套 Pinch 接管。
+    /// </summary>
+    private static void DisableMotionSplitting(
+        VisualElement element)
+    {
+#if ANDROID
+        if (element.Handler?.PlatformView is Android.Views.ViewGroup group)
+        {
+            group.MotionEventSplittingEnabled = false;
+        }
 #endif
     }
 

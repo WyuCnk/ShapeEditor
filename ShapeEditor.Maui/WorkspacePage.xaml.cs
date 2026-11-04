@@ -26,15 +26,6 @@ public partial class WorkspacePage : ContentPage
     /// <summary>拖拽素材时写入数据包的键，用于在 Drop 时找回素材。</summary>
     private const string MaterialDragKey = "shapeeditor.materialId";
 
-    /// <summary>
-    /// 拖动节点时，相邻两帧累计位移允许的最大跳变量（屏幕像素）。
-    ///
-    /// 手指在两次回调之间不可能移动这么远，超过就说明平台中途换了触点
-    /// （典型是第二根手指抬起后 MotionEvent 从另一根手指取坐标），
-    /// 这时重新取基准：宁可少走一段，也不让节点瞬移。
-    /// </summary>
-    private const double MaxDragStep = 200;
-
     private WorkspaceStore? _store;
 
     private WorkspaceItem? _selectedMaterial;
@@ -69,11 +60,6 @@ public partial class WorkspacePage : ContentPage
     private GraphicsView? _lineLayer;
 
     private GraphicsView? _arrowLayer;
-
-    /// <summary>
-    /// 当前被拖动锁挡住的卡片：已有节点在拖时，其它卡片的手势整段忽略。
-    /// </summary>
-    private readonly HashSet<Border> _blockedPanCards = new();
 
     public WorkspacePage()
     {
@@ -699,6 +685,13 @@ public partial class WorkspacePage : ContentPage
                 return;
             }
 
+            // 这一次抬手是拖动的收尾：不把拖动误当成点击选中，
+            // 避免在堆叠 / 交换等待第二个输入时被一次拖动意外完成
+            if (_nodeDrag is { Moved: true })
+            {
+                return;
+            }
+
             // 删除按钮和卡片点击可能落在同一帧里，先确认节点还在
             if (_store!.FindNode(node.Id) is null)
             {
@@ -731,37 +724,89 @@ public partial class WorkspacePage : ContentPage
         border.GestureRecognizers.Add(tap);
 
         /*
-         * 手指一落到卡片上，先让外层的 ScrollView 放弃拦截本次手势。
+         * 拖动节点改用指针的绝对坐标，不再用 PanGestureRecognizer。
          *
-         * Android 的 ScrollView 在手指移动超过阈值时会抢先拦截整个手势，
-         * 卡片上的 Pan 会立刻收到 Canceled；而 Pan 的 Started 往往在那之后才发出，
-         * 事后再禁用滚动就来不及了。按下时就请求「本次手势不要拦截」，
-         * 节点拖动与画布滚动才不会互相抢，画布也就只剩一套坐标。
+         * PanUpdated 的 TotalX/TotalY 在各平台上的起点、手势重启、触点数语义并不一致，
+         * 之前为了把它换算成逻辑坐标叠了缩放系数、累计基准、Rebase 等多层修正，
+         * 仍然会出现「节点飞走 / 抖动」。PointerMoved 直接给出指针当前的位置：
+         * 位置 = 按下时的卡片矩形 +（当前指针 − 按下指针），
+         * 每个轴只有一次减法，没有累计误差，也不需要知道平台重发过几次手势。
+         *
+         * 按下时同时请求 ScrollView 放弃拦截本次手势，
+         * 否则 Android 的 ScrollView 会在手指移动超过阈值时抢走整段触摸，
+         * 卡片只能收到 Canceled。
          */
         var pointer = new PointerGestureRecognizer();
 
-        pointer.PointerPressed += (_, _) => SuppressScrollIntercept(border);
+        pointer.PointerPressed += (_, e) =>
+        {
+            if (_store is null)
+            {
+                return;
+            }
+
+            // 先让滚动容器让路：后面无论是拖动还是捏合都不会被它抢走
+            SuppressScrollIntercept(border);
+
+            // 捏合中（及刚结束的冷却期）按下不开始拖动
+            if (IsPinching)
+            {
+                return;
+            }
+
+            if (e.GetPosition(Canvas) is Point position)
+            {
+                BeginNodeDrag(
+                    node.Id,
+                    border,
+                    PointerToCanvas(position));
+            }
+        };
+
+        pointer.PointerMoved += (_, e) =>
+        {
+            // 捏合期间（含冷却期）直接忽略；不是这张卡片的会话也不处理
+            if (IsPinching ||
+                _nodeDrag is null ||
+                !ReferenceEquals(_nodeDrag.Card, border))
+            {
+                return;
+            }
+
+            if (e.GetPosition(Canvas) is Point position)
+            {
+                MoveNodeDrag(
+                    node.Id,
+                    border,
+                    PointerToCanvas(position));
+            }
+        };
+
+        pointer.PointerReleased += (_, _) => EndNodeDrag(node.Id, border);
+
+#if ANDROID
+        // Android 的 ACTION_CANCEL（例如系统、父容器打断手势）只会发 PointerExited，
+        // 收不到 PointerReleased；这里把节点放回拖动起点，别留下拖了一半的位置。
+        pointer.PointerExited += (_, _) =>
+        {
+            if (_nodeDrag is { } session && ReferenceEquals(session.Card, border))
+            {
+                CancelNodeDrag();
+            }
+        };
+#endif
 
         border.GestureRecognizers.Add(pointer);
 
         /*
-         * 拖动节点：PanUpdated 里只改卡片的 LayoutBounds 和两个连线层，
-         * 不写 Translation、不碰节点坐标；松手后才调用 SetNodePosition 落盘，
-         * 整页 Render 也只发生在松手之后。
-         */
-        var pan = new PanGestureRecognizer();
-
-        pan.PanUpdated += (_, e) => OnNodePanUpdated(
-            node.Id,
-            border,
-            e);
-
-        border.GestureRecognizers.Add(pan);
-
-        /*
+         * 卡片上原本还有一个 PanGestureRecognizer，这里已经删掉：
+         * 拖动交给上面的 Pointer，捏合交给下面的 Pinch，两套手势不再抢同一段触摸。
+         *
          * 触摸落在节点卡片上时事件不会冒泡到画布容器，
-         * 所以卡片也挂一份捏合手势，并与画布共用同一个处理函数；
+         * 所以卡片也挂一份捏合手势，并与画布、ScaledHost 共用同一个处理函数；
          * 缩放的是整块画布，卡片自身不缩放。
+         * 第一根手指按下时不再拖动卡片，第二根手指就能稳稳落回同一张卡片，
+         * 卡片自己的 Pinch 才能同时看到两根手指。
          */
         var pinch = new PinchGestureRecognizer();
 
@@ -773,75 +818,20 @@ public partial class WorkspacePage : ContentPage
     }
 
     /// <summary>
-    /// 拖动节点卡片。
+    /// 按下节点卡片：只记录「按下时卡片在哪、手指按在哪」，之后每帧都用绝对位置重算。
     ///
-    /// Running 阶段只改卡片的 LayoutBounds 并重绘两个连线层，
-    /// 不写 Translation、不改节点坐标、不重建卡片、不整页重绘、不落盘；
-    /// Completed / Canceled 时把最终坐标交给 store，由 store 负责 10px 吸附与保存。
-    /// 捏合期间（及刚结束的冷却期）不处理拖动，双指缩放不会把节点带走。
-    /// 全局只允许一个节点在拖：已有拖动时，其它卡片的手势整段忽略。
-    /// </summary>
-    private void OnNodePanUpdated(
-        string nodeId,
-        Border card,
-        PanUpdatedEventArgs e)
-    {
-        if (_store is null)
-        {
-            _blockedPanCards.Remove(card);
-
-            return;
-        }
-
-        switch (e.StatusType)
-        {
-            case GestureStatus.Started:
-                BeginNodeDrag(nodeId, card);
-
-                return;
-
-            case GestureStatus.Running:
-                // 被单拖动锁挡住的卡片：整段手势都不参与
-                if (_blockedPanCards.Contains(card))
-                {
-                    return;
-                }
-
-                MoveNodeDrag(
-                    nodeId,
-                    card,
-                    e.TotalX,
-                    e.TotalY);
-
-                return;
-
-            default:
-                _blockedPanCards.Remove(card);
-
-                EndNodeDrag(nodeId, card);
-
-                return;
-        }
-    }
-
-    /// <summary>
-    /// 开始一次节点拖动：记下起始矩形，之后的位移都以它为基准。
+    /// 全局单拖动锁：已经有卡片在拖时，其它卡片按下不接管。
+    /// 若两根手指几乎同时落在两张卡片上，直接放弃当前拖动并把它还原，
+    /// 不留下一个跟着第一根手指跑的节点，让随后开始的捏合手势干净接管。
     /// </summary>
     private void BeginNodeDrag(
         string nodeId,
-        Border card)
+        Border card,
+        Point grab)
     {
         // 捏合中、或刚结束捏合还在冷却期：这次手势不当成拖动
-        if (IsPinching)
+        if (IsPinching || _store is null)
         {
-            _blockedPanCards.Remove(card);
-
-            if (_nodeDrag is not null)
-            {
-                // 万一上一段拖动没收到结束回调，这里一并还原，不留半途位置
-                CancelNodeDrag();
-            }
-
             return;
         }
 
@@ -853,53 +843,40 @@ public partial class WorkspacePage : ContentPage
             return;
         }
 
-        if (_store!.FindNode(nodeId) is not WorkspaceNode node)
+        if (_store.FindNode(nodeId) is not WorkspaceNode node)
         {
             return;
         }
 
-        /*
-         * 全局单拖动锁：已经有节点在拖时，第二张卡片的手势整段忽略。
-         *
-         * 双指分别落在两个节点上时，两张卡片都会收到 Started；
-         * 这里绝不能「接管」会话，否则两个节点会同时跟着手指走。
-         *
-         * 同一张卡片的手势重启（父容器抢手势后归还、第二根手指按下又抬起等）
-         * 则要保留已经走过的位移：平台会把累计位移重新从 0 开始发，
-         * 只清基准会让卡片往回跳一段，跳的距离正好是「累计位移 ÷ 缩放」，
-         * 缩放越小跳得越远，拖起来就是明显的来回抖动。
-         * 正确做法是把已走过的位移冻结进 Rebase，再让下一帧重新取基准。
-         */
         if (_nodeDrag is not null)
         {
-            if (_nodeDrag.NodeId == nodeId &&
-                ReferenceEquals(_nodeDrag.Card, card))
+            // 同一张卡片重复按下 / 手势重启：当前会话继续，不重取起点
+            if (ReferenceEquals(_nodeDrag.Card, card))
             {
-                _nodeDrag.FreezeDisplacement(
-                    _canvasScale > 0 ? 1d / _canvasScale : 1d);
-
-                _nodeDrag.ResetTotalBase();
-
                 return;
             }
 
-            _blockedPanCards.Add(card);
+            /*
+             * 两根手指几乎同时落在两张卡片上：
+             * 不能接管成第二个拖动（两个节点会同时跟手），
+             * 也不能让第一个节点继续走（随后开始的是捏合）。
+             * 直接放弃并还原，等 Pinch 接管。
+             */
+            CancelNodeDrag();
 
             return;
         }
-
-        // 新的一次拖动：清掉上一轮可能残留的忽略标记（丢过 Completed 也不会永久卡住）
-        _blockedPanCards.Clear();
 
         _nodeDrag = new NodeDragSession(
             nodeId,
             card,
             origin,
             node.X,
-            node.Y);
+            node.Y,
+            grab);
 
         /*
-         * 上一次拖动如果没走到 Completed（例如被整页重绘打断），
+         * 上一次拖动如果没走到 Released（例如被整页重绘打断），
          * 卡片上可能还挂着旧方案留下的 Translation；这里归零，
          * 新方案只改 LayoutBounds，不再叠加位移。
          */
@@ -912,18 +889,17 @@ public partial class WorkspacePage : ContentPage
     }
 
     /// <summary>
-    /// 拖动进行中：位置 = 起始矩形 + （当前累计位移 − 基准累计位移）÷ 缩放比例。
+    /// 拖动进行中：位置 = 按下时的卡片矩形 +（当前指针 − 按下指针）。
     ///
-    /// 只用「起点 + 累计位移」算绝对位置，绝不把每帧位移加到当前位置上，
-    /// 这样误差不会累积，平台重发手势也不会把位移重复计入。
+    /// 两个点都已经换算到逻辑画布坐标（<see cref="PointerToCanvas"/> 只除一次缩放），
+    /// 所以每个轴就是一次减法；不做增量累加，也不假设平台从哪个基准重新发手势。
     /// 结果直接写进卡片的 LayoutBounds（不写 Translation、不取整），
     /// 节点坐标不动，落盘留到 <see cref="EndNodeDrag"/> 一次完成。
     /// </summary>
     private void MoveNodeDrag(
         string nodeId,
         Border card,
-        double totalX,
-        double totalY)
+        Point pointer)
     {
         NodeDragSession? session = _nodeDrag;
 
@@ -943,53 +919,20 @@ public partial class WorkspacePage : ContentPage
             return;
         }
 
-        // 第一帧 Running 只用来取基准：不假设平台把 TotalX/TotalY 从 0 开始
-        if (!session.HasTotalBase)
-        {
-            session.SetTotalBase(
-                totalX,
-                totalY);
-
-            return;
-        }
-
-        // 触点被平台换过（第二根手指抬起等）：重新取基准，宁可少走一段也不瞬移
-        if (Math.Abs(totalX - session.LastTotalX) > MaxDragStep ||
-            Math.Abs(totalY - session.LastTotalY) > MaxDragStep)
-        {
-            session.ShiftTotalBase(
-                totalX,
-                totalY);
-
-            return;
-        }
-
-        session.LastTotalX = totalX;
-        session.LastTotalY = totalY;
-
-        /*
-         * 画布是整体缩放的，TotalX/TotalY 是屏幕位移，
-         * 除以缩放比例才是逻辑画布的位移：
-         * 放大后拖动依然跟手，缩小后同样的手指位移对应更大的逻辑位移。
-         */
-        double inverseScale = _canvasScale > 0
-            ? 1d / _canvasScale
-            : 1d;
-
         /*
          * 左、上边界按画布外边距夹取。
          *
-         * 位置始终按「起点 + 累计位移 ÷ 缩放」一次算出来，不是逐帧累加，
+         * 位置始终按「起点 + 当前指针 − 按下指针」一次算出来，不是逐帧累加，
          * 也绝不在这里做 Math.Round：缩放后坐标本来就是小数，
          * 中途取整会让卡片在「吸附点」和手指位置之间来回跳。
          */
         double x = Math.Max(
             WorkspaceLayout.Margin,
-            session.Origin.X + session.RebaseX + (totalX - session.BaseTotalX) * inverseScale);
+            session.Origin.X + (pointer.X - session.Grab.X));
 
         double y = Math.Max(
             WorkspaceLayout.Margin,
-            session.Origin.Y + session.RebaseY + (totalY - session.BaseTotalY) * inverseScale);
+            session.Origin.Y + (pointer.Y - session.Grab.Y));
 
         var current = new Rect(
             x,
@@ -1022,7 +965,9 @@ public partial class WorkspacePage : ContentPage
         NodeDragSession? session = _nodeDrag;
 
         // 不是当前节点的回调：当前会话还没结束，别人的收尾不能影响它
-        if (session is null || session.NodeId != nodeId)
+        if (session is null ||
+            session.NodeId != nodeId ||
+            !ReferenceEquals(session.Card, card))
         {
             return;
         }
@@ -1032,12 +977,6 @@ public partial class WorkspacePage : ContentPage
 
         // 一次都没移动过：布局本来就停在起点，不需要落盘
         if (!session.Moved || _store is null)
-        {
-            return;
-        }
-
-        // 卡片已被整页重绘替换：新卡片已按 store 坐标摆好，旧卡片不用再管
-        if (!ReferenceEquals(session.Card, card))
         {
             return;
         }
@@ -1061,8 +1000,6 @@ public partial class WorkspacePage : ContentPage
         NodeDragSession? session = _nodeDrag;
 
         _nodeDrag = null;
-
-        _blockedPanCards.Clear();
 
         if (session is null ||
             !_nodeBounds.ContainsKey(session.NodeId))
@@ -1093,19 +1030,37 @@ public partial class WorkspacePage : ContentPage
     private void AbortNodeDrag()
     {
         _nodeDrag = null;
-
-        _blockedPanCards.Clear();
     }
 
     /// <summary>
-    /// 一次节点拖动会话。
+    /// 把 <c>PointerMoved</c> / <c>PointerPressed</c> 给的显示坐标换成逻辑画布坐标。
     ///
-    /// 各平台对 PanUpdated 的 TotalX/TotalY 保证并不一致：
-    /// 手势可能中途重发 Started（父容器抢完手势再归还、多指切换），
-    /// Total 也不一定从 0 开始。所以这里不用「拖动起点 + Total」硬算，
-    /// 而是把 Started 之后第一帧 Running 的 Total 当作基准，
-    /// 之后按「当前 Total − 基准」换算位移，起点始终是发起拖动时的矩形；
-    /// 手势重启时把已走过的位移冻结进 Rebase，卡片就不会跳回原点。
+    /// MAUI 的 <c>PointerEventArgs.GetPosition(Canvas)</c> 在 Android 上的实际算法是
+    /// 「手指屏幕坐标 − Canvas 原生视图左上角的屏幕坐标」，再按密度换算成 DIP：
+    /// 滚动量已经扣掉（Canvas 左上角会随滚动移动），
+    /// 但 Canvas.Scale 是原生视图的绘制变换，它只缩放画面、不改这个左上角，
+    /// 所以返回值是「缩放后的显示坐标」，还要再除一次当前比例
+    /// 才是卡片 LayoutBounds 使用的逻辑坐标。
+    ///
+    /// 这里只做这一个固定换算，不涉及任何增量、基准或平台累计值。
+    /// </summary>
+    private Point PointerToCanvas(
+        Point pointer)
+    {
+        double scale = _canvasScale > 0
+            ? _canvasScale
+            : 1d;
+
+        return new Point(
+            pointer.X / scale,
+            pointer.Y / scale);
+    }
+
+    /// <summary>
+    /// 一次节点拖动会话：只记「按下时卡片在哪、手指按在逻辑画布的哪个点」。
+    ///
+    /// 之后每一帧都用指针的绝对位置重新算一次，
+    /// 不保存增量、不设累计基准，也不依赖平台重发手势的方式。
     /// </summary>
     private sealed class NodeDragSession
     {
@@ -1114,13 +1069,15 @@ public partial class WorkspacePage : ContentPage
             Border card,
             Rect origin,
             double? originNodeX,
-            double? originNodeY)
+            double? originNodeY,
+            Point grab)
         {
             NodeId = nodeId;
             Card = card;
             Origin = origin;
             OriginNodeX = originNodeX;
             OriginNodeY = originNodeY;
+            Grab = grab;
             Current = origin;
         }
 
@@ -1133,8 +1090,11 @@ public partial class WorkspacePage : ContentPage
         /// <summary>拖动开始时卡片的视觉矩形。</summary>
         public Rect Origin { get; }
 
+        /// <summary>按下时指针在逻辑画布里的位置。</summary>
+        public Point Grab { get; }
+
         /// <summary>
-        /// 最近一帧卡片的视觉矩形（起点 + 累计位移 ÷ 缩放）。
+        /// 最近一帧卡片的视觉矩形（按下矩形 + 指针位移）。
         ///
         /// 它同时也是卡片当前的 LayoutBounds（拖动期间只改这一处），
         /// 松手落盘用这里的值换算节点坐标。
@@ -1147,89 +1107,8 @@ public partial class WorkspacePage : ContentPage
         /// <summary>同上，纵向。</summary>
         public double? OriginNodeY { get; }
 
-        /// <summary>是否已经取到累计位移的基准。</summary>
-        public bool HasTotalBase { get; private set; }
-
-        /// <summary>累计位移的基准值，拖动位移 = 当前 Total − 基准。</summary>
-        public double BaseTotalX { get; private set; }
-
-        /// <summary>同上，纵向。</summary>
-        public double BaseTotalY { get; private set; }
-
-        /// <summary>上一帧的累计位移，用来识别平台给出的跳变值。</summary>
-        public double LastTotalX { get; set; }
-
-        /// <summary>同上，纵向。</summary>
-        public double LastTotalY { get; set; }
-
-        /// <summary>
-        /// 手势重启前已经走过的位移（已除以缩放比例）。
-        ///
-        /// 重启后平台会从 0 重新发 Total，位移要接着这里累加，
-        /// 否则卡片会按「累计位移 ÷ 缩放」往回跳一段。
-        /// </summary>
-        public double RebaseX { get; private set; }
-
-        /// <summary>同上，纵向。</summary>
-        public double RebaseY { get; private set; }
-
         /// <summary>本次是否真的移动过；没移动过就不落盘。</summary>
         public bool Moved { get; set; }
-
-        /// <summary>
-        /// 把当前已经走过的位移冻结进 <see cref="RebaseX"/> / <see cref="RebaseY"/>，
-        /// 之后重新取累计位移基准时卡片停在同一位置。
-        /// </summary>
-        public void FreezeDisplacement(
-            double dragScale)
-        {
-            // 还没取过基准：没有位移可冻结
-            if (!HasTotalBase)
-            {
-                return;
-            }
-
-            RebaseX += (LastTotalX - BaseTotalX) * dragScale;
-            RebaseY += (LastTotalY - BaseTotalY) * dragScale;
-        }
-
-        /// <summary>用这一帧的累计位移重新取基准（不产生位移）。</summary>
-        public void SetTotalBase(
-            double totalX,
-            double totalY)
-        {
-            HasTotalBase = true;
-
-            BaseTotalX = totalX;
-            BaseTotalY = totalY;
-
-            LastTotalX = totalX;
-            LastTotalY = totalY;
-        }
-
-        /// <summary>平台给出跳变值时，把基准平移同样的量，让节点原地不动。</summary>
-        public void ShiftTotalBase(
-            double totalX,
-            double totalY)
-        {
-            BaseTotalX += totalX - LastTotalX;
-            BaseTotalY += totalY - LastTotalY;
-
-            LastTotalX = totalX;
-            LastTotalY = totalY;
-        }
-
-        /// <summary>手势重启：清掉基准，下一次 Running 重新取。</summary>
-        public void ResetTotalBase()
-        {
-            HasTotalBase = false;
-
-            BaseTotalX = 0;
-            BaseTotalY = 0;
-
-            LastTotalX = 0;
-            LastTotalY = 0;
-        }
     }
 
     /// <summary>
