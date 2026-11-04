@@ -125,7 +125,7 @@
                         }
 
                         <p class="analysis-summary analysis-note">
-                            可制作性依赖制作路径算法，暂未接入。
+                            可制作性暂等同角合法性，等角制作算法接入后细化。
                         </p>
                     }
                 </div>
@@ -246,7 +246,9 @@
                     }
                 </div>
 
-                <div class="analysis-card">
+                @if (_half is not null && _half.IsExchangeable)
+                {
+                    <div class="analysis-card">
                     <div class="analysis-section-head">
                         <h2>制作路径</h2>
                         <button type="button" class="analysis-toggle"
@@ -282,6 +284,7 @@
                         }
                     }
                 </div>
+                }
 
             </section>
         </div>
@@ -459,14 +462,15 @@
             payload.Sections.Add(BuildRulesSection());
         }
 
-        if (_showPath)
+        // 制作路径只在存在合法交换方向时显示，与页面保持一致。
+        if (_showPath && _half is not null && _half.IsExchangeable)
         {
-            // 制作路径：可制作时列出步骤，否则只给结论。
+            // 制作路径：复用页面上的同一份文本，可制作时逐步骤列出标题与短代码，
+            // 不可制作时只给原因，保证导出的图片与页面显示一致。
             payload.Sections.Add(new AnalysisExportSection
             {
                 Title = "制作路径",
-                IsPlaceholder = true,
-                Lines = new List<string> { "制作路径（待接入）" }
+                Lines = BuildPathLines()
             });
         }
 
