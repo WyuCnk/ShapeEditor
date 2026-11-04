@@ -175,6 +175,9 @@ public partial class WorkspacePage
     ///
     /// e.Scale 是相对上一次回调的增量比例，累乘到当前比例上，
     /// 再夹到 0.4–2.0；整个过程只改显示比例，不碰节点坐标与选中状态。
+    ///
+    /// 画布、画布宿主与节点卡片共用这一个处理函数：
+    /// 触摸落在哪一层，就由哪一层收到捏合事件。
     /// </summary>
     private void OnCanvasPinchUpdated(
         object? sender,
@@ -183,19 +186,18 @@ public partial class WorkspacePage
         switch (e.Status)
         {
             case GestureStatus.Started:
-                _pinching = true;
-
-                // 捏合开始时打断单指平移与节点拖动，避免缩放和拖动混在一起
-                _panViewport.End();
-
-                _draggingNode = false;
-
-                _dragStartBounds.Clear();
+                BeginPinch();
 
                 return;
 
             case GestureStatus.Running:
-                if (e.Scale <= 0)
+                // 个别平台会漏发 Started（或先给出 Running），这里补一次抢占
+                if (!_pinching)
+                {
+                    BeginPinch();
+                }
+
+                if (!double.IsFinite(e.Scale) || e.Scale <= 0)
                 {
                     return;
                 }
@@ -206,12 +208,39 @@ public partial class WorkspacePage
 
             default:
                 // Completed / Canceled：只结束捏合，当前选中状态保持不变
-                _pinching = false;
-
-                _pinchEndedAt = DateTime.UtcNow;
+                EndPinch();
 
                 return;
         }
+    }
+
+    /// <summary>
+    /// 捏合开始：抢占当前手势。
+    ///
+    /// 双指落在节点卡片上时，卡片自己的 Pan 往往在第一根手指落下时就已经开始拖动，
+    /// 捏合事件反而是后到的。这里立刻把那次拖动整体撤销（节点放回拖动起点），
+    /// 保证缩放过程中没有拖了一半的节点，之后的 Pan 回调也会被 IsPinching 挡住。
+    /// </summary>
+    private void BeginPinch()
+    {
+        // 先置位再撤销：撤销过程中触发的 Pan / Tap 回调要能立刻看到「正在捏合」
+        _pinching = true;
+
+        CancelNodeDrag();
+
+        // 单指平移量一起作废，避免平移与缩放叠加
+        _panViewport.End();
+    }
+
+    /// <summary>
+    /// 捏合结束：进入 <see cref="GestureCooldown"/> 冷却。
+    /// 冷却期内 <see cref="IsPinching"/> 仍为真，节点拖动与点选都会被忽略。
+    /// </summary>
+    private void EndPinch()
+    {
+        _pinching = false;
+
+        _pinchEndedAt = DateTime.UtcNow;
     }
 
     /// <summary>缩小一档（Button.Clicked，不使用双击手势）。</summary>
@@ -254,20 +283,30 @@ public partial class WorkspacePage
         object? sender,
         PanUpdatedEventArgs e)
     {
-        // 捏合中、或正在拖动节点时不移动画布
-        if (IsPinching || _draggingNode)
-        {
-            return;
-        }
-
         switch (e.StatusType)
         {
             case GestureStatus.Started:
+                // 捏合中（含刚结束的冷却期）、或正在拖节点时不开始平移画布
+                if (IsPinching || IsDraggingNode)
+                {
+                    _panViewport.End();
+
+                    return;
+                }
+
                 _panViewport.Begin(new Point(0, 0));
 
                 return;
 
             case GestureStatus.Running:
+                // 手势被抢占（第二根手指落下开始捏合、或节点拖动接管）：直接作废，不留半截平移
+                if (IsPinching || IsDraggingNode)
+                {
+                    _panViewport.End();
+
+                    return;
+                }
+
                 if (!_panViewport.TryMove(
                         new Point(e.TotalX, e.TotalY),
                         out double deltaX,

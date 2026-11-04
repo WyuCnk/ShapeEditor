@@ -195,17 +195,18 @@
             </ScrollView>
 
             <!--
-                画布视口：
-                ScrollView 只负责裁剪（Orientation="Neither"，不参与滚动；
-                内容宿主尺寸固定为视口大小），
-                平移与缩放全部由 PanViewport 的显示变换完成。
+                画布视口：只负责裁剪，不参与滚动。
+
+                这里不能用 ScrollView：Android 的 NestedScrollView 在竖向拖动超过
+                触摸阈值时会无条件拦截触摸（即使内容根本不需要滚动），
+                子视图的 Pan / Pinch 会收到 Canceled，表现就是节点拖一下就不跟手、
+                捏合缩放时灵时不灵、拖动中突然跳位。
+                普通容器 + IsClippedToBounds 只裁剪、不抢手势。
             -->
-            <ScrollView Grid.Column="1"
-                        x:Name="CanvasViewport"
-                        Orientation="Neither"
-                        HorizontalScrollBarVisibility="Never"
-                        VerticalScrollBarVisibility="Never"
-                        SizeChanged="OnCanvasViewportSizeChanged">
+            <Grid Grid.Column="1"
+                  x:Name="CanvasViewport"
+                  IsClippedToBounds="True"
+                  SizeChanged="OnCanvasViewportSizeChanged">
 
                 <!-- 宿主尺寸 = 视口尺寸；画布贴左上角摆放（平移量为 0 时看到左上角），缩放锚点 0.5 -->
                 <Grid x:Name="CanvasHost"
@@ -232,7 +233,7 @@
                         </AbsoluteLayout.GestureRecognizers>
                     </AbsoluteLayout>
                 </Grid>
-            </ScrollView>
+            </Grid>
 
             <!-- 缩放控件：浮在画布右下角，不参与画布的平移与缩放 -->
             <Border Grid.Column="1"
