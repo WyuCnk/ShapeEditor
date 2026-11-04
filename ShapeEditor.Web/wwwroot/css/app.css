@@ -2296,37 +2296,53 @@ button {
         flex-wrap: wrap;
     }
 }
-/* 半边稳定性：按轴分列横向并排，轴多时容器横向滚动，纵向随页面 */
+/*
+ * 半边稳定性：一轴一块。
+ * 每个轴一张卡片，块内方向各占一格、按可用宽度自动换行；
+ * 整块区域限高后纵向滚动，不再出现横向滚动条。
+ */
 .half-axis-scroll {
     display: flex;
-    align-items: flex-start;
-    gap: 14px;
-    overflow-x: auto;
-    overflow-y: visible;
+    flex-direction: column;
+    gap: 12px;
+    max-height: 420px;
+    overflow-y: auto;
+    overflow-x: hidden;
     padding: 2px 2px 8px;
 }
 
-.half-axis-column {
-    flex: 0 0 auto;
-    min-width: 150px;
+.half-axis-block {
+    padding: 10px 12px 12px;
+    border: 1px solid #e6e2f2;
+    border-radius: 10px;
+    background: #fbfaff;
 }
 
-.half-axis-table {
-    min-width: 150px;
+/* 方向逐个列出、各占一格：宽屏一行多个，窄屏自动折行 */
+.half-direction-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+    gap: 4px 16px;
 }
 
-.half-axis-table th:last-child,
-.half-axis-table td:last-child {
-    width: 52px;
-    white-space: nowrap;
+.half-direction {
+    font-size: 13px;
+    line-height: 20px;
+    overflow-wrap: anywhere;
 }
 
-.half-axis-table tr.ok td {
+.half-direction.ok {
     color: #2e9e5b;
 }
 
-.half-axis-table tr.bad td {
+.half-direction.bad {
     color: #d64545;
+}
+
+.half-direction-empty {
+    margin: 0;
+    font-size: 12px;
+    color: #8a8a95;
 }
 
 .axis-group {
@@ -2337,7 +2353,7 @@ button {
     font-size: 13px;
     font-weight: 600;
     color: #4527a0;
-    margin-bottom: 4px;
+    margin-bottom: 8px;
 }
 
 .angle-table tr.ok td:last-child {
@@ -2471,10 +2487,4 @@ button {
     font-size: 12px;
     color: #5b5b66;
     margin: 0 0 8px;
-}
-
-.half-axis-scroll {
-    max-height: 320px;
-    overflow-y: auto;
-    overflow-x: auto;
 }

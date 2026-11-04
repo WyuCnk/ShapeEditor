@@ -48,6 +48,12 @@ public sealed class AnalysisExportSection
     /// </summary>
     public AnalysisExportTable? Table { get; set; }
 
+    /// <summary>
+    /// 板块的「轴块」列表，为空时不画。
+    /// 同时存在文本行与轴块时，先画文本行（作为说明），再画每个轴块。
+    /// </summary>
+    public List<AnalysisExportAxisBlock> AxisBlocks { get; set; } = new();
+
     /// <summary>是否画成制作路径占位节点框（而不是普通文本行）。</summary>
     public bool IsPlaceholder { get; set; }
 
@@ -131,4 +137,33 @@ public sealed class AnalysisExportTable
 
     /// <summary>每行样式：ok / bad / 空。</summary>
     public List<string> RowStyles { get; set; } = new();
+}
+
+/// <summary>
+/// 导出图里的一个轴块：一个轴（一组交换方向）画成一张卡片，
+/// 块标题 + 块内自动换行的方向文本。
+///
+/// 轴块不经过表格行样式，颜色直接由每个方向的
+/// <see cref="AnalysisExportAxisDirection.IsLegal"/> 决定，
+/// 避免表格行样式与行数对不齐导致颜色丢失。
+/// </summary>
+public sealed class AnalysisExportAxisBlock
+{
+    /// <summary>块标题，例如「轴 1」。</summary>
+    public string Title { get; set; } = "";
+
+    /// <summary>该轴的全部交换方向，按分析结果的顺序逐个列出。</summary>
+    public List<AnalysisExportAxisDirection> Items { get; set; } = new();
+}
+
+/// <summary>
+/// 轴块里的一个交换方向。
+/// </summary>
+public sealed class AnalysisExportAxisDirection
+{
+    /// <summary>方向显示文本，例如 <c>(1+2,3,4)+(5+6,7,8)</c>。</summary>
+    public string Text { get; set; } = "";
+
+    /// <summary>是否合法：合法画绿色，不合法画红色。</summary>
+    public bool IsLegal { get; set; }
 }

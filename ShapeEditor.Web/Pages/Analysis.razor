@@ -238,28 +238,33 @@
 
                         @if (_half is not null && _half.Directions.Count > 0)
                         {
+                            @* 一轴一块：每个轴一张卡片，块内方向自动换行，整块区域纵向滚动。 *@
                             <div class="half-axis-scroll">
                                 @foreach (var group in _half.Directions.GroupBy(direction => direction.Axis))
                                 {
-                                    <div class="half-axis-column">
+                                    @* 开关只影响页面显示；导出始终列出全部方向。 *@
+                                    List<ExchangeDirection> visibleDirections = group
+                                        .Where(direction => !_onlyLegalDirections || direction.IsLegal)
+                                        .ToList();
+
+                                    <section class="half-axis-block">
                                         <div class="axis-title">轴 @(group.Key + 1)</div>
 
-                                        <table class="angle-table half-axis-table">
-                                            <thead>
-                                                <tr>
-                                                    <th>交换方向</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                @foreach (var direction in group.Where(item => !_onlyLegalDirections || item.IsLegal))
+                                        @if (visibleDirections.Count == 0)
+                                        {
+                                            <p class="half-direction-empty">没有合法的交换方向。</p>
+                                        }
+                                        else
+                                        {
+                                            @* 方向逐个列出、各占一格；块宽时一行多个，窄时自动折行，不横向滚动。 *@
+                                            <div class="half-direction-list">
+                                                @foreach (ExchangeDirection direction in visibleDirections)
                                                 {
-                                                    <tr class="@(direction.IsLegal ? "ok" : "bad")">
-                                                        <td>@direction.Display</td>
-                                                    </tr>
+                                                    <span class="half-direction @(direction.IsLegal ? "ok" : "bad")">@direction.Display</span>
                                                 }
-                                            </tbody>
-                                        </table>
-                                    </div>
+                                            </div>
+                                        }
+                                    </section>
                                 }
                             </div>
                         }
@@ -799,20 +804,18 @@
     }
 
     /// <summary>
-    /// 半边稳定性导出成多个板块：最前面一个说明板块（汇总 + 定义），
-    /// 之后每个轴一个表格板块，与页面按轴分组的表格一致。
+    /// 半边稳定性导出成一个板块：汇总与定义作为说明文本，
+    /// 之后每个轴一个轴块（块标题 + 块内全部交换方向），与页面的一轴一块一致。
+    ///
+    /// 轴块只带「方向文本 + 是否合法」，颜色由 JS 按 IsLegal 直接选，
+    /// 不依赖表格行样式；导出始终列出全部方向，不受页面开关影响。
     /// </summary>
     private List<AnalysisExportSection> BuildHalfSections()
     {
-        var sections = new List<AnalysisExportSection>
+        var summary = new AnalysisExportSection
         {
-            new AnalysisExportSection
-            {
-                Title = "半边稳定性"
-            }
+            Title = "半边稳定性"
         };
-
-        AnalysisExportSection summary = sections[0];
 
         summary.Lines.Add(
             "交换方向合法的定义：两个半边都稳定，并且该方向上左右各两个带柱子的半半边也全部稳定。");
@@ -823,7 +826,7 @@
         {
             summary.Lines.Insert(0, "需要在偶数象限的图形上分析。");
 
-            return sections;
+            return new List<AnalysisExportSection> { summary };
         }
 
         summary.Lines.Insert(
@@ -835,26 +838,25 @@
         foreach (IGrouping<int, ExchangeDirection> group in
                  _half.Directions.GroupBy(direction => direction.Axis))
         {
-            var table = new AnalysisExportTable
+            var axisBlock = new AnalysisExportAxisBlock
             {
-                Headers = new List<string> { "交换方向" }
+                Title = $"轴 {group.Key + 1}"
             };
 
+            // 导出列全部方向：页面上的「只显示合法方向」开关不影响图片。
             foreach (ExchangeDirection direction in group)
             {
-                table.Rows.Add(new List<string> { direction.Display });
-
-                table.RowStyles.Add(direction.IsLegal ? "ok" : "bad");
+                axisBlock.Items.Add(new AnalysisExportAxisDirection
+                {
+                    Text = direction.Display,
+                    IsLegal = direction.IsLegal
+                });
             }
 
-            sections.Add(new AnalysisExportSection
-            {
-                Title = $"轴 {group.Key + 1}",
-                Table = table
-            });
+            summary.AxisBlocks.Add(axisBlock);
         }
 
-        return sections;
+        return new List<AnalysisExportSection> { summary };
     }
 
     private static AnalysisExportSection BuildRulesSection()

@@ -2050,8 +2050,11 @@ window.shapeGridTryShare = async function (blob, fileName) {
  * 分析图导出（单栏版式）。
  *
  * payload 结构见 Models/AnalysisExportPayload.cs：
- * { title, code, state, sections: [{ title, lines, table, isPlaceholder }], meta, generatedAt }
- * section.table = { headers: [...], rows: [[...], ...] } 时按等宽列表格绘制，
+ * { title, code, state, sections: [{ title, lines, table, axisBlocks, isPlaceholder }], meta, generatedAt }
+ * section.table = { headers: [...], rows: [[...], ...], rowStyles: [...] } 时按等宽列表格绘制；
+ * section.axisBlocks = [{ title, items: [{ text, isLegal }] }] 时按「一轴一块」绘制：
+ * 每个轴一张卡片，块内方向文本自动换行，颜色直接由 isLegal 决定（绿 / 红），
+ * 不经过表格行样式，从根上避免行样式与行数错位导致颜色丢失。
  * 否则（或同时还有 lines 时先画文本行）沿用文本行绘制。
  * 页面只会把当前显示的板块放进 sections，隐藏的板块不会出现在图片里。
  */
@@ -2213,6 +2216,25 @@ window.shapeGrid.downloadAnalysis = async function (payload, fileName) {
                 title: title,
                 lines: lines,
                 table: table
+            });
+
+            continue;
+        }
+
+        // 轴块：每个轴一张卡片，块内方向文本自动换行；导出始终列全部方向。
+        const axisBlocks = layoutAnalysisAxisBlocks(measure, section.axisBlocks, contentWidth);
+
+        if (axisBlocks) {
+            blocks.push({
+                kind: "axisBlocks",
+                height:
+                    SECTION_TITLE_HEIGHT +
+                    lines.length * LINE_HEIGHT +
+                    axisBlocks.height +
+                    SECTION_GAP,
+                title: title,
+                lines: lines,
+                axisBlocks: axisBlocks
             });
 
             continue;
@@ -2387,6 +2409,43 @@ window.shapeGrid.downloadAnalysis = async function (payload, fileName) {
             ctx.beginPath();
             ctx.moveTo(PADDING, tableBottom + 6);
             ctx.lineTo(width - PADDING, tableBottom + 6);
+            ctx.stroke();
+
+            y += block.height;
+            continue;
+        }
+
+        if (block.kind === "axisBlocks") {
+            drawSectionTitle(block.title, y);
+
+            ctx.font = TEXT_FONT;
+            ctx.fillStyle = "#3A3A44";
+            ctx.textAlign = "left";
+            ctx.textBaseline = "top";
+
+            let lineY = y + SECTION_TITLE_HEIGHT;
+
+            for (let j = 0; j < block.lines.length; j++) {
+                if (block.lines[j] !== "") {
+                    ctx.fillText(block.lines[j], PADDING, lineY);
+                }
+
+                lineY += LINE_HEIGHT;
+            }
+
+            const axisBottom = drawAnalysisAxisBlocks(
+                ctx,
+                block.axisBlocks,
+                PADDING,
+                lineY,
+                contentWidth);
+
+            // 板块之间的细分隔线
+            ctx.strokeStyle = "#EEEAF7";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(PADDING, axisBottom + 6);
+            ctx.lineTo(width - PADDING, axisBottom + 6);
             ctx.stroke();
 
             y += block.height;
@@ -3042,7 +3101,14 @@ function analysisTableHeight(table) {
     return (1 + bodyRows) * ANALYSIS_TABLE_ROW_HEIGHT + 8;
 }
 
-/* 把 section.table 归一化成 { headers: string[], rows: string[][] }，空表格返回 null。 */
+/*
+ * 把 section.table 归一化成 { headers: string[], rows: string[][], rowStyles: string[] }，
+ * 空表格返回 null。
+ *
+ * rowStyles 必须一起带过来：drawAnalysisTable 按 rowStyles[row] 选颜色，
+ * 之前这里只返回 headers/rows，行样式在归一化时被丢掉，导致所有表格行都画成默认深灰
+ * （看起来是黑色），页面上「绿色合法 / 红色不合法」在导出图里完全失效。
+ */
 function normalizeAnalysisTable(table) {
     if (!table || typeof table !== "object") {
         return null;
@@ -3069,11 +3135,17 @@ function normalizeAnalysisTable(table) {
         }
     }
 
+    const rowStyles = Array.isArray(table.rowStyles)
+        ? table.rowStyles.map(function (value) {
+            return value === null || value === undefined ? "" : String(value);
+        })
+        : [];
+
     if (headers.length === 0 && rows.length === 0) {
         return null;
     }
 
-    return { headers: headers, rows: rows };
+    return { headers: headers, rows: rows, rowStyles: rowStyles };
 }
 
 /*
@@ -3203,6 +3275,225 @@ function drawAnalysisTable(ctx, table, left, top, tableWidth) {
     ctx.strokeStyle = "#E6E2F2";
     ctx.lineWidth = 1;
     ctx.strokeRect(left, top, tableWidth, (1 + rows.length) * ANALYSIS_TABLE_ROW_HEIGHT);
+}
+
+/*
+ * 轴块卡片的版式：块标题 + 块内若干行方向文本。
+ * 方向文本按内容宽度自动换行，块内不出现横向溢出，也不依赖表格行样式。
+ */
+const ANALYSIS_AXIS_TITLE_FONT = '700 14px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+
+const ANALYSIS_AXIS_ITEM_FONT = '400 13px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+
+/* 与页面的合法 / 不合法颜色保持一致 */
+const ANALYSIS_AXIS_LEGAL_COLOR = "#2E9E5B";
+
+const ANALYSIS_AXIS_ILLEGAL_COLOR = "#D64545";
+
+const ANALYSIS_AXIS_CARD_PADDING = 12;
+
+const ANALYSIS_AXIS_TITLE_HEIGHT = 24;
+
+const ANALYSIS_AXIS_ROW_HEIGHT = 21;
+
+const ANALYSIS_AXIS_ITEM_GAP = 18;
+
+const ANALYSIS_AXIS_CARD_GAP = 10;
+
+/* 把 section.axisBlocks 归一化成 [{ title, items: [{ text, isLegal }] }]，跳过空块。 */
+function normalizeAnalysisAxisBlocks(rawBlocks) {
+    if (!Array.isArray(rawBlocks)) {
+        return [];
+    }
+
+    const result = [];
+
+    for (let i = 0; i < rawBlocks.length; i++) {
+        const raw = rawBlocks[i];
+
+        if (!raw || typeof raw !== "object") {
+            continue;
+        }
+
+        const items = [];
+        const rawItems = Array.isArray(raw.items) ? raw.items : [];
+
+        for (let j = 0; j < rawItems.length; j++) {
+            const rawItem = rawItems[j];
+
+            if (!rawItem || typeof rawItem !== "object") {
+                continue;
+            }
+
+            const text = rawItem.text === null || rawItem.text === undefined
+                ? ""
+                : String(rawItem.text);
+
+            if (text === "") {
+                continue;
+            }
+
+            items.push({ text: text, isLegal: !!rawItem.isLegal });
+        }
+
+        if (items.length === 0) {
+            continue;
+        }
+
+        result.push({
+            title: raw.title === null || raw.title === undefined
+                ? ""
+                : String(raw.title),
+            items: items
+        });
+    }
+
+    return result;
+}
+
+/*
+ * 轴块排版：先把每个方向文本量出来，一行放不下就折到下一行。
+ *
+ * 返回 { height, blocks: [{ title, height, rows: [[{ text, isLegal, width }]] }] }，
+ * 没有可用轴块时返回 null。宽度在排版阶段算好、绘制阶段直接复用，
+ * 避免两次测量不一致导致卡片高度与实际内容错位。
+ */
+function layoutAnalysisAxisBlocks(measure, rawBlocks, maxWidth) {
+    const cards = normalizeAnalysisAxisBlocks(rawBlocks);
+
+    if (cards.length === 0) {
+        return null;
+    }
+
+    const contentWidth = Math.max(
+        40,
+        maxWidth - ANALYSIS_AXIS_CARD_PADDING * 2);
+
+    const blocks = [];
+    let totalHeight = 0;
+
+    for (let i = 0; i < cards.length; i++) {
+        const card = cards[i];
+        const rows = [];
+        let row = [];
+        let rowWidth = 0;
+
+        measure.font = ANALYSIS_AXIS_ITEM_FONT;
+
+        for (let j = 0; j < card.items.length; j++) {
+            const item = card.items[j];
+
+            let text = item.text;
+            let width = measure.measureText(text).width;
+
+            // 单个方向比整行还宽时截断，保证块内不横向溢出。
+            if (width > contentWidth) {
+                text = truncateAnalysisText(
+                    measure,
+                    item.text,
+                    ANALYSIS_AXIS_ITEM_FONT,
+                    contentWidth);
+
+                width = measure.measureText(text).width;
+            }
+
+            if (row.length > 0 &&
+                rowWidth + ANALYSIS_AXIS_ITEM_GAP + width > contentWidth) {
+                rows.push(row);
+                row = [];
+                rowWidth = 0;
+            }
+
+            row.push({ text: text, isLegal: item.isLegal, width: width });
+            rowWidth += (row.length > 1 ? ANALYSIS_AXIS_ITEM_GAP : 0) + width;
+        }
+
+        if (row.length > 0) {
+            rows.push(row);
+        }
+
+        const cardHeight =
+            ANALYSIS_AXIS_CARD_PADDING * 2 +
+            ANALYSIS_AXIS_TITLE_HEIGHT +
+            rows.length * ANALYSIS_AXIS_ROW_HEIGHT;
+
+        blocks.push({ title: card.title, height: cardHeight, rows: rows });
+        totalHeight += cardHeight;
+
+        if (i < cards.length - 1) {
+            totalHeight += ANALYSIS_AXIS_CARD_GAP;
+        }
+    }
+
+    return { height: totalHeight, blocks: blocks };
+}
+
+/*
+ * 画轴块：每块一张圆角卡片，上方块标题，下方按排版好的行逐个上色绘制方向文本。
+ * 颜色只取自 isLegal：合法 #2E9E5B，不合法 #D64545。
+ * 返回整组轴块的下边界（不含卡片间距），供板块分隔线定位。
+ */
+function drawAnalysisAxisBlocks(ctx, layout, left, top, cardWidth) {
+    if (!layout || !Array.isArray(layout.blocks) || layout.blocks.length === 0) {
+        return top;
+    }
+
+    let cardTop = top;
+
+    for (let i = 0; i < layout.blocks.length; i++) {
+        const block = layout.blocks[i];
+
+        ctx.save();
+        ctx.fillStyle = "#FBFAFE";
+        ctx.strokeStyle = "#E6E2F2";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.roundRect(left, cardTop, cardWidth, block.height, 10);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+
+        ctx.font = ANALYSIS_AXIS_TITLE_FONT;
+        ctx.fillStyle = "#4527A0";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillText(
+            block.title,
+            left + ANALYSIS_AXIS_CARD_PADDING,
+            cardTop + ANALYSIS_AXIS_CARD_PADDING + ANALYSIS_AXIS_TITLE_HEIGHT / 2);
+
+        ctx.font = ANALYSIS_AXIS_ITEM_FONT;
+
+        let rowTop = cardTop +
+            ANALYSIS_AXIS_CARD_PADDING +
+            ANALYSIS_AXIS_TITLE_HEIGHT;
+
+        for (let r = 0; r < block.rows.length; r++) {
+            const row = block.rows[r];
+            let textLeft = left + ANALYSIS_AXIS_CARD_PADDING;
+
+            for (let c = 0; c < row.length; c++) {
+                const item = row[c];
+
+                ctx.fillStyle = item.isLegal
+                    ? ANALYSIS_AXIS_LEGAL_COLOR
+                    : ANALYSIS_AXIS_ILLEGAL_COLOR;
+
+                ctx.fillText(
+                    item.text,
+                    textLeft,
+                    rowTop + ANALYSIS_AXIS_ROW_HEIGHT / 2);
+
+                textLeft += item.width + ANALYSIS_AXIS_ITEM_GAP;
+            }
+
+            rowTop += ANALYSIS_AXIS_ROW_HEIGHT;
+        }
+
+        cardTop += block.height + ANALYSIS_AXIS_CARD_GAP;
+    }
+
+    return top + layout.height;
 }
 
 /* 供 Blazor 回读节点的真实渲染尺寸，箭头锚点据此贴合边框 */
