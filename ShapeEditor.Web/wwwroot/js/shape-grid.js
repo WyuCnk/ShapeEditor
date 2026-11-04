@@ -2333,11 +2333,7 @@ window.shapeGrid.downloadAnalysis = async function (payload, fileName) {
             drawSectionTitle(block.title, y);
 
             ctx.font = TEXT_FONT;
-            const rowStyle = table.rowStyles && table.rowStyles[row];
-
-        ctx.fillStyle = rowStyle === "ok"
-            ? "#2E9E5B"
-            : (rowStyle === "bad" ? "#D64545" : "#3A3A44");
+            ctx.fillStyle = "#3A3A44";
             ctx.textAlign = "left";
             ctx.textBaseline = "top";
 
@@ -2367,11 +2363,7 @@ window.shapeGrid.downloadAnalysis = async function (payload, fileName) {
             drawSectionTitle(block.title, y);
 
             ctx.font = TEXT_FONT;
-            const rowStyle = table.rowStyles && table.rowStyles[row];
-
-        ctx.fillStyle = rowStyle === "ok"
-            ? "#2E9E5B"
-            : (rowStyle === "bad" ? "#D64545" : "#3A3A44");
+            ctx.fillStyle = "#3A3A44";
             ctx.textAlign = "left";
             ctx.textBaseline = "top";
 
@@ -2405,11 +2397,7 @@ window.shapeGrid.downloadAnalysis = async function (payload, fileName) {
             drawSectionTitle(block.title, y);
 
             ctx.font = TEXT_FONT;
-            const rowStyle = table.rowStyles && table.rowStyles[row];
-
-        ctx.fillStyle = rowStyle === "ok"
-            ? "#2E9E5B"
-            : (rowStyle === "bad" ? "#D64545" : "#3A3A44");
+            ctx.fillStyle = "#3A3A44";
             ctx.textAlign = "left";
             ctx.textBaseline = "top";
 

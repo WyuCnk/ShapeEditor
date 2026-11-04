@@ -135,11 +135,17 @@
                         </button>
                     </div>
 
+                    @if (!_showAngles)
+                    {
+                        <p class="analysis-summary">
+                            @AngleSummary
+                        </p>
+                    }
+
                     @if (_showAngles)
                     {
                         <p class="analysis-summary">
-                            共 @_analysis.Angles.Count 个角，@_analysis.LegalCount 个合法
-                            @(_analysis.IsFullyLegal ? "（全部合法）" : "")
+                            @AngleSummary
                         </p>
 
                         <table class="angle-table">
@@ -260,87 +266,124 @@
                     }
                 </div>
 
-                @if (_half is not null && _half.IsExchangeable)
+                @if (_half is not null)
                 {
                     <div class="analysis-card">
-                    <div class="analysis-section-head">
-                        <h2>制作路径</h2>
-                        <button type="button" class="analysis-toggle"
-                                @onclick="() => _showPath = !_showPath">
-                            @(_showPath ? "隐藏" : "显示")
-                        </button>
-                    </div>
+                        <div class="analysis-section-head">
+                            <h2>制作路径</h2>
+                            <button type="button" class="analysis-toggle"
+                                    @onclick="() => _showPath = !_showPath">
+                                @(_showPath ? "隐藏" : "显示")
+                            </button>
+                        </div>
 
-                    @if (_showPath)
-                    {
-                        <p class="analysis-summary">
-                            @(_path is null
-                                ? "无法解析。"
-                                : (_path.IsProducible
-                                    ? $"可制作：方向 {_path.Path!.Direction}（{(_path.Path.DirectionLegal ? "合法方向" : "不合法方向")}）。"
-                                    : $"不可制作：{_path.Error}"))
-                        </p>
-
-                        @if (_path is not null && _path.Path is not null)
+                        @if (_showPath)
                         {
-                            @if (_pathGraph is not null)
+                            @* 交换工序：沿用原来的分层节点图；没有合法交换方向时不显示。 *@
+                            @if (_half.IsExchangeable)
                             {
-                                <div class="path-graph-scroll"
-                                     style="height:@(PathGraphViewportHeight)px">
-                                    <div class="graph-canvas path-graph-canvas"
-                                         style="width:@Px(_pathGraph.Width)px;height:@Px(_pathGraph.Height)px">
-
-                                        <svg class="graph-arrows"
-                                             width="@Px(_pathGraph.Width)"
-                                             height="@Px(_pathGraph.Height)">
-                                            @foreach (ProductionPathGraphEdge edge in _pathGraph.Edges)
-                                            {
-                                                <path d="@edge.Path"
-                                                      class="path-edge@(edge.IsWaste ? " waste" : "")"
-                                                      data-edge-from="@edge.FromId"
-                                                      data-edge-to="@edge.ToId" />
-
-                                                <polygon points="@edge.Arrow"
-                                                         class="path-arrow@(edge.IsWaste ? " waste" : "")"
-                                                         data-edge-from="@edge.FromId"
-                                                         data-edge-to="@edge.ToId" />
-                                            }
-                                        </svg>
-
-                                        @foreach (ProductionPathGraphNode node in _pathGraph.Nodes)
-                                        {
-                                            <div class="graph-node path-node @(node.IsResult ? "result" : "") @(node.IsWaste ? "waste" : "") @(node.IsPending ? "pending" : "")"
-                                                 data-node-id="@node.Id"
-                                                 style="left:@Px(node.X)px;top:@Px(node.Y)px;width:@Px(node.Width)px;height:@Px(node.Height)px">
-
-                                                <div class="path-node-head" title="@node.Title">
-                                                    @node.Title
-                                                </div>
-
-                                                <div class="graph-node-body path-node-body">
-                                                    @if (node.Shape is not null)
-                                                    {
-                                                        <PathNodePreview Document="node.Shape" />
-                                                    }
-                                                    else
-                                                    {
-                                                        <span class="ws-slot-empty">待接入</span>
-                                                    }
-                                                </div>
-                                            </div>
-                                        }
+                                <section class="analysis-subsection">
+                                    <div class="analysis-section-head analysis-subsection-head">
+                                        <h3>交换工序</h3>
+                                        <button type="button" class="analysis-toggle"
+                                                @onclick="() => _showPathExchange = !_showPathExchange">
+                                            @(_showPathExchange ? "隐藏" : "显示")
+                                        </button>
                                     </div>
+
+                                    @if (_showPathExchange)
+                                    {
+                                        <p class="analysis-summary">
+                                            @(_path is null
+                                                ? "无法解析。"
+                                                : (_path.IsProducible
+                                                    ? $"可制作：方向 {_path.Path!.Direction}（{(_path.Path.DirectionLegal ? "合法方向" : "不合法方向")}）。"
+                                                    : $"不可制作：{_path.Error}"))
+                                        </p>
+
+                                        @if (_path is not null && _path.Path is not null)
+                                        {
+                                            @if (_pathGraph is not null)
+                                            {
+                                                <div class="path-graph-scroll"
+                                                     style="height:@(PathGraphViewportHeight)px">
+                                                    <div class="graph-canvas path-graph-canvas"
+                                                         style="width:@Px(_pathGraph.Width)px;height:@Px(_pathGraph.Height)px">
+
+                                                        <svg class="graph-arrows"
+                                                             width="@Px(_pathGraph.Width)"
+                                                             height="@Px(_pathGraph.Height)">
+                                                            @foreach (ProductionPathGraphEdge edge in _pathGraph.Edges)
+                                                            {
+                                                                <path d="@edge.Path"
+                                                                      class="path-edge@(edge.IsWaste ? " waste" : "")"
+                                                                      data-edge-from="@edge.FromId"
+                                                                      data-edge-to="@edge.ToId" />
+
+                                                                <polygon points="@edge.Arrow"
+                                                                         class="path-arrow@(edge.IsWaste ? " waste" : "")"
+                                                                         data-edge-from="@edge.FromId"
+                                                                         data-edge-to="@edge.ToId" />
+                                                            }
+                                                        </svg>
+
+                                                        @foreach (ProductionPathGraphNode node in _pathGraph.Nodes)
+                                                        {
+                                                            <div class="graph-node path-node @(node.IsResult ? "result" : "") @(node.IsWaste ? "waste" : "") @(node.IsPending ? "pending" : "")"
+                                                                 data-node-id="@node.Id"
+                                                                 style="left:@Px(node.X)px;top:@Px(node.Y)px;width:@Px(node.Width)px;height:@Px(node.Height)px">
+
+                                                                <div class="path-node-head" title="@node.Title">
+                                                                    @node.Title
+                                                                </div>
+
+                                                                <div class="graph-node-body path-node-body">
+                                                                    @if (node.Shape is not null)
+                                                                    {
+                                                                        <PathNodePreview Document="node.Shape" />
+                                                                    }
+                                                                    else
+                                                                    {
+                                                                        <span class="ws-slot-empty">待接入</span>
+                                                                    }
+                                                                </div>
+                                                            </div>
+                                                        }
+                                                    </div>
+                                                </div>
+
+                                                <p class="analysis-note">
+                                                    节点按 5 层从上到下排列，同层节点从左到右紧排，层间固定留 80px 画箭头；
+                                                    预览保持 30px 单元格原始尺寸，图形较宽或较高时容器可横纵滚动。
+                                                    废料节点淡显、虚线边框，指向废料的箭头为灰色虚线。
+                                                </p>
+                                            }
+                                        }
+                                    }
+                                </section>
+                            }
+
+                            @* 角的工序：后续按角绘制（每个角补柱后的制作工序），先放占位说明。 *@
+                            <section class="analysis-subsection">
+                                <div class="analysis-section-head analysis-subsection-head">
+                                    <h3>角的工序</h3>
+                                    <button type="button" class="analysis-toggle"
+                                            @onclick="() => _showPathAngles = !_showPathAngles">
+                                        @(_showPathAngles ? "隐藏" : "显示")
+                                    </button>
                                 </div>
 
-                                <p class="analysis-note">
-                                    节点按 5 层从上到下排列，同层节点从左到右紧排，层间固定留 80px 画箭头；
-                                    预览保持 30px 单元格原始尺寸，图形较宽或较高时容器可横纵滚动。
-                                    废料节点淡显、虚线边框，指向废料的箭头为灰色虚线。
-                                </p>
-                            }
+                                @if (_showPathAngles)
+                                {
+                                    <div class="path-placeholder">待设计</div>
+
+                                    <p class="analysis-note">
+                                        后续按角绘制：每个角补柱后的制作工序。
+                                    </p>
+                                }
+                            </section>
                         }
-                    }
-                </div>
+                    </div>
                 }
 
             </section>
@@ -434,7 +477,7 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!_showPath || _pathGraph is null)
+        if (!_showPath || !_showPathExchange || _pathGraph is null)
         {
             return;
         }
@@ -451,7 +494,7 @@
         }
     }
 
-    // 六个板块的显隐开关，默认全部显示；只影响渲染，不影响分析结果。
+    // 分析板块的显隐开关，只影响渲染，不影响分析结果；除角的工序外默认全部显示。
     private bool _showProperties = true;
 
     private bool _showAngles = true;
@@ -461,6 +504,12 @@
     private bool _showHalf = true;
 
     private bool _showPath = true;
+
+    // 制作路径下的两个子区域：交换工序（分层节点图）与角的工序（占位）。
+    // 交换工序默认显示；角的工序仍在设计中，默认隐藏，避免占位内容干扰阅读。
+    private bool _showPathExchange = true;
+
+    private bool _showPathAngles = false;
 
     private bool _showRules = true;
 
@@ -483,6 +532,15 @@
 
     private IEnumerable<ShapeProperty> PropertyList() =>
         _propertyOrder.Where(property => (_properties & property) == property);
+
+    /// <summary>
+    /// 角的统计摘要：折叠与展开时显示同一句话。
+    /// </summary>
+    private string AngleSummary =>
+        _analysis is null
+            ? ""
+            : $"共 {_analysis.Angles.Count} 个角，{_analysis.LegalCount} 个合法" +
+              (_analysis.IsFullyLegal ? "（全部合法）" : "");
 
     private void SetMode(
         CollapseMode mode)
@@ -567,24 +625,33 @@
             payload.Sections.Add(BuildRulesSection());
         }
 
-        // 制作路径只在存在合法交换方向时显示，与页面保持一致。
-        if (_showPath && _half is not null && _half.IsExchangeable)
+        // 制作路径分成交换工序与角的工序两个子区域，各自按显示状态导出；
+        // 交换工序只在存在合法交换方向时出现，与页面的门控保持一致。
+        if (_showPath)
         {
-            payload.Sections.Add(BuildPathSection());
+            if (_showPathExchange && _half is not null && _half.IsExchangeable)
+            {
+                payload.Sections.Add(BuildPathSection());
+            }
+
+            if (_showPathAngles)
+            {
+                payload.Sections.Add(BuildPathAnglesSection());
+            }
         }
 
         return payload;
     }
 
     /// <summary>
-    /// 制作路径板块。可制作时导出成与页面相同的节点图（按实际尺寸整张输出，
+    /// 制作路径的交换工序板块。可制作时导出成与页面相同的节点图（按实际尺寸整张输出，
     /// 预览不缩放、不分片）；不可制作时退回文本原因。
     /// </summary>
     private AnalysisExportSection BuildPathSection()
     {
         var section = new AnalysisExportSection
         {
-            Title = "制作路径"
+            Title = "交换工序"
         };
 
         if (_path is null || _path.Path is null || _pathGraph is null)
@@ -637,6 +704,20 @@
         section.Graph = graph;
 
         return section;
+    }
+
+    /// <summary>
+    /// 角的工序占位板块。后续按角绘制（每个角补柱后的制作工序），
+    /// 现在导出成与页面一致的占位框。
+    /// </summary>
+    private static AnalysisExportSection BuildPathAnglesSection()
+    {
+        return new AnalysisExportSection
+        {
+            Title = "角的工序",
+            IsPlaceholder = true,
+            Lines = new List<string> { "待设计" }
+        };
     }
 
     private AnalysisExportSection BuildPropertiesSection()

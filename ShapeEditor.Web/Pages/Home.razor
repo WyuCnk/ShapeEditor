@@ -1,5 +1,6 @@
 @page "/"
 
+@using ShapeEditor.Core.Analysis
 @using ShapeEditor.Core.Models
 @using ShapeEditor.Core.Services
 @using ShapeEditor.Core.Theme
@@ -28,6 +29,13 @@
     </div>
 }
 
+@if (_isAnalyzing)
+{
+    <div class="analysis-loading-mask" role="status" aria-live="polite">
+        <div class="analysis-loading-box">分析中…</div>
+    </div>
+}
+
 <div class="editor-page">
 
     <header class="editor-header">
@@ -36,8 +44,9 @@
         <div class="header-actions">
             <button class="secondary-button"
                     @onclick="OpenAnalysis"
-                    title="分析当前图形">
-                分析
+                    title="分析当前图形"
+                    disabled="@_isAnalyzing">
+                @(_isAnalyzing ? "分析中…" : "分析")
             </button>
 
             <button class="secondary-button"
@@ -261,11 +270,91 @@
 
     private readonly ShortCodeExporter Exporter = new();
 
-    private void OpenAnalysis()
+    private async Task OpenAnalysis()
     {
-        Analysis.Set(Exporter.Export(Document, omitTopEmptyLayers: true), "editor");
+        if (_isAnalyzing)
+        {
+            return;
+        }
 
-        Nav.NavigateTo("/analysis");
+        ErrorMessage = "";
+
+        _isAnalyzing = true;
+
+        /*
+         * 先让「分析中…」和遮罩真正渲染出来，再开始耗时的分析预演。
+         * Blazor WebAssembly 没有独立的 UI 线程，若不留出一帧，
+         * 计算可能在首次重绘前就结束，用户看不到任何反馈。
+         */
+        await InvokeAsync(StateHasChanged);
+        await Task.Delay(50);
+
+        try
+        {
+            ShapeDocument document = Document.Clone();
+
+            string code = await Task.Run(() =>
+            {
+                string exported = new ShortCodeExporter().Export(
+                    document,
+                    omitTopEmptyLayers: true);
+
+                WarmUpAnalysis(exported);
+
+                return exported;
+            });
+
+            Analysis.Set(code, "editor");
+
+            Nav.NavigateTo("/analysis");
+        }
+        catch (Exception exception)
+        {
+            ErrorMessage = $"分析失败：{exception.Message}";
+        }
+        finally
+        {
+            _isAnalyzing = false;
+        }
+    }
+
+    /// <summary>
+    /// 按分析页的流程预演一次计算，让「分析中…」有实际工作可做。
+    /// 结果不参与跳转，分析页仍会按当前下落规则重新计算。
+    /// </summary>
+    private static void WarmUpAnalysis(string code)
+    {
+        if (!ShortCodeParser.TryInferDimensions(
+                code,
+                out int layers,
+                out int parts,
+                out _))
+        {
+            return;
+        }
+
+        ParseResult parsed = new ShortCodeParser().Parse(
+            code,
+            layers,
+            parts);
+
+        if (!parsed.Success || parsed.Document is null)
+        {
+            return;
+        }
+
+        ShapeAnalysisResult angles = ShapeAngleAnalyzer.Analyze(
+            parsed.Document);
+
+        HalfStabilityResult half = HalfStabilityAnalyzer.Analyze(
+            parsed.Document);
+
+        ShapePropertyAnalyzer.Analyze(
+            parsed.Document,
+            angles.IsStable,
+            half.IsExchangeable);
+
+        ProductionPathParser.Parse(parsed.Document);
     }
 
 
@@ -279,6 +368,9 @@
     private string Code = "";
 
     private string ErrorMessage = "";
+
+    /// <summary>点「分析」后到跳转前的加载态，同时用于禁用按钮和显示遮罩。</summary>
+    private bool _isAnalyzing;
 
     private ElementReference _canvas;
 

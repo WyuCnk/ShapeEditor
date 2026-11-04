@@ -1372,6 +1372,26 @@ button {
     font-size: 15px;
     color: #212121;
 }
+/* 编辑器点「分析」后的整页遮罩：计算期间阻止所有交互 */
+.analysis-loading-mask {
+    position: fixed;
+    inset: 0;
+    z-index: 900;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(243, 244, 246, 0.55);
+    cursor: progress;
+}
+
+.analysis-loading-box {
+    padding: 12px 20px;
+    border-radius: 999px;
+    background: #ffffff;
+    color: #4527a0;
+    font-size: 14px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
 /* ==================== 制作路径画布 ==================== */
 
 .graph-canvas-wrapper {
@@ -2241,6 +2261,32 @@ button {
     color: #512bd4;
     font-size: 12px;
     line-height: 1.5;
+}
+
+/* 制作路径下的两个子区域：交换工序 / 角的工序 */
+.analysis-subsection {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px dashed #e6e2f2;
+}
+
+.analysis-subsection-head h3 {
+    margin: 0;
+    font-size: 14px;
+    color: #3a3a44;
+}
+
+.path-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 64px;
+    border: 1px dashed #b9a9ee;
+    border-radius: 10px;
+    background: #faf8ff;
+    color: #512bd4;
+    font-size: 14px;
+    font-weight: 600;
 }
 
 /* 窄屏下顶部按钮较多，允许换行，避免撑出横向滚动条 */
