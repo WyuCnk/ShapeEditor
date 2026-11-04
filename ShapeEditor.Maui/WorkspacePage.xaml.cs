@@ -796,7 +796,12 @@ public partial class WorkspacePage : ContentPage
         };
 #endif
 
-        border.GestureRecognizers.Add(pointer);
+        /*
+         * 手机端不提供节点拖动：画布小、配合自动布局已足够，
+         * 且在缩放画布上拖动容易出现位置漂移，直接不挂指针手势。
+         * 缩放仍由下面的 Pinch 手势处理，点击选中由 Tap 处理。
+         */
+        _ = pointer;
 
         /*
          * 卡片上原本还有一个 PanGestureRecognizer，这里已经删掉：
