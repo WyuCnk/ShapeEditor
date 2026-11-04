@@ -1,0 +1,61 @@
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+@*
+    分析页左侧信息区的竖式图。
+
+    与 Workspace 的 ShapePreview 不同：这里按 30px 单元格为 1:1 基准，
+    只等比缩小以适配左侧栏宽度和 320px 高度上限，小图形不放大。
+    画布后备缓冲按 DPR 放大，视觉上保持清晰。
+*@
+<canvas @ref="_canvas" class="analysis-fit-canvas"></canvas>
+
+@code {
+    /// <summary>要绘制的图形。</summary>
+    [Parameter]
+    public ShapeDocument Document { get; set; } = null!;
+
+    private ElementReference _canvas;
+
+    private ShapeDocument? _rendered;
+
+    protected override async Task OnAfterRenderAsync(
+        bool firstRender)
+    {
+        if (Document is null ||
+            ReferenceEquals(Document, _rendered))
+        {
+            return;
+        }
+
+        _rendered = Document;
+
+        try
+        {
+            await JS.InvokeVoidAsync(
+                "shapeGrid.renderAnalysisFit",
+                _canvas,
+                ShapeCanvasState.Create(Document),
+                30,
+                320);
+        }
+        catch
+        {
+            /* 预览绘制失败不影响页面其余内容 */
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync(
+                "shapeGrid.disposeAnalysisFit",
+                _canvas);
+        }
+        catch
+        {
+            /* 组件卸载时页面可能已经跳走，忽略即可 */
+        }
+    }
+}

@@ -5,6 +5,10 @@ namespace ShapeEditor.Core.Analysis;
 
 /// <summary>
 /// 一条制作路径。
+///
+/// <see cref="Steps"/> 是向后兼容的线性工序（WPF / MAUI 仍在使用），
+/// <see cref="Graph"/> 是按层组织的节点图：交换的两个输出（所需结果与废料）
+/// 都作为节点出现，Web 端据此画分层箭头图。
 /// </summary>
 public sealed record ProductionPath(
     int Axis,
@@ -12,7 +16,15 @@ public sealed record ProductionPath(
     int RightSplit,
     string Direction,
     bool DirectionLegal,
-    IReadOnlyList<ProductionStep> Steps);
+    IReadOnlyList<ProductionStep> Steps,
+    ProductionGraph Graph)
+{
+    /// <summary>节点图的节点，按行号与行内顺序排列。</summary>
+    public IReadOnlyList<ProductionNode> Nodes => Graph.Nodes;
+
+    /// <summary>节点图的箭头。</summary>
+    public IReadOnlyList<ProductionEdge> Edges => Graph.Edges;
+}
 
 /// <summary>
 /// 制作路径解析结果。
@@ -37,6 +49,11 @@ public sealed record ProductionPathResult(
 /// <see cref="ProductionPath.Steps"/> 按实际计算顺序展开：制作片、预旋转、
 /// 交换、交换后转回、半边结果、末端交换，直到顶针与堆叠。
 /// 每步的 <see cref="ProductionStep.Shape"/> 是该步产出的图形，UI 可直接画预览。
+///
+/// <see cref="ProductionPath.Graph"/> 把同一条工序整理成 5 层节点图：
+/// 1 = 四个带柱子的半半边，2 = 预旋转结果，3 = 两两交换（两个半边 + 两个废料），
+/// 4 = 交换后转回的两个半边，5 = 末端交换的目标图形 + 废料。
+/// 交换的另一路输出不再丢弃，而是带图形的「废料」节点。
 /// </summary>
 public static class ProductionPathParser
 {
@@ -98,28 +115,30 @@ public static class ProductionPathParser
                 ShapeDocument p3 = PillarHalfHalves.RotateRight(p3Raw, -rightSplit);
                 ShapeDocument p4 = PillarHalfHalves.RotateRight(p4Raw, -rightSplit);
 
-                // 同侧配对交换，再按 §2 转回。
-                (ShapeDocument? leftRaw, ShapeDocument? leftHalf) = ExchangeAndRotate(
-                    p1, p2, -leftRotation, mode);
+                // 同侧配对交换，再按 §2 转回。交换的另一路输出保留为废料节点。
+                (ShapeDocument? leftRaw, ShapeDocument? leftHalf, ShapeDocument? leftWaste) =
+                    ExchangeAndRotate(p1, p2, -leftRotation, mode);
 
                 if (leftRaw is null ||
                     leftHalf is null ||
+                    leftWaste is null ||
                     !IsStable(leftHalf, cache, 0))
                 {
                     continue;
                 }
 
-                (ShapeDocument? rightRaw, ShapeDocument? rightHalf) = ExchangeAndRotate(
-                    p3, p4, rightSplit, mode);
+                (ShapeDocument? rightRaw, ShapeDocument? rightHalf, ShapeDocument? rightWaste) =
+                    ExchangeAndRotate(p3, p4, rightSplit, mode);
 
                 if (rightRaw is null ||
                     rightHalf is null ||
+                    rightWaste is null ||
                     !IsStable(rightHalf, cache, half))
                 {
                     continue;
                 }
 
-                // 末端交换：两个输出中任意一个与目标旋转等价即成功。
+                // 末端交换：两个输出中任意一个与目标旋转等价即成功，另一个是废料。
                 var final = ShapeExchange.Exchange(leftHalf, rightHalf, mode);
 
                 if (final.Error is not null)
@@ -129,15 +148,19 @@ public static class ProductionPathParser
 
                 ShapeDocument? product = null;
 
+                ShapeDocument? finalWaste = null;
+
                 if (final.First is not null &&
                     IsRotationEquivalent(final.First, target))
                 {
                     product = final.First;
+                    finalWaste = final.Second;
                 }
                 else if (final.Second is not null &&
                          IsRotationEquivalent(final.Second, target))
                 {
                     product = final.Second;
+                    finalWaste = final.First;
                 }
 
                 if (product is null)
@@ -172,6 +195,27 @@ public static class ProductionPathParser
                     rightHalf,
                     product);
 
+                ProductionGraph graph = BuildGraph(
+                    parts,
+                    leftRotation,
+                    rightSplit,
+                    p1Raw,
+                    p1,
+                    p2Raw,
+                    p2,
+                    leftRaw,
+                    leftHalf,
+                    leftWaste,
+                    p3Raw,
+                    p3,
+                    p4Raw,
+                    p4,
+                    rightRaw,
+                    rightHalf,
+                    rightWaste,
+                    product,
+                    finalWaste);
+
                 return new ProductionPathResult(
                     true,
                     new ProductionPath(
@@ -180,7 +224,8 @@ public static class ProductionPathParser
                         rightSplit,
                         direction,
                         halfResult.LegalDirections.Contains(direction),
-                        steps),
+                        steps,
+                        graph),
                     null);
             }
         }
@@ -248,6 +293,112 @@ public static class ProductionPathParser
     }
 
     /// <summary>
+    /// 把同一次计算整理成 5 层节点图。
+    ///
+    /// 行内顺序即 Web 端的横向排布顺序：
+    /// 第 3 行按「废料、左交换、右交换、废料」排列，让 P1/P2、P3/P4
+    /// 分别向中间的两个交换节点汇聚，废料落在两侧。
+    ///
+    /// 连接规则：
+    /// P1–P4 → 各自的旋转结果；P1/P2 → 左交换，P3/P4 → 右交换；
+    /// 左/右交换 → 转回后的半边，同时各引出一条废料边；
+    /// 两个转回后半边 → 目标图形，目标图形再引出末端废料。
+    /// </summary>
+    private static ProductionGraph BuildGraph(
+        int parts,
+        int leftRotation,
+        int rightRotation,
+        ShapeDocument p1Raw,
+        ShapeDocument p1,
+        ShapeDocument p2Raw,
+        ShapeDocument p2,
+        ShapeDocument leftRaw,
+        ShapeDocument leftHalf,
+        ShapeDocument leftWaste,
+        ShapeDocument p3Raw,
+        ShapeDocument p3,
+        ShapeDocument p4Raw,
+        ShapeDocument p4,
+        ShapeDocument rightRaw,
+        ShapeDocument rightHalf,
+        ShapeDocument rightWaste,
+        ShapeDocument product,
+        ShapeDocument? finalWaste)
+    {
+        (_, _, string leftTitle) =
+            PillarHalfHalves.DescribeRotation(parts, leftRotation);
+
+        (_, _, string rightTitle) =
+            PillarHalfHalves.DescribeRotation(parts, -rightRotation);
+
+        (_, _, string leftBackTitle) =
+            PillarHalfHalves.DescribeRotation(parts, -leftRotation);
+
+        (_, _, string rightBackTitle) =
+            PillarHalfHalves.DescribeRotation(parts, rightRotation);
+
+        var nodes = new List<ProductionNode>(16)
+        {
+            // 第 1 行：四个带柱子的半半边（未旋转）。
+            new("pillar-p1", "制作带柱子的半半边 P1", ProductionNodeKind.PillarPiece, 1, p1Raw),
+            new("pillar-p2", "制作带柱子的半半边 P2", ProductionNodeKind.PillarPiece, 1, p2Raw),
+            new("pillar-p3", "制作带柱子的半半边 P3", ProductionNodeKind.PillarPiece, 1, p3Raw),
+            new("pillar-p4", "制作带柱子的半半边 P4", ProductionNodeKind.PillarPiece, 1, p4Raw),
+
+            // 第 2 行：预旋转结果。
+            new("rotated-p1", leftTitle, ProductionNodeKind.Rotate, 2, p1),
+            new("rotated-p2", leftTitle, ProductionNodeKind.Rotate, 2, p2),
+            new("rotated-p3", rightTitle, ProductionNodeKind.Rotate, 2, p3),
+            new("rotated-p4", rightTitle, ProductionNodeKind.Rotate, 2, p4),
+
+            // 第 3 行：两次同侧交换。交换节点展示所需半边（转回前），
+            // 另一路输出作为废料节点，同样带图形。
+            new("waste-left", "废料", ProductionNodeKind.Waste, 3, leftWaste),
+            new("exchange-left", "交换得到左半边", ProductionNodeKind.Exchange, 3, leftRaw),
+            new("exchange-right", "交换得到右半边", ProductionNodeKind.Exchange, 3, rightRaw),
+            new("waste-right", "废料", ProductionNodeKind.Waste, 3, rightWaste),
+
+            // 第 4 行：交换后转回的两个半边。
+            new("rotated-left", leftBackTitle, ProductionNodeKind.Rotate, 4, leftHalf),
+            new("rotated-right", rightBackTitle, ProductionNodeKind.Rotate, 4, rightHalf),
+
+            // 第 5 行：末端交换的目标图形与废料。
+            new("target", "交换得到目标图形", ProductionNodeKind.Target, 5, product),
+            new("waste-final", "废料", ProductionNodeKind.Waste, 5, finalWaste)
+        };
+
+        var edges = new List<ProductionEdge>(15)
+        {
+            // 第 1 → 2 行：竖线。
+            new("pillar-p1", "rotated-p1"),
+            new("pillar-p2", "rotated-p2"),
+            new("pillar-p3", "rotated-p3"),
+            new("pillar-p4", "rotated-p4"),
+
+            // 第 2 → 3 行：P1/P2 汇入左交换，P3/P4 汇入右交换。
+            new("rotated-p1", "exchange-left"),
+            new("rotated-p2", "exchange-left"),
+            new("rotated-p3", "exchange-right"),
+            new("rotated-p4", "exchange-right"),
+
+            // 交换节点输出所需半边与废料。
+            new("exchange-left", "rotated-left"),
+            new("exchange-left", "waste-left"),
+            new("exchange-right", "rotated-right"),
+            new("exchange-right", "waste-right"),
+
+            // 第 4 → 5 行：两个转回后的半边汇入末端交换。
+            new("rotated-left", "target"),
+            new("rotated-right", "target"),
+
+            // 末端交换的废料。
+            new("target", "waste-final")
+        };
+
+        return new ProductionGraph(nodes, edges);
+    }
+
+    /// <summary>
     /// 按规格 §1 构造四个带柱子的半半边（未做 §2 的预旋转）。
     ///
     /// 返回的片保持构造时的列位置，起始列分别为：
@@ -280,10 +431,10 @@ public static class ProductionPathParser
     /// <summary>
     /// 同侧两片交换后再转回。
     ///
-    /// 返回交换的原始输出（out2 = Merge(A 西, B 东)）与转回后的半边，
-    /// 两者都作为步骤的产出图形暴露给界面。
+    /// 返回交换的原始输出（out2 = Merge(A 西, B 东)）、转回后的半边，
+    /// 以及交换的另一路输出（out1）——它作为「废料」节点出现在图里。
     /// </summary>
-    private static (ShapeDocument? Raw, ShapeDocument? Rotated) ExchangeAndRotate(
+    private static (ShapeDocument? Raw, ShapeDocument? Rotated, ShapeDocument? Waste) ExchangeAndRotate(
         ShapeDocument first,
         ShapeDocument second,
         int rotation,
@@ -294,12 +445,12 @@ public static class ProductionPathParser
         // ShapeExchange 的 Second 即规格里的 out2 = Merge(A 西, B 东)。
         if (result.Error is not null || result.Second is null)
         {
-            return (null, null);
+            return (null, null, null);
         }
 
         ShapeDocument raw = result.Second;
 
-        return (raw, PillarHalfHalves.RotateRight(raw, rotation));
+        return (raw, PillarHalfHalves.RotateRight(raw, rotation), result.First);
     }
 
     /// <summary>交换输出是否与目标旋转等价。</summary>

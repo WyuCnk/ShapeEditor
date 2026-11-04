@@ -108,6 +108,7 @@ internal static class Program
             ("分析:制作路径-6 象限", AnalysisTests.ProductionPathSixQuadrants),
             ("分析:制作路径-8 象限", AnalysisTests.ProductionPathEightQuadrants),
             ("分析:制作路径-4 象限", AnalysisTests.ProductionPathFourQuadrants),
+            ("分析:制作路径图-4 象限", AnalysisTests.ProductionGraphFourQuadrants),
             ("分析:制作路径-2 象限不可制作", AnalysisTests.ProductionPathTwoQuadrantsIsImpossible),
             ("分析:用户样例轴 0 无合法方向", AnalysisTests.UserSampleHasNoLegalAxisZeroDirection),
             ("分析:制作路径-20 象限性能", AnalysisTests.ProductionPathTwentyQuadrantsIsFast),

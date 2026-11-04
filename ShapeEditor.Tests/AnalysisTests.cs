@@ -427,6 +427,100 @@ internal static class AnalysisTests
     }
 
     /// <summary>
+    /// 图结构：4 象限目标应整理成 5 层、16 个节点、15 条边。
+    ///
+    /// 每层节点数：4（带柱半半边）、4（预旋转）、4（交换：2 个半边 + 2 个废料）、
+    /// 2（转回后半边）、2（目标 + 废料）。废料标题固定「废料」且必须带图形。
+    /// </summary>
+    public static void ProductionGraphFourQuadrants()
+    {
+        var parser = new ShortCodeParser();
+        ParseResult parsed = parser.Parse("CrCgCbCc", 1, 4);
+
+        Assert.True(parsed.Success, parsed.Error ?? "解析失败");
+
+        ShapeDocument target = parsed.Document!;
+
+        ProductionPathResult result = ProductionPathParser.Parse(target);
+
+        Assert.True(result.IsProducible, result.Error ?? "4 象限样例应可制作");
+        Assert.True(result.Path is not null);
+
+        ProductionPath path = result.Path!;
+
+        Assert.Equal(16, path.Nodes.Count);
+        Assert.Equal(15, path.Edges.Count);
+
+        Assert.Equal(4, path.Nodes.Count(node => node.Row == 1));
+        Assert.Equal(4, path.Nodes.Count(node => node.Row == 2));
+        Assert.Equal(4, path.Nodes.Count(node => node.Row == 3));
+        Assert.Equal(2, path.Nodes.Count(node => node.Row == 4));
+        Assert.Equal(2, path.Nodes.Count(node => node.Row == 5));
+
+        Assert.Equal(
+            2,
+            path.Nodes.Count(node =>
+                node.Row == 3 && node.Kind == ProductionNodeKind.Exchange));
+
+        Assert.Equal(
+            2,
+            path.Nodes.Count(node =>
+                node.Row == 3 && node.Kind == ProductionNodeKind.Waste));
+
+        // 交换的两个输出都保留：废料标题固定，且带可绘制的图形。
+        Assert.Equal(
+            3,
+            path.Nodes.Count(node => node.Kind == ProductionNodeKind.Waste));
+
+        Assert.True(
+            path.Nodes
+                .Where(node => node.Kind == ProductionNodeKind.Waste)
+                .All(node => node.Title == "废料"),
+            "废料节点标题必须固定为「废料」");
+
+        Assert.True(
+            path.Nodes
+                .Where(node => node.Kind == ProductionNodeKind.Waste)
+                .All(node => node.Shape is not null),
+            "废料节点也必须带图形");
+
+        ProductionNode targetNode = path.Nodes.Single(
+            node => node.Kind == ProductionNodeKind.Target);
+
+        Assert.Equal(5, targetNode.Row);
+
+        var exporter = new ShortCodeExporter();
+
+        Assert.Equal(
+            exporter.Export(target),
+            exporter.Export(targetNode.Shape!));
+
+        // 关键连接：P1/P2 → 左交换，P3/P4 → 右交换，
+        // 交换分别输出转回后半边与废料，两个转回后半边再汇入目标。
+        Assert.True(HasEdge(path, "rotated-p1", "exchange-left"));
+        Assert.True(HasEdge(path, "rotated-p2", "exchange-left"));
+        Assert.True(HasEdge(path, "rotated-p3", "exchange-right"));
+        Assert.True(HasEdge(path, "rotated-p4", "exchange-right"));
+        Assert.True(HasEdge(path, "exchange-left", "rotated-left"));
+        Assert.True(HasEdge(path, "exchange-left", "waste-left"));
+        Assert.True(HasEdge(path, "exchange-right", "rotated-right"));
+        Assert.True(HasEdge(path, "exchange-right", "waste-right"));
+        Assert.True(HasEdge(path, "rotated-left", "target"));
+        Assert.True(HasEdge(path, "rotated-right", "target"));
+        Assert.True(HasEdge(path, "target", "waste-final"));
+
+        static bool HasEdge(
+            ProductionPath path,
+            string fromId,
+            string toId)
+        {
+            return path.Edges.Any(edge =>
+                edge.FromId == fromId &&
+                edge.ToId == toId);
+        }
+    }
+
+    /// <summary>
     /// 规格 §6.3：n = 2 时 half = 1，没有合法切点，不可制作。
     /// </summary>
     public static void ProductionPathTwoQuadrantsIsImpossible()

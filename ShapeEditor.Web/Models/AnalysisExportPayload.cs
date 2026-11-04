@@ -96,6 +96,9 @@ public sealed class AnalysisExportGraphNode
 
     public bool IsResult { get; set; }
 
+    /// <summary>废料节点：导出时淡显、虚线边框。</summary>
+    public bool IsWaste { get; set; }
+
     public bool IsPending { get; set; }
 }
 
@@ -107,6 +110,9 @@ public sealed class AnalysisExportGraphEdge
     public string FromId { get; set; } = "";
 
     public string ToId { get; set; } = "";
+
+    /// <summary>指向废料节点的箭头，导出时画成灰色虚线。</summary>
+    public bool IsWaste { get; set; }
 }
 
 /// <summary>

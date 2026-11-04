@@ -2603,11 +2603,134 @@ window.shapeGrid.renderAnalysisPreview = function (canvas, state, cellSize) {
 };
 
 /*
+ * 分析页左侧信息区的自适应预览。
+ *
+ * 以 30px 单元格为 1:1 基准，等比缩小到父容器可用宽度，
+ * 高度上限 maxHeight（默认 320px）；scale 不超过 1，因此小图形不会被放大。
+ * 画布后备缓冲按 DPR 放大，CSS 尺寸按缩放后的逻辑尺寸设置。
+ */
+window.shapeGrid.renderAnalysisFit = function (canvas, state, cellSize, maxHeight) {
+    if (!canvas ||
+        !state ||
+        !state.cells ||
+        state.columns <= 0 ||
+        state.rows <= 0) {
+        return;
+    }
+
+    const size = cellSize > 0 ? cellSize : 30;
+    const maxHeightValue = maxHeight > 0 ? maxHeight : 320;
+
+    let attempts = 0;
+
+    function draw() {
+        if (!canvas.isConnected) {
+            return;
+        }
+
+        const parent = canvas.parentElement;
+        const availableWidth = parent ? parent.clientWidth : canvas.clientWidth;
+
+        if (!(availableWidth > 0)) {
+            attempts++;
+
+            if (attempts < 20) {
+                window.requestAnimationFrame(draw);
+            }
+
+            return;
+        }
+
+        const naturalWidth = state.columns * size;
+        const naturalHeight = state.rows * size;
+
+        // 只缩小不放大：scale 上限固定为 1。
+        const scale = Math.min(
+            1,
+            availableWidth / naturalWidth,
+            maxHeightValue / naturalHeight);
+
+        const width = Math.max(1, Math.floor(naturalWidth * scale));
+        const height = Math.max(1, Math.floor(naturalHeight * scale));
+
+        canvas.style.width = width + "px";
+        canvas.style.height = height + "px";
+
+        const dpr = window.devicePixelRatio || 1;
+
+        canvas.width = Math.round(width * dpr);
+        canvas.height = Math.round(height * dpr);
+
+        const ctx = canvas.getContext("2d");
+
+        if (!ctx) {
+            return;
+        }
+
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, width, height);
+
+        // 直接按缩放后的单元格尺寸绘制，避免 CSS 二次拉伸导致模糊。
+        window.shapeGrid.drawAnalysisShape(
+            ctx,
+            state,
+            0,
+            0,
+            width / state.columns,
+            height / state.rows);
+    }
+
+    canvas._analysisFitDraw = draw;
+
+    // 父容器宽度变化时重新适配；只关心宽度，避免高度变化触发自身循环。
+    if (!canvas._analysisFitObserver &&
+        typeof window.ResizeObserver === "function") {
+        let lastWidth = -1;
+
+        const observer = new window.ResizeObserver(function () {
+            const parent = canvas.parentElement;
+            const width = parent ? parent.clientWidth : 0;
+
+            if (width !== lastWidth) {
+                lastWidth = width;
+
+                if (typeof canvas._analysisFitDraw === "function") {
+                    canvas._analysisFitDraw();
+                }
+            }
+        });
+
+        canvas._analysisFitObserver = observer;
+
+        if (canvas.parentElement) {
+            observer.observe(canvas.parentElement);
+        }
+    }
+
+    draw();
+};
+
+/* 组件卸载时断开观察器，避免页面跳转后留下引用。 */
+window.shapeGrid.disposeAnalysisFit = function (canvas) {
+    if (!canvas) {
+        return;
+    }
+
+    if (canvas._analysisFitObserver) {
+        canvas._analysisFitObserver.disconnect();
+        canvas._analysisFitObserver = null;
+    }
+
+    canvas._analysisFitDraw = null;
+};
+
+/*
  * 分析导出图里的制作路径节点图。
  *
- * 坐标来自 C# 的自动布局，节点尺寸与页面一致：
+ * 坐标来自 C# 的分层布局，节点尺寸与页面一致：
  * 宽 = 象限数 × 30 + 16，高 = 50 + 层数 × 30。
  * 预览固定 30px 单元格、1:1 绘制；图有多宽就画多宽，不缩放、不分片。
+ * 废料节点淡显、虚线边框，指向废料的箭头为灰色虚线。
  */
 function drawAnalysisPathGraph(ctx, graph, left, top) {
     const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
@@ -2632,40 +2755,41 @@ function drawAnalysisPathGraph(ctx, graph, left, top) {
         };
     }
 
-    function edgeAnchor(node, other) {
+    /*
+     * 分层图锚点：跨层走「上排底边中点 → 下排顶边中点」，
+     * 同层（交换 → 废料）走相对的侧边中点。
+     */
+    function edgeAnchors(node, other) {
         const a = rectOf(node);
         const b = rectOf(other);
 
-        const cx = a.x + a.width / 2;
-        const cy = a.y + a.height / 2;
-        const ox = b.x + b.width / 2;
-        const oy = b.y + b.height / 2;
-
-        let dx = ox - cx;
-        let dy = oy - cy;
-        const length = Math.sqrt(dx * dx + dy * dy);
-
-        if (length < 1) {
-            return { x: cx, y: cy };
+        if (b.y >= a.y + a.height - 0.5) {
+            return {
+                start: { x: a.x + a.width / 2, y: a.y + a.height },
+                end: { x: b.x + b.width / 2, y: b.y }
+            };
         }
 
-        dx /= length;
-        dy /= length;
+        if (a.y >= b.y + b.height - 0.5) {
+            return {
+                start: { x: a.x + a.width / 2, y: a.y },
+                end: { x: b.x + b.width / 2, y: b.y + b.height }
+            };
+        }
 
-        const scaleX = Math.abs(dx) < 1e-6
-            ? Number.MAX_VALUE
-            : (a.width / 2) / Math.abs(dx);
+        const rightward = b.x >= a.x;
+        const aY = a.y + a.height / 2;
+        const bY = b.y + b.height / 2;
 
-        const scaleY = Math.abs(dy) < 1e-6
-            ? Number.MAX_VALUE
-            : (a.height / 2) / Math.abs(dy);
-
-        const scale = Math.min(scaleX, scaleY);
-
-        return {
-            x: cx + dx * scale,
-            y: cy + dy * scale
-        };
+        return rightward
+            ? {
+                start: { x: a.x + a.width, y: aY },
+                end: { x: b.x, y: bY }
+            }
+            : {
+                start: { x: a.x, y: aY },
+                end: { x: b.x + b.width, y: bY }
+            };
     }
 
     const TITLE_FONT = '600 11px "Microsoft YaHei", "Noto Sans SC", sans-serif';
@@ -2676,18 +2800,33 @@ function drawAnalysisPathGraph(ctx, graph, left, top) {
         const node = nodes[i];
         const r = rectOf(node);
 
-        ctx.fillStyle = node.isResult ? "#FAF8FF" : "#FFFFFF";
-        ctx.strokeStyle = node.isResult ? "#512BD4" : "#D0D0D0";
+        if (node.isWaste) {
+            ctx.fillStyle = "#FBFBFC";
+            ctx.strokeStyle = "#C4C4CC";
+        }
+        else {
+            ctx.fillStyle = node.isResult ? "#FAF8FF" : "#FFFFFF";
+            ctx.strokeStyle = node.isResult ? "#512BD4" : "#D0D0D0";
+        }
+
         ctx.lineWidth = node.isResult ? 2 : 1.2;
+
+        ctx.save();
+
+        if (node.isWaste) {
+            ctx.setLineDash([5, 4]);
+        }
 
         ctx.beginPath();
         ctx.roundRect(r.x, r.y, r.width, r.height, 12);
         ctx.fill();
         ctx.stroke();
 
+        ctx.restore();
+
         // 标题最多两行，与页面卡片一致
         ctx.font = TITLE_FONT;
-        ctx.fillStyle = "#4A3F72";
+        ctx.fillStyle = node.isWaste ? "#9A9AA5" : "#4A3F72";
         ctx.textAlign = "left";
         ctx.textBaseline = "top";
 
@@ -2708,8 +2847,13 @@ function drawAnalysisPathGraph(ctx, graph, left, top) {
             ctx.fillText(text, r.x + 7, r.y + 7 + line * 13);
         }
 
-        // 预览：与页面相同的 30px 单元格，不做缩放
+        // 预览：与页面相同的 30px 单元格，不做缩放；废料降低对比度
         if (node.state) {
+            if (node.isWaste) {
+                ctx.save();
+                ctx.globalAlpha = 0.55;
+            }
+
             window.shapeGrid.drawAnalysisShape(
                 ctx,
                 node.state,
@@ -2717,6 +2861,10 @@ function drawAnalysisPathGraph(ctx, graph, left, top) {
                 r.y + 37,
                 30,
                 30);
+
+            if (node.isWaste) {
+                ctx.restore();
+            }
         }
         else if (node.isPending) {
             ctx.font = NODE_FONT;
@@ -2731,9 +2879,6 @@ function drawAnalysisPathGraph(ctx, graph, left, top) {
     }
 
     // 箭头：从节点边缘出发，指向下一个节点边缘
-    ctx.strokeStyle = "#512BD4";
-    ctx.lineWidth = 2;
-
     for (let i = 0; i < edges.length; i++) {
         const edge = edges[i];
         const from = byId[edge.fromId];
@@ -2743,8 +2888,9 @@ function drawAnalysisPathGraph(ctx, graph, left, top) {
             continue;
         }
 
-        const a1 = edgeAnchor(from, to);
-        const a2 = edgeAnchor(to, from);
+        const anchors = edgeAnchors(from, to);
+        const a1 = anchors.start;
+        const a2 = anchors.end;
 
         let vx = a2.x - a1.x;
         let vy = a2.y - a1.y;
@@ -2755,6 +2901,20 @@ function drawAnalysisPathGraph(ctx, graph, left, top) {
 
         const tipX = a2.x + vx * 1;
         const tipY = a2.y + vy * 1;
+
+        ctx.save();
+
+        if (edge.isWaste) {
+            ctx.strokeStyle = "#9A9AA5";
+            ctx.fillStyle = "#9A9AA5";
+            ctx.setLineDash([5, 4]);
+        }
+        else {
+            ctx.strokeStyle = "#512BD4";
+            ctx.fillStyle = "#512BD4";
+        }
+
+        ctx.lineWidth = 2;
 
         ctx.beginPath();
         ctx.moveTo(a1.x - vx * 1, a1.y - vy * 1);
@@ -2771,8 +2931,9 @@ function drawAnalysisPathGraph(ctx, graph, left, top) {
         ctx.lineTo(bx - vy * half, by + vx * half);
         ctx.lineTo(bx + vy * half, by - vx * half);
         ctx.closePath();
-        ctx.fillStyle = "#512BD4";
         ctx.fill();
+
+        ctx.restore();
     }
 }
 
@@ -3051,8 +3212,12 @@ window.shapeGridMeasureNodes = function () {
 /*
  * 连线几何全部在浏览器里算：以节点真实矩形为唯一数据源，
  * 避免 C# 计算与渲染结果不一致导致的箭头偏移。
+ *
+ * layered = true 时用于分析页的分层制作路径图：
+ * 跨层箭头走「上排底边中点 → 下排顶边中点」，同层箭头走相对侧边中点；
+ * 其余页面（工作区）仍使用中心连心线与矩形边界的交点。
  */
-window.shapeGridLayoutEdges = function () {
+window.shapeGridLayoutEdges = function (layered) {
     const canvas = document.querySelector(".graph-canvas");
     if (!canvas) { return; }
 
@@ -3092,14 +3257,54 @@ window.shapeGridLayoutEdges = function () {
         return { x: cx + dx * scale, y: cy + dy * scale };
     }
 
+    function layeredAnchors(from, to) {
+        if (to.top >= from.top + from.height - 0.5) {
+            return {
+                start: { x: from.left + from.width / 2, y: from.top + from.height },
+                end: { x: to.left + to.width / 2, y: to.top }
+            };
+        }
+
+        if (from.top >= to.top + to.height - 0.5) {
+            return {
+                start: { x: from.left + from.width / 2, y: from.top },
+                end: { x: to.left + to.width / 2, y: to.top + to.height }
+            };
+        }
+
+        const rightward = to.left >= from.left;
+        const fromY = from.top + from.height / 2;
+        const toY = to.top + to.height / 2;
+
+        return rightward
+            ? {
+                start: { x: from.left + from.width, y: fromY },
+                end: { x: to.left, y: toY }
+            }
+            : {
+                start: { x: from.left, y: fromY },
+                end: { x: to.left + to.width, y: toY }
+            };
+    }
+
     canvas.querySelectorAll("path[data-edge-from]").forEach(function (path) {
         const from = nodes[path.getAttribute("data-edge-from")];
         const to = nodes[path.getAttribute("data-edge-to")];
 
         if (!from || !to) { return; }
 
-        const a1 = anchor(from, to);
-        const a2 = anchor(to, from);
+        let a1;
+        let a2;
+
+        if (layered) {
+            const anchors = layeredAnchors(from, to);
+            a1 = anchors.start;
+            a2 = anchors.end;
+        }
+        else {
+            a1 = anchor(from, to);
+            a2 = anchor(to, from);
+        }
 
         let vx = a2.x - a1.x;
         let vy = a2.y - a1.y;

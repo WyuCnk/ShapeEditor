@@ -62,12 +62,8 @@
 
                 @if (_document is not null)
                 {
-                    <div class="ws-preview-scroll fixed"
-                         style="height:@(_document.LayerCount * 30 + 4)px;width:@(_document.PartCount * 30)px;margin:0 auto">
-                        <div class="ws-preview-inner"
-                             style="height:@(_document.LayerCount * 30 + 4)px">
-                            <ShapePreview Document="_document" CssClass="graph-preview" />
-                        </div>
+                    <div class="analysis-preview-box">
+                        <AnalysisShapePreview Document="_document" />
                     </div>
                 }
 
@@ -218,30 +214,32 @@
 
                         @if (_half is not null && _half.Directions.Count > 0)
                         {
-                            @foreach (var group in _half.Directions.GroupBy(direction => direction.Axis))
-                            {
-                                <div class="axis-group">
-                                    <div class="axis-title">轴 @(group.Key + 1)</div>
+                            <div class="half-axis-scroll">
+                                @foreach (var group in _half.Directions.GroupBy(direction => direction.Axis))
+                                {
+                                    <div class="half-axis-column">
+                                        <div class="axis-title">轴 @(group.Key + 1)</div>
 
-                                    <table class="angle-table">
-                                        <thead>
-                                            <tr>
-                                                <th>交换方向</th>
-                                                <th>合法</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            @foreach (var direction in group)
-                                            {
-                                                <tr class="@(direction.IsLegal ? "ok" : "bad")">
-                                                    <td>@direction.Display</td>
-                                                    <td>@(direction.IsLegal ? "是" : "否")</td>
+                                        <table class="angle-table half-axis-table">
+                                            <thead>
+                                                <tr>
+                                                    <th>交换方向</th>
+                                                    <th>合法</th>
                                                 </tr>
-                                            }
-                                        </tbody>
-                                    </table>
-                                </div>
-                            }
+                                            </thead>
+                                            <tbody>
+                                                @foreach (var direction in group)
+                                                {
+                                                    <tr class="@(direction.IsLegal ? "ok" : "bad")">
+                                                        <td>@direction.Display</td>
+                                                        <td>@(direction.IsLegal ? "是" : "否")</td>
+                                                    </tr>
+                                                }
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                }
+                            </div>
                         }
                     }
                 </div>
@@ -282,22 +280,20 @@
                                             @foreach (ProductionPathGraphEdge edge in _pathGraph.Edges)
                                             {
                                                 <path d="@edge.Path"
+                                                      class="path-edge@(edge.IsWaste ? " waste" : "")"
                                                       data-edge-from="@edge.FromId"
-                                                      data-edge-to="@edge.ToId"
-                                                      fill="none"
-                                                      stroke="#512bd4"
-                                                      stroke-width="2" />
+                                                      data-edge-to="@edge.ToId" />
 
                                                 <polygon points="@edge.Arrow"
+                                                         class="path-arrow@(edge.IsWaste ? " waste" : "")"
                                                          data-edge-from="@edge.FromId"
-                                                         data-edge-to="@edge.ToId"
-                                                         fill="#512bd4" />
+                                                         data-edge-to="@edge.ToId" />
                                             }
                                         </svg>
 
                                         @foreach (ProductionPathGraphNode node in _pathGraph.Nodes)
                                         {
-                                            <div class="graph-node path-node @(node.IsResult ? "result" : "") @(node.IsPending ? "pending" : "")"
+                                            <div class="graph-node path-node @(node.IsResult ? "result" : "") @(node.IsWaste ? "waste" : "") @(node.IsPending ? "pending" : "")"
                                                  data-node-id="@node.Id"
                                                  style="left:@Px(node.X)px;top:@Px(node.Y)px;width:@Px(node.Width)px;height:@Px(node.Height)px">
 
@@ -321,8 +317,9 @@
                                 </div>
 
                                 <p class="analysis-note">
-                                    节点按制作顺序从上到下排列，单元格保持 30px 原始尺寸；
-                                    图形较宽时可横向滚动查看。
+                                    节点按 5 层从上到下排列，同层节点从左到右紧排，层间固定留 80px 画箭头；
+                                    预览保持 30px 单元格原始尺寸，图形较宽或较高时容器可横纵滚动。
+                                    废料节点淡显、虚线边框，指向废料的箭头为灰色虚线。
                                 </p>
                             }
                         }
@@ -396,7 +393,7 @@
 
         _pathGraph = _path?.Path is null
             ? null
-            : ProductionPathGraph.Create(_path.Path.Steps);
+            : ProductionPathGraph.Create(_path.Path);
     }
 
     /// <summary>
@@ -405,7 +402,7 @@
     private double PathGraphViewportHeight =>
         _pathGraph is null
             ? 240
-            : Math.Min(480, Math.Max(220, Math.Ceiling(_pathGraph.Height)));
+            : Math.Min(560, Math.Max(220, Math.Ceiling(_pathGraph.Height)));
 
     /// <summary>把坐标格式化成不带千分位分隔符的像素值。</summary>
     private static string Px(double value) =>
@@ -420,8 +417,9 @@
 
         try
         {
-            // 复用工作区的连线几何：按节点真实矩形贴边计算箭头。
-            await JS.InvokeVoidAsync("shapeGridLayoutEdges");
+            // 复用工作区的连线绘制，但按分层图规则取锚点：
+            // 跨层用上排底边中点 → 下排顶边中点。
+            await JS.InvokeVoidAsync("shapeGridLayoutEdges", true);
         }
         catch
         {
@@ -597,6 +595,7 @@
                     ? null
                     : ShapeCanvasState.Create(node.Shape),
                 IsResult = node.IsResult,
+                IsWaste = node.IsWaste,
                 IsPending = node.IsPending
             });
         }
@@ -606,7 +605,8 @@
             graph.Edges.Add(new AnalysisExportGraphEdge
             {
                 FromId = edge.FromId,
-                ToId = edge.ToId
+                ToId = edge.ToId,
+                IsWaste = edge.IsWaste
             });
         }
 

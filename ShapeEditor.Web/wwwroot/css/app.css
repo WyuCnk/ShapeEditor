@@ -2025,7 +2025,29 @@ button {
     font-size: 12px;
     color: #4527a0;
     word-break: break-all;
+    overflow-wrap: anywhere;
+    max-width: 100%;
     margin-bottom: 10px;
+}
+
+/*
+ * 左侧竖式图：按 30px 单元格为 1:1 基准，只等比缩小，
+ * 适配左侧栏宽度且不超过 320px 高；小图形保持原始尺寸。
+ */
+.analysis-preview-box {
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    width: 100%;
+    max-height: 320px;
+    margin: 0 auto;
+    overflow: hidden;
+}
+
+.analysis-fit-canvas {
+    display: block;
+    max-width: 100%;
+    max-height: 320px;
 }
 
 .analysis-meta {
@@ -2228,6 +2250,39 @@ button {
         flex-wrap: wrap;
     }
 }
+/* 半边稳定性：按轴分列横向并排，轴多时容器横向滚动，纵向随页面 */
+.half-axis-scroll {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    overflow-x: auto;
+    overflow-y: visible;
+    padding: 2px 2px 8px;
+}
+
+.half-axis-column {
+    flex: 0 0 auto;
+    min-width: 150px;
+}
+
+.half-axis-table {
+    min-width: 150px;
+}
+
+.half-axis-table th:last-child,
+.half-axis-table td:last-child {
+    width: 52px;
+    white-space: nowrap;
+}
+
+.half-axis-table tr.ok td {
+    color: #2e9e5b;
+}
+
+.half-axis-table tr.bad td {
+    color: #d64545;
+}
+
 .axis-group {
     margin-bottom: 12px;
 }
@@ -2270,6 +2325,41 @@ button {
     border: 1px solid #e6e2f2;
     border-radius: 12px;
     background: #fbfaff;
+}
+
+/* 节点图箭头：主路径紫色实线，指向废料的箭头灰色虚线 */
+.path-edge {
+    fill: none;
+    stroke: #512bd4;
+    stroke-width: 2;
+}
+
+.path-edge.waste {
+    stroke: #9a9aa5;
+    stroke-dasharray: 5 4;
+}
+
+.path-arrow {
+    fill: #512bd4;
+}
+
+.path-arrow.waste {
+    fill: #9a9aa5;
+}
+
+.path-node.waste {
+    border-style: dashed;
+    border-color: #c4c4cc;
+    background: #fbfbfc;
+}
+
+.path-node.waste .path-node-head {
+    color: #9a9aa5;
+}
+
+/* 废料预览降低对比度 */
+.path-node.waste .path-node-body {
+    opacity: 0.55;
 }
 
 .path-graph-canvas {
