@@ -528,6 +528,18 @@ public static class RenderRunner
 
             bool pathReady = productionPath is not null;
 
+            bool pathSummaryReady =
+                !string.IsNullOrWhiteSpace(viewModel.PathSummary);
+
+            string initialPathSummary = viewModel.PathSummary;
+
+            int initialPathStepCount = viewModel.PathSteps.Count;
+
+            // 可制作时步骤数必须与路径结果一致；不可制作时不应残留步骤。
+            bool pathStepsReady =
+                productionPath?.Path is null ||
+                viewModel.PathSteps.Count == productionPath.Path.Steps.Count;
+
             viewModel.IsFloorMode = true;
 
             bool modeSwitched =
@@ -535,13 +547,44 @@ public static class RenderRunner
                 !viewModel.IsCycleMode &&
                 !string.IsNullOrWhiteSpace(viewModel.StabilityText);
 
+            // 另建一个仅地面模式的实例，确认切换规则后制作路径确实按新规则重算。
+            var floorViewModel = new AnalysisViewModel(
+                code,
+                document.LayerCount,
+                document.PartCount,
+                Core.Models.ShortCodeFormat.Full,
+                Core.Physics.CollapseMode.FloorOnly);
+
+            bool pathFollowsMode =
+                viewModel.PathSummary == floorViewModel.PathSummary &&
+                viewModel.PathSteps.Count == floorViewModel.PathSteps.Count;
+
+            /*
+             * 2 象限没有合法的交换方向：
+             * 制作路径板块应当整块隐藏，也不能退化成「不可制作」文本。
+             */
+            var noPathViewModel = new AnalysisViewModel(
+                "Cu",
+                1,
+                2,
+                Core.Models.ShortCodeFormat.Full,
+                Core.Physics.CollapseMode.IncludeCycles);
+
+            bool pathGateHidden =
+                noPathViewModel.HasDocument &&
+                !noPathViewModel.HasProductionPath &&
+                string.IsNullOrWhiteSpace(noPathViewModel.PathSummary) &&
+                noPathViewModel.PathSteps.Count == 0;
+
             lines.Add($"解析与预览：{(loaded ? "成功" : "失败")}");
             lines.Add($"图形性质：{viewModel.PropertyNames.Count} 项，{(properties ? "成功" : "失败")}");
             lines.Add($"稳定性：{viewModel.StabilityText}");
             lines.Add($"半边稳定性：{viewModel.HalfSummary}");
             lines.Add($"交换方向表格：{viewModel.ExchangeDirections.Count} 行，{(halfDirections ? "成功" : "失败")}");
-            lines.Add($"制作路径：{(productionPath is null ? "无" : productionPath.IsProducible ? "可制作" : "不可制作：" + productionPath.Error)}");
+            lines.Add($"制作路径：{initialPathSummary}（{initialPathStepCount} 步）");
             lines.Add($"切换仅地面：{(modeSwitched ? "成功" : "失败")}");
+            lines.Add($"切换后制作路径重算：{(pathFollowsMode ? "成功" : "失败")}");
+            lines.Add($"无合法交换方向时隐藏制作路径：{(pathGateHidden ? "成功" : "失败")}");
 
             ok = loaded &&
                  properties &&
@@ -549,7 +592,11 @@ public static class RenderRunner
                  half &&
                  halfDirections &&
                  pathReady &&
-                 modeSwitched;
+                 pathSummaryReady &&
+                 pathStepsReady &&
+                 modeSwitched &&
+                 pathFollowsMode &&
+                 pathGateHidden;
         }
         catch (Exception exception)
         {
@@ -689,6 +736,9 @@ public static class RenderRunner
 
             var viewModel = new WorkspaceViewModel(store);
 
+            // 没有任何节点/素材时，「加到编辑区」应保持禁用
+            bool disabledWithoutSelection = !viewModel.HasSelection;
+
             WorkspaceNode source = store.CreateNodeAtPoint(
                 80,
                 60);
@@ -709,6 +759,33 @@ public static class RenderRunner
             {
                 throw new InvalidOperationException("源节点没有出现在视图集合中。");
             }
+
+            // 「加到编辑区」：应取选中节点的图形、保留原始尺寸，成功后由主窗口切页
+            AnalysisTarget? editorTarget = null;
+
+            viewModel.AddToEditorHandler = target =>
+            {
+                editorTarget = target;
+
+                return true;
+            };
+
+            viewModel.AddToEditorCommand.Execute(null);
+
+            bool addToEditorOk =
+                viewModel.HasSelection &&
+                editorTarget is not null &&
+                editorTarget.Layers == 4 &&
+                editorTarget.Parts == 4 &&
+                !string.IsNullOrWhiteSpace(editorTarget.Code);
+
+            lines.Add(
+                $"加到编辑区：{(addToEditorOk ? "成功" : "失败")}" +
+                (editorTarget is null
+                    ? ""
+                    : $"（{editorTarget.Layers} 层 × {editorTarget.Parts} 象限）"));
+
+            lines.Add($"未选中时禁用：{(disabledWithoutSelection ? "成功" : "失败")}");
 
             viewModel.CollapseCommand.Execute(sourceView);
 
@@ -799,7 +876,9 @@ public static class RenderRunner
                 Math.Abs((east.Y ?? -1) - 290) < 0.1 &&
                 pasted is not null &&
                 stacked is not null &&
-                deleted;
+                deleted &&
+                addToEditorOk &&
+                disabledWithoutSelection;
         }
         catch (Exception exception)
         {

@@ -83,6 +83,7 @@ public sealed class WorkspaceViewModel : ObservableObject
         AutoLayoutCommand = new RelayCommand(_ => AutoLayout());
         SelectNodeCommand = new RelayCommand(p => SelectNode(p));
         RemoveMaterialCommand = new RelayCommand(p => RemoveMaterial(p));
+        AddToEditorCommand = new RelayCommand(AddSelectedToEditor);
 
         NewNodeCommand = new RelayCommand(() => _store.CreateNode());
         NewProjectCommand = new RelayCommand(NewProject);
@@ -101,6 +102,12 @@ public sealed class WorkspaceViewModel : ObservableObject
     public ObservableCollection<WorkspaceNodeViewModel> Nodes { get; } = new();
 
     public ObservableCollection<WorkspaceEdgeViewModel> Edges { get; } = new();
+
+    /// <summary>
+    /// 由主窗口注入：载入编辑器并切页。返回 false 表示载入失败，
+    /// 具体错误由编辑器自己的错误提示显示。
+    /// </summary>
+    public Func<AnalysisTarget, bool>? AddToEditorHandler { get; set; }
 
     public System.Windows.Input.ICommand CollapseCommand { get; }
 
@@ -125,6 +132,11 @@ public sealed class WorkspaceViewModel : ObservableObject
 
     /// <summary>删除素材库中的一条素材，执行前会二次确认。</summary>
     public System.Windows.Input.ICommand RemoveMaterialCommand { get; }
+
+    /// <summary>
+    /// 把选中节点或选中素材的图形载入编辑器，成功后由主窗口切到编辑器页。
+    /// </summary>
+    public System.Windows.Input.ICommand AddToEditorCommand { get; }
 
     public System.Windows.Input.ICommand NewNodeCommand { get; }
 
@@ -167,11 +179,19 @@ public sealed class WorkspaceViewModel : ObservableObject
             if (SetProperty(ref _selectedMaterial, value))
             {
                 OnPropertyChanged(nameof(HasSelectedMaterial));
+                OnPropertyChanged(nameof(HasSelection));
             }
         }
     }
 
     public bool HasSelectedMaterial => _selectedMaterial is not null;
+
+    /// <summary>
+    /// 选中节点或素材时，「加到编辑区」等工具条按钮才可用。
+    /// </summary>
+    public bool HasSelection =>
+        _selectedNode is not null ||
+        _selectedMaterial is not null;
 
     public WorkspaceNodeViewModel? SelectedNode
     {
@@ -181,6 +201,7 @@ public sealed class WorkspaceViewModel : ObservableObject
             if (SetProperty(ref _selectedNode, value))
             {
                 OnPropertyChanged(nameof(HasSelectedNode));
+                OnPropertyChanged(nameof(HasSelection));
             }
         }
     }
@@ -450,6 +471,7 @@ public sealed class WorkspaceViewModel : ObservableObject
 
         OnPropertyChanged(nameof(SelectedNode));
         OnPropertyChanged(nameof(HasSelectedNode));
+        OnPropertyChanged(nameof(HasSelection));
     }
 
     private static ImageSource? RenderThumbnail(
@@ -1042,6 +1064,35 @@ public sealed class WorkspaceViewModel : ObservableObject
     #endregion
 
     #region 工具条操作
+
+    /// <summary>
+    /// 工具条「加到编辑区」：复用分析入口的取图逻辑，
+    /// 取选中节点（优先）或选中素材的短代码与原始尺寸，交给主窗口载入编辑器。
+    /// 载入成功后的切页由主窗口负责，这里不直接操作界面。
+    /// </summary>
+    private void AddSelectedToEditor()
+    {
+        if (!TryGetAnalysisTarget(out AnalysisTarget target))
+        {
+            MessageBox.Show(
+                "请先选中一个有图形的节点，或选中一条素材。",
+                "加到编辑区",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+
+            return;
+        }
+
+        if (AddToEditorHandler is null ||
+            !AddToEditorHandler(target))
+        {
+            MessageBox.Show(
+                "载入编辑器失败，请检查该图形的短代码。",
+                "加到编辑区",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+    }
 
     private void BeginStackFromToolbar()
     {

@@ -255,7 +255,7 @@
                                     <TextBlock Text="{Binding PropertyEmptyText}"
                                                Style="{StaticResource Text.Hint}" />
 
-                                    <TextBlock Text="可制作性依赖制作路径算法，暂未接入。"
+                                    <TextBlock Text="可制作性暂等同角合法性，等角制作算法接入后细化。"
                                                Style="{StaticResource Text.Hint}"
                                                Margin="0,4,0,0" />
                                 </StackPanel>
@@ -414,11 +414,12 @@
                                 </StackPanel>
                             </Border>
 
-                            <!-- 制作路径：Core 算法尚未接入，先占位 -->
+                            <!-- 制作路径：只有存在合法交换方向时显示，整块隐藏时不留空行 -->
                             <Border Style="{StaticResource SectionPanel}"
                                     BorderThickness="0"
                                     Padding="0"
-                                    Margin="0">
+                                    Margin="0"
+                                    Visibility="{Binding HasProductionPath, Converter={StaticResource BoolToVis}}">
                                 <StackPanel>
                                     <TextBlock Text="制作路径"
                                                Style="{StaticResource Text.SectionTitle}"
@@ -429,8 +430,35 @@
                                             BorderThickness="1"
                                             CornerRadius="8"
                                             Padding="12">
-                                        <TextBlock Text="制作路径（待接入）"
-                                                   Style="{StaticResource Text.Hint}" />
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding PathSummary}"
+                                                       FontSize="12"
+                                                       Foreground="{StaticResource Brush.Text}"
+                                                       TextWrapping="Wrap" />
+
+                                            <ItemsControl ItemsSource="{Binding PathSteps}"
+                                                          Margin="0,8,0,0">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <StackPanel Margin="0,0,0,8">
+                                                            <TextBlock Text="{Binding Title}"
+                                                                       FontSize="12"
+                                                                       FontWeight="SemiBold"
+                                                                       Foreground="{StaticResource Brush.Text}"
+                                                                       TextWrapping="Wrap" />
+
+                                                            <TextBlock Text="{Binding Code}"
+                                                                       FontFamily="Consolas, Microsoft YaHei UI"
+                                                                       FontSize="11"
+                                                                       Foreground="{StaticResource Brush.PrimaryDark}"
+                                                                       TextWrapping="Wrap"
+                                                                       Margin="14,2,0,0"
+                                                                       Visibility="{Binding HasCode, Converter={StaticResource BoolToVis}}" />
+                                                        </StackPanel>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
                                     </Border>
                                 </StackPanel>
                             </Border>

@@ -45,6 +45,8 @@ public sealed class AnalysisViewModel : ObservableObject
 
     private readonly ShortCodeParser _parser = new();
 
+    private readonly ShortCodeExporter _exporter = new();
+
     private readonly string _code;
 
     private readonly ShortCodeFormat _format;
@@ -59,7 +61,7 @@ public sealed class AnalysisViewModel : ObservableObject
 
     private ProductionPathResult? _pathResult;
 
-    private bool _pathComputed;
+    private string _pathSummary = "";
 
     private ShapeProperty _properties;
 
@@ -152,6 +154,25 @@ public sealed class AnalysisViewModel : ObservableObject
     public string HalfNote => _halfNote;
 
     /// <summary>
+    /// 只有存在合法交换方向时才展示制作路径板块；
+    /// 没有合法方向时整块不显示，与 Web 分析页的门控保持一致。
+    /// </summary>
+    public bool HasProductionPath =>
+        _half is not null &&
+        _half.IsExchangeable;
+
+    /// <summary>
+    /// 制作路径的结论文本：可制作时给出方向及方向合法性。
+    /// 门控之外的情况不显示结论，也不显示「不可制作」。
+    /// </summary>
+    public string PathSummary => _pathSummary;
+
+    /// <summary>制作路径的每个步骤与对应的短代码。</summary>
+    public ObservableCollection<ProductionStepViewModel> PathSteps { get; } = new();
+
+    public bool HasPathSteps => PathSteps.Count > 0;
+
+    /// <summary>
     /// 全部交换方向（不截断），导出分析图时按轴分组使用。
     /// 奇数象限时为空。
     /// </summary>
@@ -163,25 +184,13 @@ public sealed class AnalysisViewModel : ObservableObject
         _half.Directions.Count > 0;
 
     /// <summary>
-    /// 懒计算制作路径：只在导出分析图时调用，
-    /// 避免打开分析窗口就对复杂图形做一次完整搜索。
+    /// 当前下落规则下的制作路径结果。
+    ///
+    /// 与页面展示、导出分析图共用同一份结果：在 <see cref="Analyze"/>
+    /// 里随稳定性、半边一起重算，切换下落规则后不会残留旧路径。
     /// </summary>
     public ProductionPathResult? GetProductionPath()
     {
-        if (_document is null)
-        {
-            return null;
-        }
-
-        if (!_pathComputed)
-        {
-            _pathResult = ProductionPathParser.Parse(
-                _document,
-                _mode);
-
-            _pathComputed = true;
-        }
-
         return _pathResult;
     }
 
@@ -296,12 +305,10 @@ public sealed class AnalysisViewModel : ObservableObject
         _half = HalfStabilityAnalyzer.Analyze(_document, _mode);
 
         /*
-         * 下落规则变了，制作路径需要重新搜索；
-         * 这里只清掉缓存，真正用到时再算。
+         * 下落规则变了，制作路径必须跟稳定性、半边一起重算；
+         * 这里立即搜索一次，窗口展示与导出分析图使用同一份结果。
          */
-        _pathResult = null;
-
-        _pathComputed = false;
+        UpdateProductionPath();
 
         _properties = ShapePropertyAnalyzer.Analyze(
             _document,
@@ -363,9 +370,62 @@ public sealed class AnalysisViewModel : ObservableObject
         OnPropertyChanged(nameof(StabilityText));
         OnPropertyChanged(nameof(HalfSummary));
         OnPropertyChanged(nameof(HalfNote));
+        OnPropertyChanged(nameof(PathSummary));
+        OnPropertyChanged(nameof(HasPathSteps));
+        OnPropertyChanged(nameof(HasProductionPath));
         OnPropertyChanged(nameof(HasLegalDirections));
         OnPropertyChanged(nameof(HasProperties));
         OnPropertyChanged(nameof(PropertyEmptyText));
+    }
+
+    /// <summary>
+    /// 按当前下落规则搜索制作路径，并生成界面展示用的结论与步骤。
+    /// </summary>
+    private void UpdateProductionPath()
+    {
+        PathSteps.Clear();
+
+        _pathResult = _document is null
+            ? null
+            : ProductionPathParser.Parse(
+                _document,
+                _mode);
+
+        if (_pathResult is null ||
+            !_pathResult.IsProducible ||
+            _pathResult.Path is null)
+        {
+            /*
+             * 门控已保证只有存在合法交换方向时才显示制作路径；
+             * 这里不再输出「不可制作」文本。
+             */
+            _pathSummary = "";
+
+            return;
+        }
+
+        ProductionPath path = _pathResult.Path;
+
+        _pathSummary =
+            $"可制作：方向 {path.Direction}（{(path.DirectionLegal ? "合法方向" : "不合法方向")}）。";
+
+        int index = 1;
+
+        foreach (ProductionStep step in path.Steps)
+        {
+            string code = step.Shape is null
+                ? ""
+                : _exporter.Export(
+                    step.Shape,
+                    omitTopEmptyLayers: true);
+
+            PathSteps.Add(new ProductionStepViewModel(
+                index,
+                step.Title,
+                code));
+
+            index++;
+        }
     }
 
     /// <summary>
@@ -382,7 +442,9 @@ public sealed class AnalysisViewModel : ObservableObject
 
         _pathResult = null;
 
-        _pathComputed = false;
+        _pathSummary = "";
+
+        PathSteps.Clear();
 
         _properties = ShapeProperty.None;
 
@@ -412,10 +474,36 @@ public sealed class AnalysisViewModel : ObservableObject
         OnPropertyChanged(nameof(StabilityText));
         OnPropertyChanged(nameof(HalfSummary));
         OnPropertyChanged(nameof(HalfNote));
+        OnPropertyChanged(nameof(PathSummary));
+        OnPropertyChanged(nameof(HasPathSteps));
+        OnPropertyChanged(nameof(HasProductionPath));
         OnPropertyChanged(nameof(HasLegalDirections));
         OnPropertyChanged(nameof(HasProperties));
         OnPropertyChanged(nameof(PropertyEmptyText));
     }
+}
+
+/// <summary>
+/// 制作路径的一步：序号、标题与导出后的短代码。
+/// 最后一步「顶针与堆叠」没有图形，只显示标题。
+/// </summary>
+public sealed class ProductionStepViewModel
+{
+    public ProductionStepViewModel(
+        int number,
+        string title,
+        string code)
+    {
+        Title = $"{number}. {title}";
+
+        Code = code;
+    }
+
+    public string Title { get; }
+
+    public string Code { get; }
+
+    public bool HasCode => !string.IsNullOrWhiteSpace(Code);
 }
 
 /// <summary>

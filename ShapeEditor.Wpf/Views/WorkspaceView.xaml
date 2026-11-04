@@ -195,6 +195,12 @@
                     Content="分析"
                     ToolTip="对选中节点或选中素材打开分析窗口"
                     Click="OnAnalyzeClick" />
+
+            <Button Style="{StaticResource MiniButton}"
+                    Content="加到编辑区"
+                    ToolTip="把选中节点或选中素材的图形载入编辑器"
+                    Command="{Binding AddToEditorCommand}"
+                    IsEnabled="{Binding HasSelection}" />
         </WrapPanel>
 
         <!-- 工具行 -->

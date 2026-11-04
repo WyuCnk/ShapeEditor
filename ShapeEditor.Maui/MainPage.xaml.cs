@@ -365,6 +365,8 @@ public partial class MainPage : ContentPage
     {
         _shapeDrawable.SetDocument(_document);
         ShapeGraphicsView.Invalidate();
+
+        RefreshAnalyzeButtonState();
     }
 
     private void ResetViewButton_Clicked(
@@ -1067,6 +1069,9 @@ public partial class MainPage : ContentPage
         }
 
         StopPainting();
+
+        // 绘制结束后图形可能从空变成非空，同步「分析」按钮状态
+        RefreshAnalyzeButtonState();
     }
 
     private void StopPainting()
@@ -1409,6 +1414,88 @@ public partial class MainPage : ContentPage
         EventArgs e)
     {
         Redo();
+    }
+
+    #endregion
+
+    #region 分析入口
+
+    /// <summary>
+    /// 编辑器顶部「分析」：把当前编辑中的图形交给分析页。
+    ///
+    /// 与工作区入口一致，只把短代码与原始尺寸写入 <see cref="AppPending"/>，
+    /// 由分析页在 OnAppearing 里取用。短代码按当前选择的格式导出，
+    /// 保证格式与代码内容一致；层数、象限数取当前文档的真实尺寸。
+    /// </summary>
+    private async void AnalyzeButton_Clicked(
+        object? sender,
+        EventArgs e)
+    {
+        if (!HasDocumentContent())
+        {
+            RefreshAnalyzeButtonState();
+
+            return;
+        }
+
+        // 先结束未落盘的绘制，保证分析的是当前画面
+        FinishPainting();
+        StopTransform();
+        ResetTouchState();
+
+        string code =
+            _exporter.Export(
+                _document,
+                _codeFormat,
+                omitTopEmptyLayers: true);
+
+        AppPending.SetAnalysis(new AnalysisTarget(
+            code,
+            _codeFormat,
+            _document.LayerCount,
+            _document.PartCount));
+
+        if (!await AppNavigation.GoToAnalysisAsync())
+        {
+            AppPending.ClearAnalysis();
+
+            await DisplayAlertAsync(
+                "图形分析",
+                "打开分析页失败。",
+                "好");
+        }
+    }
+
+    /// <summary>
+    /// 当前编辑中的图形是否有内容（任意单元格非空）。
+    /// </summary>
+    private bool HasDocumentContent()
+    {
+        for (int layer = 0;
+             layer < _document.LayerCount;
+             layer++)
+        {
+            for (int part = 0;
+                 part < _document.PartCount;
+                 part++)
+            {
+                if (_document[layer, part].Type != CellType.Empty)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// 没有内容时禁用「分析」按钮，避免把空图送去分析。
+    /// </summary>
+    private void RefreshAnalyzeButtonState()
+    {
+        AnalyzeButton.IsEnabled =
+            HasDocumentContent();
     }
 
     #endregion

@@ -193,7 +193,11 @@ public static class AnalysisImageExporter
 
             y = DrawHalfSection(context, viewModel, y);
 
-            y = DrawPathSection(context, viewModel, y);
+            // 与窗口一致：没有合法交换方向时不画制作路径板块。
+            if (viewModel.HasProductionPath)
+            {
+                y = DrawPathSection(context, viewModel, y);
+            }
 
             y = DrawFooter(context, viewModel, y);
         }
@@ -563,42 +567,23 @@ public static class AnalysisImageExporter
     }
 
     /// <summary>
-    /// 制作路径：可制作时按顺序列出步骤与每步短代码，
-    /// 否则只给出不可制作的原因。
+    /// 制作路径：存在合法交换方向时按顺序列出步骤与每步短代码。
+    /// 没有路径结果时整段不画，也不输出「不可制作」。
     /// </summary>
     private static double DrawPathSection(
         DrawingContext context,
         AnalysisViewModel viewModel,
         double y)
     {
-        y = DrawSectionTitle(context, "制作路径", y);
-
         ProductionPathResult? result = viewModel.GetProductionPath();
 
-        if (result is null)
-        {
-            y = DrawParagraph(
-                context,
-                "无法解析。",
-                y,
-                13,
-                MutedBrush);
-
-            return EndSection(context, y);
-        }
-
-        if (!result.IsProducible ||
+        if (result is null ||
             result.Path is null)
         {
-            y = DrawParagraph(
-                context,
-                "不可制作：" + (result.Error ?? "没有找到可行的制作路径。"),
-                y,
-                13,
-                DangerBrush);
-
-            return EndSection(context, y);
+            return y;
         }
+
+        y = DrawSectionTitle(context, "制作路径", y);
 
         ProductionPath path = result.Path;
 
