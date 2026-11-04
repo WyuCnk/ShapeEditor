@@ -52,6 +52,9 @@ public partial class WorkspacePage : ContentPage
     /// <summary>拖动起点时的视觉矩形；PanUpdated 的 TotalX/TotalY 是相对起点的累计位移。</summary>
     private readonly Dictionary<string, Rect> _dragStartBounds = new();
 
+    /// <summary>是否正在拖动节点；拖动节点时不允许同时平移画布。</summary>
+    private bool _draggingNode;
+
     /// <summary>线段层与箭头层，拖动过程中只重绘这两个 Drawable。</summary>
     private WorkspaceLineDrawable? _lineDrawable;
 
@@ -64,6 +67,17 @@ public partial class WorkspacePage : ContentPage
     public WorkspacePage()
     {
         InitializeComponent();
+
+        /*
+         * 画布缩小到比视口还小的时候，四周的空白落在宿主上，
+         * 触摸不会冒泡到画布，所以宿主也挂一份捏合手势；
+         * 与画布共用同一个处理函数，缩放的一直是整块画布。
+         */
+        var hostPinch = new PinchGestureRecognizer();
+
+        hostPinch.PinchUpdated += OnCanvasPinchUpdated;
+
+        CanvasHost.GestureRecognizers.Add(hostPinch);
     }
 
     protected override void OnAppearing()
@@ -445,6 +459,9 @@ public partial class WorkspacePage : ContentPage
             _canvasShiftX = 0;
             _canvasShiftY = 0;
 
+            // 内容尺寸变了，平移范围重新夹一次
+            SetCanvasPan(Canvas.TranslationX, Canvas.TranslationY);
+
             return;
         }
 
@@ -491,6 +508,9 @@ public partial class WorkspacePage : ContentPage
 
         Canvas.WidthRequest = width;
         Canvas.HeightRequest = height;
+
+        // 内容尺寸变了，平移范围重新夹一次；缩放比例保持当前值
+        SetCanvasPan(Canvas.TranslationX, Canvas.TranslationY);
 
         var lookup = placed.ToDictionary(box => box.Node.Id);
 
@@ -668,6 +688,12 @@ public partial class WorkspacePage : ContentPage
 
         tap.Tapped += (_, _) =>
         {
+            // 缩放过程中（及刚结束的一小段时间）不触发节点选中
+            if (IsPinching)
+            {
+                return;
+            }
+
             // 删除按钮和卡片点击可能落在同一帧里，先确认节点还在
             if (_store!.FindNode(node.Id) is null)
             {
@@ -712,6 +738,17 @@ public partial class WorkspacePage : ContentPage
 
         border.GestureRecognizers.Add(pan);
 
+        /*
+         * 触摸落在节点卡片上时事件不会冒泡到画布容器，
+         * 所以卡片也挂一份捏合手势，并与画布共用同一个处理函数；
+         * 缩放的是整块画布，卡片自身不缩放。
+         */
+        var pinch = new PinchGestureRecognizer();
+
+        pinch.PinchUpdated += OnCanvasPinchUpdated;
+
+        border.GestureRecognizers.Add(pinch);
+
         return border;
     }
 
@@ -720,6 +757,7 @@ public partial class WorkspacePage : ContentPage
     ///
     /// Running 阶段只更新节点坐标、卡片布局和线段/箭头 Drawable，不重建卡片；
     /// Completed / Canceled 时把最终坐标交给 store，由 store 负责 10px 吸附与保存。
+    /// 缩放手势进行中不处理拖动，避免双指缩放把节点带走。
     /// </summary>
     private void OnNodePanUpdated(
         string nodeId,
@@ -727,6 +765,12 @@ public partial class WorkspacePage : ContentPage
         PanUpdatedEventArgs e)
     {
         if (_store is null)
+        {
+            return;
+        }
+
+        // 缩放过程中不触发节点拖动，缩放结束后保持原选中状态
+        if (IsPinching)
         {
             return;
         }
@@ -741,6 +785,11 @@ public partial class WorkspacePage : ContentPage
         switch (e.StatusType)
         {
             case GestureStatus.Started:
+                // 拖动节点优先：停掉可能同时开始的画布平移
+                _panViewport.End();
+
+                _draggingNode = true;
+
                 if (_nodeBounds.TryGetValue(nodeId, out Rect start))
                 {
                     _dragStartBounds[nodeId] = start;
@@ -749,6 +798,8 @@ public partial class WorkspacePage : ContentPage
                 return;
 
             case GestureStatus.Running:
+                _draggingNode = true;
+
                 // 个别平台可能先到 Running 再到 Started，用当前矩形兜底，保证拖动不丢
                 if (!_dragStartBounds.TryGetValue(nodeId, out Rect origin))
                 {
@@ -766,16 +817,25 @@ public partial class WorkspacePage : ContentPage
                 }
 
                 /*
+                 * 画布是整体缩放的，PanUpdated 的 TotalX/TotalY 是屏幕位移，
+                 * 除以缩放比例才是节点的逻辑位移：
+                 * 放大后拖动依然跟手，节点坐标仍按 1 倍逻辑坐标记录。
+                 */
+                double dragScale = _canvasScale > 0
+                    ? 1d / _canvasScale
+                    : 1d;
+
+                /*
                  * 左、上边界按画布外边距夹取：
                  * 拖动过程中不重算整体平移，夹住可以避免松手重绘时画布突然跳位。
                  */
                 double x = Math.Max(
                     WorkspaceLayout.Margin,
-                    origin.X + e.TotalX);
+                    origin.X + e.TotalX * dragScale);
 
                 double y = Math.Max(
                     WorkspaceLayout.Margin,
-                    origin.Y + e.TotalY);
+                    origin.Y + e.TotalY * dragScale);
 
                 var bounds = new Rect(
                     x,
@@ -797,6 +857,8 @@ public partial class WorkspacePage : ContentPage
                 return;
 
             default:
+                _draggingNode = false;
+
                 if (!_dragStartBounds.Remove(nodeId) ||
                     _store.FindNode(nodeId) is not WorkspaceNode finished)
                 {
@@ -1220,6 +1282,12 @@ public partial class WorkspacePage : ContentPage
         object? sender,
         TappedEventArgs e)
     {
+        // 缩放过程中不处理点击，避免误取消当前选择
+        if (IsPinching)
+        {
+            return;
+        }
+
         if (_stackFirstId is null && _exchangeFirstId is null)
         {
             return;
@@ -1454,6 +1522,11 @@ public partial class WorkspacePage : ContentPage
 
         try
         {
+            /*
+             * 导出走离屏渲染，只读节点的逻辑坐标：
+             * 固定按 1 倍（30px 单元格）输出，与画布当前的缩放比例、平移量无关，
+             * 导出图片尺寸与缩放前一致（这里也不把 _canvasScale 传下去）。
+             */
             List<WorkspaceNodeBox> boxes = WorkspaceLayout.Compute(
                 _store.Nodes,
                 _store.GetEffectiveDocument);

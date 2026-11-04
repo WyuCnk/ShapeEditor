@@ -194,20 +194,105 @@
                 <VerticalStackLayout x:Name="MaterialList" Spacing="6" Padding="0,0,6,0" />
             </ScrollView>
 
+            <!--
+                画布视口：
+                ScrollView 只负责裁剪（Orientation="Neither"，不参与滚动；
+                内容宿主尺寸固定为视口大小），
+                平移与缩放全部由 PanViewport 的显示变换完成。
+            -->
             <ScrollView Grid.Column="1"
-                        Orientation="Both"
-                        HorizontalScrollBarVisibility="Always">
-                <AbsoluteLayout x:Name="Canvas"
-                                BackgroundColor="White">
-                    <AbsoluteLayout.GestureRecognizers>
-                        <!-- 素材拖到画布时，在落点创建节点 -->
-                        <DropGestureRecognizer AllowDrop="True" Drop="OnCanvasDrop" />
+                        x:Name="CanvasViewport"
+                        Orientation="Neither"
+                        HorizontalScrollBarVisibility="Never"
+                        VerticalScrollBarVisibility="Never"
+                        SizeChanged="OnCanvasViewportSizeChanged">
 
-                        <!-- 点空白处取消堆叠 / 交换的第二输入选择 -->
-                        <TapGestureRecognizer Tapped="OnCanvasTapped" />
-                    </AbsoluteLayout.GestureRecognizers>
-                </AbsoluteLayout>
+                <!-- 宿主尺寸 = 视口尺寸；画布贴左上角摆放（平移量为 0 时看到左上角），缩放锚点 0.5 -->
+                <Grid x:Name="CanvasHost"
+                      BackgroundColor="White">
+
+                    <AbsoluteLayout x:Name="Canvas"
+                                    AnchorX="0.5"
+                                    AnchorY="0.5"
+                                    HorizontalOptions="Start"
+                                    VerticalOptions="Start"
+                                    BackgroundColor="White">
+                        <AbsoluteLayout.GestureRecognizers>
+                            <!-- 素材拖到画布时，在落点创建节点 -->
+                            <DropGestureRecognizer AllowDrop="True" Drop="OnCanvasDrop" />
+
+                            <!-- 点空白处取消堆叠 / 交换的第二输入选择 -->
+                            <TapGestureRecognizer Tapped="OnCanvasTapped" />
+
+                            <!-- 双指捏合缩放：只改显示比例，节点坐标与导出都不变 -->
+                            <PinchGestureRecognizer PinchUpdated="OnCanvasPinchUpdated" />
+
+                            <!-- 单指在空白处拖动平移画布；落在节点卡片上时由卡片的拖动处理 -->
+                            <PanGestureRecognizer PanUpdated="OnCanvasPanUpdated" />
+                        </AbsoluteLayout.GestureRecognizers>
+                    </AbsoluteLayout>
+                </Grid>
             </ScrollView>
+
+            <!-- 缩放控件：浮在画布右下角，不参与画布的平移与缩放 -->
+            <Border Grid.Column="1"
+                    HorizontalOptions="End"
+                    VerticalOptions="End"
+                    Margin="0,0,8,8"
+                    Padding="4"
+                    Stroke="#E6E2F2"
+                    StrokeThickness="1"
+                    BackgroundColor="#F5FFFFFF"
+                    StrokeShape="RoundRectangle 10">
+                <HorizontalStackLayout Spacing="4">
+                    <Button x:Name="ZoomOutButton"
+                            Text="−"
+                            FontSize="14"
+                            WidthRequest="32"
+                            HeightRequest="30"
+                            Padding="0"
+                            MinimumWidthRequest="0"
+                            MinimumHeightRequest="0"
+                            CornerRadius="8"
+                            BackgroundColor="#EFEAF9"
+                            TextColor="#512BD4"
+                            Clicked="OnZoomOut" />
+
+                    <Label x:Name="ZoomLabel"
+                           Text="100%"
+                           FontSize="11"
+                           WidthRequest="44"
+                           TextColor="#6B6B76"
+                           HorizontalTextAlignment="Center"
+                           VerticalTextAlignment="Center" />
+
+                    <Button x:Name="ZoomInButton"
+                            Text="+"
+                            FontSize="14"
+                            WidthRequest="32"
+                            HeightRequest="30"
+                            Padding="0"
+                            MinimumWidthRequest="0"
+                            MinimumHeightRequest="0"
+                            CornerRadius="8"
+                            BackgroundColor="#EFEAF9"
+                            TextColor="#512BD4"
+                            Clicked="OnZoomIn" />
+
+                    <Button x:Name="ZoomResetButton"
+                            Text="重置"
+                            FontSize="11"
+                            WidthRequest="44"
+                            HeightRequest="30"
+                            Padding="0"
+                            MinimumWidthRequest="0"
+                            MinimumHeightRequest="0"
+                            CornerRadius="8"
+                            BackgroundColor="#EFEAF9"
+                            TextColor="#512BD4"
+                            Clicked="OnZoomReset" />
+                </HorizontalStackLayout>
+            </Border>
         </Grid>
     </Grid>
 </ContentPage>

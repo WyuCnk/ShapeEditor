@@ -26,14 +26,9 @@ public partial class MainPage : ContentPage
     #region 画布状态
 
     /// <summary>
-    /// 当前是否正在进行单指移动画布。
+    /// 单指平移画布的状态机；与工作区画布共用同一份实现（<see cref="PanViewport"/>）。
     /// </summary>
-    private bool _isPanning;
-
-    /// <summary>
-    /// 上一次移动画布时的触摸位置。
-    /// </summary>
-    private PointF _lastPanPoint;
+    private readonly PanViewport _panViewport = new();
 
     /// <summary>
     /// 当前一次触摸操作的起点。
@@ -535,7 +530,7 @@ public partial class MainPage : ContentPage
         ResetTouchState();
 
         _canvasMode = mode;
-        _isPanning = false;
+        _panViewport.End();
 
         if (mode == CanvasMode.Move)
         {
@@ -553,7 +548,7 @@ public partial class MainPage : ContentPage
 
     private void ResetTouchState()
     {
-        _isPanning = false;
+        _panViewport.End();
         _touchMoved = false;
         _touchStartPoint = default;
         _touchStartLayer = null;
@@ -629,7 +624,7 @@ public partial class MainPage : ContentPage
 
         _touchStartPoint = point;
         _touchMoved = false;
-        _isPanning = false;
+        _panViewport.End();
         _isPainting = false;
         _paintedCells.Clear();
 
@@ -637,7 +632,6 @@ public partial class MainPage : ContentPage
         {
             _touchStartLayer = null;
             _touchStartPart = null;
-            _lastPanPoint = point;
 
             return;
         }
@@ -677,7 +671,7 @@ public partial class MainPage : ContentPage
         if (e.Touches.Length >= 2)
         {
             FinishPainting();
-            _isPanning = false;
+            _panViewport.End();
             UpdateTransform(e.Touches);
             return;
         }
@@ -739,25 +733,29 @@ public partial class MainPage : ContentPage
     private void MoveCanvasWithSingleFinger(
     PointF point)
     {
-        if (!_isPanning)
+        /*
+         * 单指平移统一交给 PanViewport：
+         * 第一次移动只记录起点，之后每次返回与上一次触点的差值。
+         */
+        if (!_panViewport.IsPanning)
         {
-            _isPanning = true;
-            _lastPanPoint = point;
+            _panViewport.Begin(new Point(point.X, point.Y));
+
             return;
         }
 
-        float deltaX =
-            point.X - _lastPanPoint.X;
-
-        float deltaY =
-            point.Y - _lastPanPoint.Y;
+        if (!_panViewport.TryMove(
+                new Point(point.X, point.Y),
+                out double deltaX,
+                out double deltaY))
+        {
+            return;
+        }
 
         _shapeDrawable.ApplyTransform(
             _shapeDrawable.Zoom,
-            _shapeDrawable.PanX + deltaX,
-            _shapeDrawable.PanY + deltaY);
-
-        _lastPanPoint = point;
+            (float)(_shapeDrawable.PanX + deltaX),
+            (float)(_shapeDrawable.PanY + deltaY));
 
         ShapeGraphicsView.Invalidate();
     }
@@ -775,7 +773,7 @@ public partial class MainPage : ContentPage
 
         if (_canvasMode == CanvasMode.Move)
         {
-            _isPanning = false;
+            _panViewport.End();
             ResetTouchState();
             return;
         }
@@ -858,7 +856,7 @@ public partial class MainPage : ContentPage
     {
         FinishPainting();
 
-        _isPanning = false;
+        _panViewport.End();
 
         if (touches.Length < 2)
         {

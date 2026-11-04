@@ -10,6 +10,8 @@ namespace ShapeEditor.Maui;
 ///
 /// 节点尺寸与画布一致（宽 = 象限数 × 30 + 16，高 = 50 + 层数 × 30），
 /// 图片尺寸 = 所有节点包围盒 + 24px 边距，按 1 倍导出。
+/// 屏幕上的缩放 / 平移只是显示变换，不参与导出：这里只接收节点的逻辑坐标，
+/// 所以图片分辨率与画布缩放比例无关。
 /// 连线不带标签，箭头在最后绘制。
 /// </summary>
 public sealed class WorkspaceImageExporter
@@ -42,6 +44,8 @@ public sealed class WorkspaceImageExporter
             throw new InvalidOperationException("画布是空的。");
         }
 
+        // 只按节点逻辑坐标算包围盒：画布的缩放比例不会进入这里，
+        // 因此导出尺寸与缩放前保持一致（1 倍，单元格 30px）。
         double left = boxes.Min(box => box.Bounds.X);
         double top = boxes.Min(box => box.Bounds.Y);
         double right = boxes.Max(box => box.Bounds.Right);
