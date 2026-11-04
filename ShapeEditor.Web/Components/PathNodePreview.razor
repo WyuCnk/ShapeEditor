@@ -1,0 +1,43 @@
+@inject IJSRuntime JS
+
+@*
+    制作路径节点里的竖式图预览。
+
+    与普通 ShapePreview 不同：这里固定按 30px 单元格绘制，
+    不做「适应容器」缩放，图形大就占大，由外层节点图滚动查看。
+*@
+<canvas @ref="_canvas"
+        class="path-preview-canvas"
+        width="@(Document.PartCount * CellSize)"
+        height="@(Document.LayerCount * CellSize)">
+</canvas>
+
+@code {
+    private const int CellSize = 30;
+
+    /// <summary>要绘制的图形。</summary>
+    [Parameter]
+    public ShapeDocument Document { get; set; } = null!;
+
+    private ElementReference _canvas;
+
+    private ShapeDocument? _rendered;
+
+    protected override async Task OnAfterRenderAsync(
+        bool firstRender)
+    {
+        if (Document is null ||
+            ReferenceEquals(Document, _rendered))
+        {
+            return;
+        }
+
+        _rendered = Document;
+
+        await JS.InvokeVoidAsync(
+            "shapeGrid.renderAnalysisPreview",
+            _canvas,
+            ShapeCanvasState.Create(Document),
+            CellSize);
+    }
+}

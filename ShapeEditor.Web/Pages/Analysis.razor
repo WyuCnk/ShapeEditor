@@ -269,18 +269,62 @@
 
                         @if (_path is not null && _path.Path is not null)
                         {
-                            <ol class="path-steps">
-                                @foreach (ProductionStep step in _path.Path.Steps)
-                                {
-                                    <li>
-                                        <span>@step.Title</span>
-                                        @if (step.Shape is not null)
+                            @if (_pathGraph is not null)
+                            {
+                                <div class="path-graph-scroll"
+                                     style="height:@(PathGraphViewportHeight)px">
+                                    <div class="graph-canvas path-graph-canvas"
+                                         style="width:@Px(_pathGraph.Width)px;height:@Px(_pathGraph.Height)px">
+
+                                        <svg class="graph-arrows"
+                                             width="@Px(_pathGraph.Width)"
+                                             height="@Px(_pathGraph.Height)">
+                                            @foreach (ProductionPathGraphEdge edge in _pathGraph.Edges)
+                                            {
+                                                <path d="@edge.Path"
+                                                      data-edge-from="@edge.FromId"
+                                                      data-edge-to="@edge.ToId"
+                                                      fill="none"
+                                                      stroke="#512bd4"
+                                                      stroke-width="2" />
+
+                                                <polygon points="@edge.Arrow"
+                                                         data-edge-from="@edge.FromId"
+                                                         data-edge-to="@edge.ToId"
+                                                         fill="#512bd4" />
+                                            }
+                                        </svg>
+
+                                        @foreach (ProductionPathGraphNode node in _pathGraph.Nodes)
                                         {
-                                            <span class="path-step-code">@Exporter.Export(step.Shape, omitTopEmptyLayers: true)</span>
+                                            <div class="graph-node path-node @(node.IsResult ? "result" : "") @(node.IsPending ? "pending" : "")"
+                                                 data-node-id="@node.Id"
+                                                 style="left:@Px(node.X)px;top:@Px(node.Y)px;width:@Px(node.Width)px;height:@Px(node.Height)px">
+
+                                                <div class="path-node-head" title="@node.Title">
+                                                    @node.Title
+                                                </div>
+
+                                                <div class="graph-node-body path-node-body">
+                                                    @if (node.Shape is not null)
+                                                    {
+                                                        <PathNodePreview Document="node.Shape" />
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="ws-slot-empty">待接入</span>
+                                                    }
+                                                </div>
+                                            </div>
                                         }
-                                    </li>
-                                }
-                            </ol>
+                                    </div>
+                                </div>
+
+                                <p class="analysis-note">
+                                    节点按制作顺序从上到下排列，单元格保持 30px 原始尺寸；
+                                    图形较宽时可横向滚动查看。
+                                </p>
+                            }
                         }
                     }
                 </div>
@@ -307,6 +351,11 @@
     private ShapeProperty _properties = ShapeProperty.None;
 
     private ProductionPathResult? _path;
+
+    /// <summary>
+    /// 制作路径的节点图布局，与页面和导出共用。
+    /// </summary>
+    private ProductionPathGraph? _pathGraph;
 
     private readonly ShortCodeExporter Exporter = new();
 
@@ -344,6 +393,40 @@
     private void RecomputePath()
     {
         _path = _document is null ? null : ProductionPathParser.Parse(_document, _mode);
+
+        _pathGraph = _path?.Path is null
+            ? null
+            : ProductionPathGraph.Create(_path.Path.Steps);
+    }
+
+    /// <summary>
+    /// 节点图容器的可视高度：节点少时按内容自适应，节点多时固定高度并滚动。
+    /// </summary>
+    private double PathGraphViewportHeight =>
+        _pathGraph is null
+            ? 240
+            : Math.Min(480, Math.Max(220, Math.Ceiling(_pathGraph.Height)));
+
+    /// <summary>把坐标格式化成不带千分位分隔符的像素值。</summary>
+    private static string Px(double value) =>
+        value.ToString("0.##", CultureInfo.InvariantCulture);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_showPath || _pathGraph is null)
+        {
+            return;
+        }
+
+        try
+        {
+            // 复用工作区的连线几何：按节点真实矩形贴边计算箭头。
+            await JS.InvokeVoidAsync("shapeGridLayoutEdges");
+        }
+        catch
+        {
+            /* 连线绘制失败不影响页面其余内容 */
+        }
     }
 
     // 六个板块的显隐开关，默认全部显示；只影响渲染，不影响分析结果。
@@ -465,16 +548,71 @@
         // 制作路径只在存在合法交换方向时显示，与页面保持一致。
         if (_showPath && _half is not null && _half.IsExchangeable)
         {
-            // 制作路径：复用页面上的同一份文本，可制作时逐步骤列出标题与短代码，
-            // 不可制作时只给原因，保证导出的图片与页面显示一致。
-            payload.Sections.Add(new AnalysisExportSection
-            {
-                Title = "制作路径",
-                Lines = BuildPathLines()
-            });
+            payload.Sections.Add(BuildPathSection());
         }
 
         return payload;
+    }
+
+    /// <summary>
+    /// 制作路径板块。可制作时导出成与页面相同的节点图（按实际尺寸整张输出，
+    /// 预览不缩放、不分片）；不可制作时退回文本原因。
+    /// </summary>
+    private AnalysisExportSection BuildPathSection()
+    {
+        var section = new AnalysisExportSection
+        {
+            Title = "制作路径"
+        };
+
+        if (_path is null || _path.Path is null || _pathGraph is null)
+        {
+            section.Lines = BuildPathLines();
+
+            return section;
+        }
+
+        ProductionPath path = _path.Path;
+
+        section.Lines.Add(
+            $"可制作：方向 {path.Direction}（{(path.DirectionLegal ? "合法方向" : "不合法方向")}）。");
+
+        var graph = new AnalysisExportGraph
+        {
+            Width = _pathGraph.Width,
+            Height = _pathGraph.Height
+        };
+
+        foreach (ProductionPathGraphNode node in _pathGraph.Nodes)
+        {
+            graph.Nodes.Add(new AnalysisExportGraphNode
+            {
+                Id = node.Id,
+                Title = node.Title,
+                X = node.X,
+                Y = node.Y,
+                Width = node.Width,
+                Height = node.Height,
+                State = node.Shape is null
+                    ? null
+                    : ShapeCanvasState.Create(node.Shape),
+                IsResult = node.IsResult,
+                IsPending = node.IsPending
+            });
+        }
+
+        foreach (ProductionPathGraphEdge edge in _pathGraph.Edges)
+        {
+            graph.Edges.Add(new AnalysisExportGraphEdge
+            {
+                FromId = edge.FromId,
+                ToId = edge.ToId
+            });
+        }
+
+        section.Graph = graph;
+
+        return section;
     }
 
     private AnalysisExportSection BuildPropertiesSection()

@@ -50,6 +50,63 @@ public sealed class AnalysisExportSection
 
     /// <summary>是否画成制作路径占位节点框（而不是普通文本行）。</summary>
     public bool IsPlaceholder { get; set; }
+
+    /// <summary>
+    /// 制作路径节点图。非 null 时在板块标题与说明文本之后按实际尺寸整张绘制，
+    /// 预览保持 30px 单元格、不做缩放。
+    /// </summary>
+    public AnalysisExportGraph? Graph { get; set; }
+}
+
+/// <summary>
+/// 导出图里的制作路径节点图。
+///
+/// 坐标为节点图内部坐标（与页面一致），JS 直接按原尺寸绘制；
+/// 图比页面宽时整张导出图随之变宽，不分片、不缩放。
+/// </summary>
+public sealed class AnalysisExportGraph
+{
+    public double Width { get; set; }
+
+    public double Height { get; set; }
+
+    public List<AnalysisExportGraphNode> Nodes { get; set; } = new();
+
+    public List<AnalysisExportGraphEdge> Edges { get; set; } = new();
+}
+
+/// <summary>
+/// 导出图里的一个制作路径节点。
+/// </summary>
+public sealed class AnalysisExportGraphNode
+{
+    public string Id { get; set; } = "";
+
+    public string Title { get; set; } = "";
+
+    public double X { get; set; }
+
+    public double Y { get; set; }
+
+    public double Width { get; set; }
+
+    public double Height { get; set; }
+
+    public ShapeCanvasState? State { get; set; }
+
+    public bool IsResult { get; set; }
+
+    public bool IsPending { get; set; }
+}
+
+/// <summary>
+/// 导出图里的一条节点箭头。
+/// </summary>
+public sealed class AnalysisExportGraphEdge
+{
+    public string FromId { get; set; } = "";
+
+    public string ToId { get; set; } = "";
 }
 
 /// <summary>

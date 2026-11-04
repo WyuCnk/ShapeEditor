@@ -2086,7 +2086,26 @@ window.shapeGrid.downloadAnalysis = async function (payload, fileName) {
     const cellHeight = baseCellHeight * shapeScale;
     const shapeWidth = hasShape ? state.columns * cellWidth : 0;
     const shapeHeight = hasShape ? state.rows * cellHeight : 0;
-    const contentWidth = Math.max(MIN_CONTENT_WIDTH, shapeWidth);
+
+    const sections = Array.isArray(data.sections) ? data.sections : [];
+
+    // 制作路径节点图按实际尺寸整张绘制；这里先把整张导出图撑到节点图宽度。
+    let graphContentWidth = 0;
+
+    for (let i = 0; i < sections.length; i++) {
+        const graph = sections[i] && sections[i].graph;
+
+        if (graph) {
+            graphContentWidth = Math.max(
+                graphContentWidth,
+                Number(graph.width) || 0);
+        }
+    }
+
+    const contentWidth = Math.max(
+        MIN_CONTENT_WIDTH,
+        shapeWidth,
+        graphContentWidth);
 
     // 先用离屏画布量文本，排版高度确定后再创建正式画布。
     const measureCanvas = document.createElement("canvas");
@@ -2128,8 +2147,6 @@ window.shapeGrid.downloadAnalysis = async function (payload, fileName) {
         });
     }
 
-    const sections = Array.isArray(data.sections) ? data.sections : [];
-
     for (let i = 0; i < sections.length; i++) {
         const section = sections[i] || {};
         const title = String(section.title || "");
@@ -2163,6 +2180,23 @@ window.shapeGrid.downloadAnalysis = async function (payload, fileName) {
             for (let k = 0; k < wrapped.length; k++) {
                 lines.push(wrapped[k]);
             }
+        }
+
+        // 制作路径节点图：标题与说明行照常绘制，下面按实际尺寸整张画图。
+        if (section.graph) {
+            blocks.push({
+                kind: "graph",
+                height:
+                    SECTION_TITLE_HEIGHT +
+                    lines.length * LINE_HEIGHT +
+                    (Number(section.graph.height) || 0) +
+                    SECTION_GAP,
+                title: title,
+                lines: lines,
+                graph: section.graph
+            });
+
+            continue;
         }
 
         const table = normalizeAnalysisTable(section.table);
@@ -2359,6 +2393,44 @@ window.shapeGrid.downloadAnalysis = async function (payload, fileName) {
             continue;
         }
 
+        if (block.kind === "graph") {
+            drawSectionTitle(block.title, y);
+
+            ctx.font = TEXT_FONT;
+            ctx.fillStyle = "#3A3A44";
+            ctx.textAlign = "left";
+            ctx.textBaseline = "top";
+
+            let lineY = y + SECTION_TITLE_HEIGHT;
+
+            for (let j = 0; j < block.lines.length; j++) {
+                if (block.lines[j] !== "") {
+                    ctx.fillText(block.lines[j], PADDING, lineY);
+                }
+
+                lineY += LINE_HEIGHT;
+            }
+
+            const graph = block.graph || {};
+            const graphWidth = Number(graph.width) || 0;
+            const graphLeft = PADDING + Math.max(0, (contentWidth - graphWidth) / 2);
+
+            drawAnalysisPathGraph(ctx, graph, graphLeft, lineY);
+
+            const graphBottom = lineY + (Number(graph.height) || 0);
+
+            // 板块之间的细分隔线
+            ctx.strokeStyle = "#EEEAF7";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(PADDING, graphBottom + 6);
+            ctx.lineTo(width - PADDING, graphBottom + 6);
+            ctx.stroke();
+
+            y += block.height;
+            continue;
+        }
+
         if (block.kind === "placeholder") {
             drawSectionTitle(block.title, y);
 
@@ -2484,6 +2556,225 @@ window.shapeGrid.drawAnalysisShape = function (
 
     ctx.restore();
 };
+
+/*
+ * 制作路径节点里的固定尺寸预览：按 30px 单元格 1:1 绘制，不做缩放。
+ * 复用 drawAnalysisShape 的配色与字形（c / S / P + 颜色）。
+ */
+window.shapeGrid.renderAnalysisPreview = function (canvas, state, cellSize) {
+    if (!canvas ||
+        !state ||
+        !state.cells ||
+        state.columns <= 0 ||
+        state.rows <= 0) {
+        return;
+    }
+
+    const size = cellSize > 0 ? cellSize : 30;
+
+    const width = state.columns * size;
+    const height = state.rows * size;
+
+    // CSS 尺寸固定为单元格尺寸总和，画布后备缓冲按 DPR 放大保持清晰。
+    canvas.style.width = width + "px";
+    canvas.style.height = height + "px";
+
+    const dpr = window.devicePixelRatio || 1;
+
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+
+    const ctx = canvas.getContext("2d");
+
+    if (!ctx) {
+        return;
+    }
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+
+    window.shapeGrid.drawAnalysisShape(
+        ctx,
+        state,
+        0,
+        0,
+        size,
+        size);
+};
+
+/*
+ * 分析导出图里的制作路径节点图。
+ *
+ * 坐标来自 C# 的自动布局，节点尺寸与页面一致：
+ * 宽 = 象限数 × 30 + 16，高 = 50 + 层数 × 30。
+ * 预览固定 30px 单元格、1:1 绘制；图有多宽就画多宽，不缩放、不分片。
+ */
+function drawAnalysisPathGraph(ctx, graph, left, top) {
+    const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
+    const edges = Array.isArray(graph.edges) ? graph.edges : [];
+
+    if (nodes.length === 0) {
+        return;
+    }
+
+    const byId = {};
+
+    for (let i = 0; i < nodes.length; i++) {
+        byId[nodes[i].id] = nodes[i];
+    }
+
+    function rectOf(node) {
+        return {
+            x: left + node.x,
+            y: top + node.y,
+            width: node.width,
+            height: node.height
+        };
+    }
+
+    function edgeAnchor(node, other) {
+        const a = rectOf(node);
+        const b = rectOf(other);
+
+        const cx = a.x + a.width / 2;
+        const cy = a.y + a.height / 2;
+        const ox = b.x + b.width / 2;
+        const oy = b.y + b.height / 2;
+
+        let dx = ox - cx;
+        let dy = oy - cy;
+        const length = Math.sqrt(dx * dx + dy * dy);
+
+        if (length < 1) {
+            return { x: cx, y: cy };
+        }
+
+        dx /= length;
+        dy /= length;
+
+        const scaleX = Math.abs(dx) < 1e-6
+            ? Number.MAX_VALUE
+            : (a.width / 2) / Math.abs(dx);
+
+        const scaleY = Math.abs(dy) < 1e-6
+            ? Number.MAX_VALUE
+            : (a.height / 2) / Math.abs(dy);
+
+        const scale = Math.min(scaleX, scaleY);
+
+        return {
+            x: cx + dx * scale,
+            y: cy + dy * scale
+        };
+    }
+
+    const TITLE_FONT = '600 11px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+    const NODE_FONT = '400 12px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+
+    // 先画卡片，箭头随后画在最上层，避免被卡片遮住。
+    for (let i = 0; i < nodes.length; i++) {
+        const node = nodes[i];
+        const r = rectOf(node);
+
+        ctx.fillStyle = node.isResult ? "#FAF8FF" : "#FFFFFF";
+        ctx.strokeStyle = node.isResult ? "#512BD4" : "#D0D0D0";
+        ctx.lineWidth = node.isResult ? 2 : 1.2;
+
+        ctx.beginPath();
+        ctx.roundRect(r.x, r.y, r.width, r.height, 12);
+        ctx.fill();
+        ctx.stroke();
+
+        // 标题最多两行，与页面卡片一致
+        ctx.font = TITLE_FONT;
+        ctx.fillStyle = "#4A3F72";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+
+        const titleLines = wrapAnalysisText(
+            ctx,
+            node.title || "",
+            TITLE_FONT,
+            Math.max(20, r.width - 14),
+            false);
+
+        for (let line = 0; line < Math.min(2, titleLines.length); line++) {
+            let text = titleLines[line];
+
+            if (line === 1 && titleLines.length > 2) {
+                text += "…";
+            }
+
+            ctx.fillText(text, r.x + 7, r.y + 7 + line * 13);
+        }
+
+        // 预览：与页面相同的 30px 单元格，不做缩放
+        if (node.state) {
+            window.shapeGrid.drawAnalysisShape(
+                ctx,
+                node.state,
+                r.x + 8,
+                r.y + 37,
+                30,
+                30);
+        }
+        else if (node.isPending) {
+            ctx.font = NODE_FONT;
+            ctx.fillStyle = "#8B7BBF";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(
+                "待接入",
+                r.x + r.width / 2,
+                r.y + 37 + (r.height - 37) / 2);
+        }
+    }
+
+    // 箭头：从节点边缘出发，指向下一个节点边缘
+    ctx.strokeStyle = "#512BD4";
+    ctx.lineWidth = 2;
+
+    for (let i = 0; i < edges.length; i++) {
+        const edge = edges[i];
+        const from = byId[edge.fromId];
+        const to = byId[edge.toId];
+
+        if (!from || !to) {
+            continue;
+        }
+
+        const a1 = edgeAnchor(from, to);
+        const a2 = edgeAnchor(to, from);
+
+        let vx = a2.x - a1.x;
+        let vy = a2.y - a1.y;
+        const len = Math.max(1, Math.sqrt(vx * vx + vy * vy));
+
+        vx /= len;
+        vy /= len;
+
+        const tipX = a2.x + vx * 1;
+        const tipY = a2.y + vy * 1;
+
+        ctx.beginPath();
+        ctx.moveTo(a1.x - vx * 1, a1.y - vy * 1);
+        ctx.lineTo(tipX, tipY);
+        ctx.stroke();
+
+        const head = 11;
+        const half = 5;
+        const bx = tipX - vx * head;
+        const by = tipY - vy * head;
+
+        ctx.beginPath();
+        ctx.moveTo(tipX, tipY);
+        ctx.lineTo(bx - vy * half, by + vx * half);
+        ctx.lineTo(bx + vy * half, by - vx * half);
+        ctx.closePath();
+        ctx.fillStyle = "#512BD4";
+        ctx.fill();
+    }
+}
 
 /*
  * 文本换行：中文按字拆，英文/数字/公式按词拆，

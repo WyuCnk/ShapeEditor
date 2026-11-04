@@ -315,13 +315,38 @@ internal static class AnalysisTests
         var exporter = new ShortCodeExporter();
 
         // 两个半边与规格 §4 的自检公式一致。
-        Assert.Equal("CrCgCbCu--Cu", exporter.Export(path.Steps[4].Shape!));
-        Assert.Equal("Cu--CuCcCmCy", exporter.Export(path.Steps[5].Shape!));
+        // 步骤里包含预旋转与交换后转回，按标题取「交换得到左/右半边」这一结果步。
+        ProductionStep leftHalfStep = path.Steps.First(
+            step => step.Title == "交换得到左半边");
+
+        ProductionStep rightHalfStep = path.Steps.First(
+            step => step.Title == "交换得到右半边");
+
+        Assert.Equal("CrCgCbCu--Cu", exporter.Export(leftHalfStep.Shape!));
+        Assert.Equal("Cu--CuCcCmCy", exporter.Export(rightHalfStep.Shape!));
 
         // 末端产物就是目标。
+        ProductionStep targetStep = path.Steps.First(
+            step => step.Kind == ProductionStepKind.Target);
+
         Assert.Equal(
             exporter.Export(target),
-            exporter.Export(path.Steps[6].Shape!));
+            exporter.Export(targetStep.Shape!));
+
+        // 预旋转：P1/P2 顺转 half−ls = 2，P3/P4 逆转 rs = 1。
+        Assert.Equal(
+            2,
+            path.Steps.Count(step =>
+                step.Kind == ProductionStepKind.Rotate &&
+                step.RotationDirection == RotationDirection.Clockwise &&
+                step.RotationCount == 2));
+
+        Assert.Equal(
+            2,
+            path.Steps.Count(step =>
+                step.Kind == ProductionStepKind.Rotate &&
+                step.RotationDirection == RotationDirection.CounterClockwise &&
+                step.RotationCount == 1));
 
         // §6.1 记录的方向也应被判为合法。
         HalfStabilityResult directions = HalfStabilityAnalyzer.Analyze(target);
@@ -358,12 +383,21 @@ internal static class AnalysisTests
 
         var exporter = new ShortCodeExporter();
 
-        Assert.Equal("CrCgCbCcCu----Cu", exporter.Export(path.Steps[4].Shape!));
-        Assert.Equal("Cu----CuCmCyCwCk", exporter.Export(path.Steps[5].Shape!));
+        ProductionStep leftHalfStep = path.Steps.First(
+            step => step.Title == "交换得到左半边");
+
+        ProductionStep rightHalfStep = path.Steps.First(
+            step => step.Title == "交换得到右半边");
+
+        Assert.Equal("CrCgCbCcCu----Cu", exporter.Export(leftHalfStep.Shape!));
+        Assert.Equal("Cu----CuCmCyCwCk", exporter.Export(rightHalfStep.Shape!));
+
+        ProductionStep targetStep = path.Steps.First(
+            step => step.Kind == ProductionStepKind.Target);
 
         Assert.Equal(
             exporter.Export(target),
-            exporter.Export(path.Steps[6].Shape!));
+            exporter.Export(targetStep.Shape!));
 
         HalfStabilityResult directions = HalfStabilityAnalyzer.Analyze(target);
 
@@ -566,6 +600,25 @@ internal static class AnalysisTests
         ProductionPathResult first = ProductionPathParser.Parse(target);
 
         Assert.True(first.IsProducible, first.Error ?? "n = 20 单层全晶体应可制作");
+
+        // n > 9 时方向数字会产生歧义，整串必须用逗号分隔。
+        Assert.True(
+            first.Path!.Direction.Contains(','),
+            $"n = 20 的方向应使用逗号分隔：{first.Path.Direction}");
+
+        // 制作路径与半边稳定性表格必须使用同一套方向文本。
+        Assert.True(
+            first.Path.DirectionLegal,
+            $"n = 20 的方向应与半边稳定性分析一致：{first.Path.Direction}");
+
+        // 预旋转量与交换后转回都暴露在步骤里，且取较短方向（≤ n/2）。
+        Assert.True(
+            first.Path.Steps.Any(step =>
+                step.Kind == ProductionStepKind.Rotate &&
+                step.RotationDirection != RotationDirection.None &&
+                step.RotationCount > 0 &&
+                step.RotationCount <= target.PartCount / 2),
+            "n = 20 的制作路径应包含合法旋转步骤");
 
         // 预热一次，避免首次 JIT 计入选时。
         ProductionPathParser.Parse(target);

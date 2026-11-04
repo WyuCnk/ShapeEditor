@@ -4,13 +4,6 @@ using ShapeEditor.Core.Physics;
 namespace ShapeEditor.Core.Analysis;
 
 /// <summary>
-/// 制作路径的一步。
-/// </summary>
-public sealed record ProductionStep(
-    string Title,
-    ShapeDocument? Shape);
-
-/// <summary>
 /// 一条制作路径。
 /// </summary>
 public sealed record ProductionPath(
@@ -40,6 +33,10 @@ public sealed record ProductionPathResult(
 /// 3. Cut 固定切在 n/2，交叉拼接 out1 = 东+西、out2 = 西+东（规格 §3）；
 /// 4. 前两次交换后要转回来，末端交换不再旋转；
 /// 5. 末端两个输出中任意一个与目标旋转等价即成功（规格 §4）。
+///
+/// <see cref="ProductionPath.Steps"/> 按实际计算顺序展开：制作片、预旋转、
+/// 交换、交换后转回、半边结果、末端交换，直到顶针与堆叠。
+/// 每步的 <see cref="ProductionStep.Shape"/> 是该步产出的图形，UI 可直接画预览。
 /// </summary>
 public static class ProductionPathParser
 {
@@ -79,16 +76,16 @@ public static class ProductionPathParser
         {
             for (int rightSplit = 1; rightSplit < half; rightSplit++)
             {
-                (ShapeDocument p1, ShapeDocument p2, ShapeDocument p3, ShapeDocument p4) =
+                (ShapeDocument p1Raw, ShapeDocument p2Raw, ShapeDocument p3Raw, ShapeDocument p4Raw) =
                     BuildPillarHalfHalves(target, axis, leftSplit, rightSplit);
 
                 // Cut 会各自 Collapse 一次，四片必须稳定；
                 // 任一片不稳定就直接跳过该方向，不进入交换阶段。
                 // 稳定性与旋转无关，因此这里判定未旋转的片（起始列见 BuildPillarHalfHalves）。
-                if (!IsStable(p1, cache, axis) ||
-                    !IsStable(p2, cache, axis + leftSplit) ||
-                    !IsStable(p3, cache, axis + half) ||
-                    !IsStable(p4, cache, axis + half + rightSplit))
+                if (!IsStable(p1Raw, cache, axis) ||
+                    !IsStable(p2Raw, cache, axis + leftSplit) ||
+                    !IsStable(p3Raw, cache, axis + half) ||
+                    !IsStable(p4Raw, cache, axis + half + rightSplit))
                 {
                     continue;
                 }
@@ -96,24 +93,28 @@ public static class ProductionPathParser
                 // 通过稳定性判定后，再做规格 §2 的预旋转。
                 int leftRotation = half - leftSplit;
 
-                p1 = PillarHalfHalves.RotateRight(p1, leftRotation);
-                p2 = PillarHalfHalves.RotateRight(p2, leftRotation);
-                p3 = PillarHalfHalves.RotateRight(p3, -rightSplit);
-                p4 = PillarHalfHalves.RotateRight(p4, -rightSplit);
+                ShapeDocument p1 = PillarHalfHalves.RotateRight(p1Raw, leftRotation);
+                ShapeDocument p2 = PillarHalfHalves.RotateRight(p2Raw, leftRotation);
+                ShapeDocument p3 = PillarHalfHalves.RotateRight(p3Raw, -rightSplit);
+                ShapeDocument p4 = PillarHalfHalves.RotateRight(p4Raw, -rightSplit);
 
                 // 同侧配对交换，再按 §2 转回。
-                ShapeDocument? leftHalf = ExchangeAndRotate(
+                (ShapeDocument? leftRaw, ShapeDocument? leftHalf) = ExchangeAndRotate(
                     p1, p2, -leftRotation, mode);
 
-                if (leftHalf is null || !IsStable(leftHalf, cache, 0))
+                if (leftRaw is null ||
+                    leftHalf is null ||
+                    !IsStable(leftHalf, cache, 0))
                 {
                     continue;
                 }
 
-                ShapeDocument? rightHalf = ExchangeAndRotate(
+                (ShapeDocument? rightRaw, ShapeDocument? rightHalf) = ExchangeAndRotate(
                     p3, p4, rightSplit, mode);
 
-                if (rightHalf is null || !IsStable(rightHalf, cache, half))
+                if (rightRaw is null ||
+                    rightHalf is null ||
+                    !IsStable(rightHalf, cache, half))
                 {
                     continue;
                 }
@@ -144,7 +145,7 @@ public static class ProductionPathParser
                     continue;
                 }
 
-                string direction = Display(
+                string direction = PillarHalfHalves.FormatDirection(
                     axis,
                     half,
                     leftSplit,
@@ -153,17 +154,23 @@ public static class ProductionPathParser
                 // 方向合法性沿用半边分析的结论（两个半边 + 四个带柱半半边都稳定）。
                 HalfStabilityResult halfResult = HalfStabilityAnalyzer.Analyze(target, mode);
 
-                var steps = new List<ProductionStep>
-                {
-                    new ProductionStep("制作带柱子的半半边 P1", p1),
-                    new ProductionStep("制作带柱子的半半边 P2", p2),
-                    new ProductionStep("制作带柱子的半半边 P3", p3),
-                    new ProductionStep("制作带柱子的半半边 P4", p4),
-                    new ProductionStep("交换得到左半边", leftHalf),
-                    new ProductionStep("交换得到右半边", rightHalf),
-                    new ProductionStep("交换得到目标图形", product),
-                    new ProductionStep("顶针与堆叠（待接入）", null)
-                };
+                List<ProductionStep> steps = BuildSteps(
+                    parts,
+                    leftRotation,
+                    rightSplit,
+                    p1Raw,
+                    p1,
+                    p2Raw,
+                    p2,
+                    leftRaw,
+                    leftHalf,
+                    p3Raw,
+                    p3,
+                    p4Raw,
+                    p4,
+                    rightRaw,
+                    rightHalf,
+                    product);
 
                 return new ProductionPathResult(
                     true,
@@ -179,6 +186,65 @@ public static class ProductionPathParser
         }
 
         return new ProductionPathResult(false, null, "没有找到可行的制作路径。");
+    }
+
+    /// <summary>
+    /// 按实际计算顺序展开步骤。
+    ///
+    /// 每一步都带上产出图形，界面据此画节点卡片；旋转步骤同时记录
+    /// 方向与数量（已规范成较短方向），交换后转回也作为独立旋转步骤出现。
+    /// </summary>
+    private static List<ProductionStep> BuildSteps(
+        int parts,
+        int leftRotation,
+        int rightRotation,
+        ShapeDocument p1Raw,
+        ShapeDocument p1,
+        ShapeDocument p2Raw,
+        ShapeDocument p2,
+        ShapeDocument leftRaw,
+        ShapeDocument leftHalf,
+        ShapeDocument p3Raw,
+        ShapeDocument p3,
+        ShapeDocument p4Raw,
+        ShapeDocument p4,
+        ShapeDocument rightRaw,
+        ShapeDocument rightHalf,
+        ShapeDocument product)
+    {
+        (RotationDirection leftDirection, int leftCount, string leftTitle) =
+            PillarHalfHalves.DescribeRotation(parts, leftRotation);
+
+        (RotationDirection rightDirection, int rightCount, string rightTitle) =
+            PillarHalfHalves.DescribeRotation(parts, -rightRotation);
+
+        (RotationDirection leftBackDirection, int leftBackCount, string leftBackTitle) =
+            PillarHalfHalves.DescribeRotation(parts, -leftRotation);
+
+        (RotationDirection rightBackDirection, int rightBackCount, string rightBackTitle) =
+            PillarHalfHalves.DescribeRotation(parts, rightRotation);
+
+        return new List<ProductionStep>
+        {
+            new("制作带柱子的半半边 P1", p1Raw, ProductionStepKind.PillarPiece, RotationDirection.None, 0),
+            new(leftTitle, p1, ProductionStepKind.Rotate, leftDirection, leftCount),
+            new("制作带柱子的半半边 P2", p2Raw, ProductionStepKind.PillarPiece, RotationDirection.None, 0),
+            new(leftTitle, p2, ProductionStepKind.Rotate, leftDirection, leftCount),
+            new("交换", leftRaw, ProductionStepKind.Exchange, RotationDirection.None, 0),
+            new(leftBackTitle, leftHalf, ProductionStepKind.Rotate, leftBackDirection, leftBackCount),
+            new("交换得到左半边", leftHalf, ProductionStepKind.Exchange, RotationDirection.None, 0),
+
+            new("制作带柱子的半半边 P3", p3Raw, ProductionStepKind.PillarPiece, RotationDirection.None, 0),
+            new(rightTitle, p3, ProductionStepKind.Rotate, rightDirection, rightCount),
+            new("制作带柱子的半半边 P4", p4Raw, ProductionStepKind.PillarPiece, RotationDirection.None, 0),
+            new(rightTitle, p4, ProductionStepKind.Rotate, rightDirection, rightCount),
+            new("交换", rightRaw, ProductionStepKind.Exchange, RotationDirection.None, 0),
+            new(rightBackTitle, rightHalf, ProductionStepKind.Rotate, rightBackDirection, rightBackCount),
+            new("交换得到右半边", rightHalf, ProductionStepKind.Exchange, RotationDirection.None, 0),
+
+            new("交换得到目标图形", product, ProductionStepKind.Target, RotationDirection.None, 0),
+            new("顶针与堆叠（待接入）", null, ProductionStepKind.Pending, RotationDirection.None, 0)
+        };
     }
 
     /// <summary>
@@ -212,10 +278,12 @@ public static class ProductionPathParser
     }
 
     /// <summary>
-    /// 同侧两片交换后转回：取 out2 = Merge(A 西, B 东) 作为需要的半边。
-    /// 规格 §5 中左半边回转 −(half − ls)，右半边回转 +rs。
+    /// 同侧两片交换后再转回。
+    ///
+    /// 返回交换的原始输出（out2 = Merge(A 西, B 东)）与转回后的半边，
+    /// 两者都作为步骤的产出图形暴露给界面。
     /// </summary>
-    private static ShapeDocument? ExchangeAndRotate(
+    private static (ShapeDocument? Raw, ShapeDocument? Rotated) ExchangeAndRotate(
         ShapeDocument first,
         ShapeDocument second,
         int rotation,
@@ -226,10 +294,12 @@ public static class ProductionPathParser
         // ShapeExchange 的 Second 即规格里的 out2 = Merge(A 西, B 东)。
         if (result.Error is not null || result.Second is null)
         {
-            return null;
+            return (null, null);
         }
 
-        return PillarHalfHalves.RotateRight(result.Second, rotation);
+        ShapeDocument raw = result.Second;
+
+        return (raw, PillarHalfHalves.RotateRight(raw, rotation));
     }
 
     /// <summary>交换输出是否与目标旋转等价。</summary>
@@ -292,30 +362,5 @@ public static class ProductionPathParser
         int contentStart)
     {
         return cache.IsStable(shape, contentStart);
-    }
-
-    private static string Display(
-        int axis,
-        int half,
-        int leftSplit,
-        int rightSplit)
-    {
-        int parts = half * 2;
-
-        string leftText = Numbers(axis, leftSplit, parts) +
-                          "+" +
-                          Numbers(axis + leftSplit, half - leftSplit, parts);
-
-        string rightText = Numbers(axis + half, rightSplit, parts) +
-                           "+" +
-                           Numbers(axis + half + rightSplit, half - rightSplit, parts);
-
-        return $"({leftText})+({rightText})";
-
-        static string Numbers(int start, int count, int parts)
-        {
-            return string.Join("", Enumerable.Range(0, count)
-                .Select(index => ((start + index) % parts + 1).ToString()));
-        }
     }
 }

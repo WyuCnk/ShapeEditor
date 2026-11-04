@@ -108,7 +108,7 @@ public static class HalfStabilityAnalyzer
                         leftPiecesStable[leftSplit] &&
                         rightPiecesStable[rightSplit];
 
-                    string text = Display(left, leftSplit, right, rightSplit);
+                    string text = Display(axis, half, leftSplit, rightSplit);
 
                     directionList.Add(new ExchangeDirection(
                         axis,
@@ -207,22 +207,17 @@ public static class HalfStabilityAnalyzer
         return result;
     }
 
+    /// <summary>
+    /// 交换方向的显示文本，与 <see cref="ProductionPathParser"/> 共用
+    /// <see cref="PillarHalfHalves.FormatDirection"/>，保证半边稳定性表格与
+    /// 制作路径的方向文本完全一致。
+    /// </summary>
     private static string Display(
-        int[] left,
+        int axis,
+        int half,
         int leftSplit,
-        int[] right,
         int rightSplit)
     {
-        string leftText = string.Join("", left.Take(leftSplit).Select(Number)) +
-                          "+" +
-                          string.Join("", left.Skip(leftSplit).Select(Number));
-
-        string rightText = string.Join("", right.Take(rightSplit).Select(Number)) +
-                           "+" +
-                           string.Join("", right.Skip(rightSplit).Select(Number));
-
-        return $"({leftText})+({rightText})";
-
-        static string Number(int index) => (index + 1).ToString();
+        return PillarHalfHalves.FormatDirection(axis, half, leftSplit, rightSplit);
     }
 }
