@@ -195,60 +195,72 @@
             </ScrollView>
 
             <!--
-                画布视口：只负责裁剪，不参与滚动。
+                画布视口：裁剪 + 滚动 + 落点。
 
-                这里不能用 ScrollView：Android 的 NestedScrollView 在竖向拖动超过
-                触摸阈值时会无条件拦截触摸（即使内容根本不需要滚动），
-                子视图的 Pan / Pinch 会收到 Canceled，表现就是节点拖一下就不跟手、
-                捏合缩放时灵时不灵、拖动中突然跳位。
-                普通容器 + IsClippedToBounds 只裁剪、不抢手势。
+                画布放在 ScrollView 里，平移与滚动边界全部交给平台的 ScrollView，
+                画布侧不再写 Translation，整个页面只有一套坐标。
+                缩放只改 Canvas.Scale（锚点 0,0）和 ScaledHost 的请求尺寸，
+                滚动范围自然等于「逻辑画布 × 比例」。
+
+                素材落点挂在视口上（铺满，与虚线边框一致）：
+                落点坐标加上滚动量、除以比例，就回到逻辑画布坐标，
+                不会出现「看着在边框里、拖过去却没反应」。
             -->
             <Grid Grid.Column="1"
                   x:Name="CanvasViewport"
                   IsClippedToBounds="True"
-                  SizeChanged="OnCanvasViewportSizeChanged">
+                  BackgroundColor="White">
 
-                <!--
-                    宿主尺寸 = 视口尺寸；画布贴左上角摆放（平移量为 0 时看到左上角），缩放锚点 0.5。
+                <Grid.GestureRecognizers>
+                    <!-- 素材拖到画布视口任意位置都能落点 -->
+                    <DropGestureRecognizer AllowDrop="True" Drop="OnCanvasDrop" />
+                </Grid.GestureRecognizers>
 
-                    素材落点挂在宿主上，而不是画布上：画布缩小后只占视口中间一小块，
-                    剩下的白底（宿主背景）看着和画布一样，落点如果只认画布，
-                    拖到边上就会静默失败。宿主铺满整个视口，落点再按缩放 / 平移
-                    换算回画布坐标，和「画布边框」圈出来的范围完全一致。
-                -->
-                <Grid x:Name="CanvasHost"
-                      BackgroundColor="White">
+                <ScrollView x:Name="CanvasScroll"
+                            Orientation="Both"
+                            HorizontalScrollBarVisibility="Never"
+                            VerticalScrollBarVisibility="Never">
+                    <!--
+                        滚动宿主：请求尺寸 = 逻辑画布尺寸 × 比例。
+                        画布本身仍按 1 倍尺寸布局，视觉大小由 Scale 决定，
+                        所以在滚动宿主里贴左上角（锚点 0,0）即可。
+                    -->
+                    <Grid x:Name="ScaledHost"
+                          SizeChanged="OnScaledHostSizeChanged">
 
-                    <Grid.GestureRecognizers>
-                        <!-- 素材拖到画布视口时，在落点创建节点 -->
-                        <DropGestureRecognizer AllowDrop="True" Drop="OnCanvasDrop" />
-                    </Grid.GestureRecognizers>
-
-                    <AbsoluteLayout x:Name="Canvas"
-                                    AnchorX="0.5"
-                                    AnchorY="0.5"
-                                    HorizontalOptions="Start"
-                                    VerticalOptions="Start"
-                                    BackgroundColor="White">
-                        <AbsoluteLayout.GestureRecognizers>
-                            <!-- 点空白处取消堆叠 / 交换的第二输入选择 -->
-                            <TapGestureRecognizer Tapped="OnCanvasTapped" />
-
-                            <!-- 双指捏合缩放：只改显示比例，节点坐标与导出都不变 -->
+                        <Grid.GestureRecognizers>
+                            <!--
+                                画布缩得比视口小时，四周的空白落在滚动宿主上；
+                                宿主也挂一份捏合手势，与画布共用同一个处理函数，
+                                保证虚线边框圈出来的范围里都能捏合缩放。
+                            -->
                             <PinchGestureRecognizer PinchUpdated="OnCanvasPinchUpdated" />
+                        </Grid.GestureRecognizers>
 
-                            <!-- 单指在空白处拖动平移画布；落在节点卡片上时由卡片的拖动处理 -->
-                            <PanGestureRecognizer PanUpdated="OnCanvasPanUpdated" />
-                        </AbsoluteLayout.GestureRecognizers>
-                    </AbsoluteLayout>
-                </Grid>
+                        <AbsoluteLayout x:Name="Canvas"
+                                        AnchorX="0"
+                                        AnchorY="0"
+                                        HorizontalOptions="Start"
+                                        VerticalOptions="Start"
+                                        BackgroundColor="White">
+                            <AbsoluteLayout.GestureRecognizers>
+                                <!-- 点空白处取消堆叠 / 交换的第二输入选择 -->
+                                <TapGestureRecognizer Tapped="OnCanvasTapped" />
+
+                                <!-- 双指捏合缩放：只改显示比例，节点坐标与导出都不变 -->
+                                <PinchGestureRecognizer PinchUpdated="OnCanvasPinchUpdated" />
+                            </AbsoluteLayout.GestureRecognizers>
+                        </AbsoluteLayout>
+                    </Grid>
+                </ScrollView>
             </Grid>
 
             <!--
-                画布边框：钉在视口外圈，用来一眼看出「哪里是画布」。
+                画布边框：钉在视口外圈，用来一眼看出「哪里能拖、哪里能放」。
 
-                它和视口占同一个 Grid 单元，但不参与画布的 Scale / Translation，
-                所以 0.4–2.0 任意缩放、任意平移时边框都严格贴住视口边缘。
+                它和视口占同一个 Grid 单元，不参与画布的缩放与滚动，
+                所以 0.4–2.0 任意比例、任意滚动位置下边框都严格贴住视口边缘，
+                与素材落点范围完全一致。
                 InputTransparent 保证它不吃手势；只占 1px，不遮挡节点。
             -->
             <Border Grid.Column="1"

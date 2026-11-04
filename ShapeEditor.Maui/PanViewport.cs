@@ -5,11 +5,12 @@ namespace ShapeEditor.Maui;
 /// <summary>
 /// 视口单指平移的公共状态机。
 ///
-/// 编辑器（<see cref="MainPage"/>）的「移动模式」与工作区画布共用这一份实现，
-/// 不再各自维护「上一次触点」与「是否正在平移」：
-/// 编辑器把位移加到图形 Drawable 的 PanX/PanY 上，
-/// 工作区把位移加到画布容器的 TranslationX/TranslationY 上。
-/// 两边都只改变显示位置，图形 / 节点的逻辑坐标保持不变。
+/// 编辑器（<see cref="MainPage"/>）的「移动模式」使用这份实现：
+/// 把逐帧位移加到图形 Drawable 的 PanX/PanY 上，只改变显示位置，
+/// 图形的逻辑坐标保持不变。
+///
+/// 工作区画布不再使用它：画布的平移与边界已经整体交给 ScrollView，
+/// 画布侧不再维护任何手写平移量。
 /// </summary>
 public sealed class PanViewport
 {

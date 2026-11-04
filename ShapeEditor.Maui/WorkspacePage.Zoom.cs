@@ -1,14 +1,17 @@
 namespace ShapeEditor.Maui;
 
 /// <summary>
-/// 工作区画布的显示变换：双指捏合缩放、单指拖空白处平移、右下角缩放按钮。
+/// 工作区画布的显示变换：双指捏合缩放、右下角缩放按钮，
+/// 以及「本次手势不要被 ScrollView 拦截」的平台请求。
 ///
-/// 缩放与平移都只是显示变换：
-/// 节点逻辑坐标（X/Y）、卡片布局，以及导出图片的分辨率都不受影响。
+/// 画布只有一个坐标系：
+/// 节点逻辑坐标 = 画布布局坐标（不缩放、不平移）。
+/// 缩放只改 <c>Canvas.Scale</c> 与 <c>ScaledHost</c> 的请求尺寸，
+/// 平移与滚动边界全部交给 <c>CanvasScroll</c>（ScrollView），
+/// 画布侧不再有任何手写 Translation。
+///
 /// 导出走 <see cref="WorkspaceImageExporter"/> 的离屏渲染，固定按 1 倍（30px 单元格）输出，
-/// 不读取这里的比例与平移量。
-///
-/// 缩放期间不处理节点拖动与点选，缩放结束后保持当前选中状态。
+/// 不读取这里的比例，也不读取滚动位置。
 /// </summary>
 public partial class WorkspacePage
 {
@@ -23,12 +26,18 @@ public partial class WorkspacePage
 
     /// <summary>
     /// 捏合结束后继续忽略拖动 / 点击的时间。
-    /// 手指抬起时可能还有残留回调，留一点余量避免误选或误拖。
+    /// 手指抬起时可能还有残留回调，留一点余量避免误拖或误选。
     /// </summary>
     private static readonly TimeSpan GestureCooldown = TimeSpan.FromMilliseconds(250);
 
     /// <summary>当前画布缩放比例，只影响显示。</summary>
     private double _canvasScale = 1.0;
+
+    /// <summary>画布逻辑宽度（未缩放），由 RenderCanvas 维护。</summary>
+    private double _canvasContentWidth;
+
+    /// <summary>画布逻辑高度（未缩放），由 RenderCanvas 维护。</summary>
+    private double _canvasContentHeight;
 
     /// <summary>是否正在双指捏合。</summary>
     private bool _pinching;
@@ -36,38 +45,70 @@ public partial class WorkspacePage
     /// <summary>最近一次捏合结束的时间。</summary>
     private DateTime _pinchEndedAt = DateTime.MinValue;
 
+    /// <summary>缩放后待补的滚动位置，等新尺寸生效后再滚一次。</summary>
+    private bool _hasPendingScroll;
+
+    /// <summary>是否已经排过延迟兜底，避免捏合时每帧都排一个回调。</summary>
+    private bool _scrollFallbackScheduled;
+
+    private double _pendingScrollX;
+
+    private double _pendingScrollY;
+
+#if ANDROID
     /// <summary>
-    /// 单指平移画布的状态机，与编辑器「移动模式」共用 <see cref="PanViewport"/>。
+    /// 已挂上「多指按下」监听的画布元素（画布 + 滚动宿主）。
+    /// 触摸落在哪一层，就由哪一层的原生视图收到 ACTION_POINTER_DOWN。
     /// </summary>
-    private readonly PanViewport _panViewport = new();
+    private readonly Dictionary<Android.Views.View, EventHandler<Android.Views.View.TouchEventArgs>> _touchHooks = new();
+#endif
 
     /// <summary>缩放中，或刚结束 <see cref="GestureCooldown"/> 之内。</summary>
     private bool IsPinching =>
         _pinching ||
         DateTime.UtcNow - _pinchEndedAt < GestureCooldown;
 
-    #region 视口
+    #region 尺寸
 
     /// <summary>
-    /// 视口尺寸变化：把滚动宿主固定为视口大小。
+    /// 记录逻辑画布尺寸，并按当前比例同步滚动宿主的请求尺寸。
     ///
-    /// ScrollView 在这里只负责裁剪，不参与滚动；画布在宿主内左上角对齐，
-    /// 平移与缩放都由画布自身的 Translation / Scale 完成。
+    /// 画布自身仍按 1 倍尺寸布局（节点坐标就是布局坐标），
+    /// 视觉大小由 <c>Canvas.Scale</c> 决定；
+    /// <c>ScaledHost</c> 的请求尺寸 = 逻辑尺寸 × 比例，
+    /// 这样 ScrollView 的滚动范围与缩放后看到的画布完全一致，
+    /// 不需要再手写平移量，也不需要自己夹取边界。
     /// </summary>
-    private void OnCanvasViewportSizeChanged(
+    private void SetCanvasContentSize(
+        double width,
+        double height)
+    {
+        _canvasContentWidth = Math.Max(1, width);
+        _canvasContentHeight = Math.Max(1, height);
+
+        Canvas.WidthRequest = _canvasContentWidth;
+        Canvas.HeightRequest = _canvasContentHeight;
+        Canvas.Scale = _canvasScale;
+
+        UpdateScaledHostSize();
+    }
+
+    /// <summary>让滚动宿主覆盖「缩放后的画布」，不改画布自身的布局。</summary>
+    private void UpdateScaledHostSize()
+    {
+        ScaledHost.WidthRequest = Math.Max(1, _canvasContentWidth * _canvasScale);
+        ScaledHost.HeightRequest = Math.Max(1, _canvasContentHeight * _canvasScale);
+    }
+
+    /// <summary>
+    /// ScaledHost 拿到新尺寸：原生 ScrollView 此时才知道新的滚动范围，
+    /// 把缩放时暂存的滚动位置补上。
+    /// </summary>
+    private void OnScaledHostSizeChanged(
         object? sender,
         EventArgs e)
     {
-        if (CanvasViewport.Width <= 0 || CanvasViewport.Height <= 0)
-        {
-            return;
-        }
-
-        CanvasHost.WidthRequest = CanvasViewport.Width;
-        CanvasHost.HeightRequest = CanvasViewport.Height;
-
-        // 视口变了，平移量要重新夹回可见范围
-        SetCanvasPan(Canvas.TranslationX, Canvas.TranslationY);
+        ApplyPendingScroll();
     }
 
     #endregion
@@ -77,140 +118,141 @@ public partial class WorkspacePage
     /// <summary>
     /// 应用画布显示缩放。
     ///
-    /// 只改画布容器的 Scale（锚点 0.5，绕画布中心）；
-    /// 同时把「缩放前视口中心对应的内容点」重新放回视口中心，
-    /// 这样点按钮或捏合时画面不会突然跳位。节点坐标与卡片布局一律不动，导出也不读取这个比例。
+    /// 锚点是视口中心：缩放前后，同一个逻辑内容点始终落在视口中心。
+    /// 实现上不挪画布，只改 <c>Canvas.Scale</c> 与 <c>ScaledHost</c> 请求尺寸，
+    /// 再让 ScrollView 滚到「内容点 × 新比例 − 视口中心」，
+    /// 滚动范围由 ScrollView 自己夹取（内容比视口小时即为 0，不会露负滚动）。
+    ///
+    /// 节点坐标与卡片布局一律不动，导出也不读取这个比例。
     /// </summary>
     private void ApplyCanvasScale(
         double scale)
     {
         // 按 0.001 收敛，避免 1.15 + 0.15 这类浮点误差让比例显示成 99%
-        double target = Math.Round(scale, 3);
-
-        // 缩放前视口中心对应的内容坐标
-        double anchorX = ContentAtViewportCenter(
-            CanvasViewport.Width,
-            Canvas.WidthRequest,
-            _canvasScale,
-            Canvas.TranslationX);
-
-        double anchorY = ContentAtViewportCenter(
-            CanvasViewport.Height,
-            Canvas.HeightRequest,
-            _canvasScale,
-            Canvas.TranslationY);
-
-        _canvasScale = Math.Clamp(
-            target,
+        double target = Math.Clamp(
+            Math.Round(scale, 3),
             MinCanvasScale,
             MaxCanvasScale);
 
+        if (Math.Abs(target - _canvasScale) < 0.0005)
+        {
+            UpdateZoomLabel();
+
+            return;
+        }
+
+        // 缩放前视口中心对应的逻辑画布坐标（换算要用缩放前的比例）
+        Point anchor = ViewportToCanvas(new Point(
+            CanvasViewport.Width / 2,
+            CanvasViewport.Height / 2));
+
+        _canvasScale = target;
+
         Canvas.Scale = _canvasScale;
 
-        // 把同一个内容点放回视口中心
-        Canvas.TranslationX = TranslationForContentPoint(
-            anchorX,
-            CanvasViewport.Width,
-            Canvas.WidthRequest,
-            _canvasScale);
-
-        Canvas.TranslationY = TranslationForContentPoint(
-            anchorY,
-            CanvasViewport.Height,
-            Canvas.HeightRequest,
-            _canvasScale);
+        UpdateScaledHostSize();
 
         UpdateZoomLabel();
 
-        // 比例变了，可平移范围也跟着变，重新夹一次
-        SetCanvasPan(Canvas.TranslationX, Canvas.TranslationY);
+        RequestScrollToContentCenter(anchor);
     }
 
     /// <summary>
-    /// 视口中心横向 / 纵向对应的内容坐标。
+    /// 缩放后把指定逻辑内容点放回视口中心。
     ///
-    /// 画布以中心为锚点缩放，所以视觉左上角比布局位置偏移 content × (1 − scale) / 2。
+    /// 只记录目标滚动位置：ScaledHost 的新尺寸要等下一次布局才落到原生 ScrollView 上，
+    /// 立刻滚会被旧的内容范围夹住，所以先排一次主线程回调，
+    /// 再由 <see cref="OnScaledHostSizeChanged"/> 与一次延迟回调补上。
     /// </summary>
-    private static double ContentAtViewportCenter(
-        double viewport,
-        double content,
-        double scale,
-        double offset)
+    private void RequestScrollToContentCenter(
+        Point contentPoint)
     {
-        if (viewport <= 0 || content <= 0 || scale <= 0)
+        if (CanvasViewport.Width <= 0 || CanvasViewport.Height <= 0)
         {
-            return 0;
+            return;
         }
 
-        return ViewportToContentAxis(
-            viewport / 2,
-            content,
-            scale,
-            offset);
+        _pendingScrollX = Math.Max(
+            0,
+            contentPoint.X * _canvasScale - CanvasViewport.Width / 2);
+
+        _pendingScrollY = Math.Max(
+            0,
+            contentPoint.Y * _canvasScale - CanvasViewport.Height / 2);
+
+        _hasPendingScroll = true;
+
+        Dispatcher.Dispatch(ApplyPendingScroll);
+
+        // 布局偶尔会比主线程回调更晚，留一次兜底；读的是当前字段，不会滚到旧目标
+        if (!_scrollFallbackScheduled)
+        {
+            _scrollFallbackScheduled = true;
+
+            Dispatcher.DispatchDelayed(
+                TimeSpan.FromMilliseconds(120),
+                ApplyPendingScrollAndClear);
+        }
+    }
+
+    /// <summary>有暂存目标时滚过去（不清标记，等尺寸变化或兜底再滚一次）。</summary>
+    private void ApplyPendingScroll()
+    {
+        if (!_hasPendingScroll)
+        {
+            return;
+        }
+
+        ScrollToPending();
+    }
+
+    /// <summary>兜底：再滚一次并清掉暂存目标。</summary>
+    private void ApplyPendingScrollAndClear()
+    {
+        _scrollFallbackScheduled = false;
+
+        if (!_hasPendingScroll)
+        {
+            return;
+        }
+
+        _hasPendingScroll = false;
+
+        ScrollToPending();
+    }
+
+    /// <summary>按当前暂存目标滚动（不判断标记）。</summary>
+    private void ScrollToPending()
+    {
+        if (CanvasScroll.Handler is null)
+        {
+            return;
+        }
+
+        _ = CanvasScroll.ScrollToAsync(
+            _pendingScrollX,
+            _pendingScrollY,
+            false);
     }
 
     /// <summary>
-    /// 视口坐标 → 画布内容坐标（拖放素材的落点换算用）。
+    /// 视口坐标 → 逻辑画布坐标（拖放落点 / 点选判断用）。
     ///
-    /// 与 <see cref="ContentAtViewportCenter"/> 是同一个式子，只是允许任意落点：
-    /// 先扣掉视觉左上角偏移（含缩放与平移），再除以缩放比例。
-    /// 缩放、平移都只是显示变换，换回来的内容坐标才是节点坐标所在的坐标系。
+    /// 视口坐标加上 ScrollView 的滚动量，就是「缩放后的内容坐标」；
+    /// 再除以比例得到逻辑画布坐标。
+    /// 画布在 ScaledHost 里贴左上角摆放，逻辑画布原点偏移为 0，
+    /// 所以这里不需要再平移。
     /// </summary>
     private Point ViewportToCanvas(
         Point viewportPoint)
     {
+        double scale = _canvasScale > 0
+            ? _canvasScale
+            : 1d;
+
         return new Point(
-            ViewportToContentAxis(
-                viewportPoint.X,
-                Canvas.WidthRequest,
-                _canvasScale,
-                Canvas.TranslationX),
-            ViewportToContentAxis(
-                viewportPoint.Y,
-                Canvas.HeightRequest,
-                _canvasScale,
-                Canvas.TranslationY));
-    }
-
-    /// <summary>
-    /// 单个方向：视口坐标 → 内容坐标。
-    ///
-    /// 画布按 1 倍尺寸布局、以中心为锚点缩放，
-    /// 视觉左上角 = content × (1 − scale) / 2 + 平移量，
-    /// 所以 contentPoint = (viewportPoint − 视觉左上角) ÷ scale。
-    /// </summary>
-    private static double ViewportToContentAxis(
-        double viewportPoint,
-        double content,
-        double scale,
-        double offset)
-    {
-        // 画布还没量出尺寸 / 比例异常：按 1 倍原样返回，避免除零
-        if (content <= 0 || scale <= 0)
-        {
-            return viewportPoint;
-        }
-
-        double visualLeft = content * (1 - scale) / 2 + offset;
-
-        return (viewportPoint - visualLeft) / scale;
-    }
-
-    /// <summary>让指定内容坐标落在视口中心所需的平移量。</summary>
-    private static double TranslationForContentPoint(
-        double contentPoint,
-        double viewport,
-        double content,
-        double scale)
-    {
-        if (viewport <= 0 || content <= 0 || scale <= 0)
-        {
-            return 0;
-        }
-
-        return viewport / 2
-            - content * (1 - scale) / 2
-            - contentPoint * scale;
+            (viewportPoint.X + CanvasScroll.ScrollX) / scale,
+            (viewportPoint.Y + CanvasScroll.ScrollY) / scale);
     }
 
     /// <summary>按钮旁显示当前比例，例如 100%。</summary>
@@ -225,7 +267,7 @@ public partial class WorkspacePage
     /// e.Scale 是相对上一次回调的增量比例，累乘到当前比例上，
     /// 再夹到 0.4–2.0；整个过程只改显示比例，不碰节点坐标与选中状态。
     ///
-    /// 画布、画布宿主与节点卡片共用这一个处理函数：
+    /// 画布与节点卡片共用这一个处理函数：
     /// 触摸落在哪一层，就由哪一层收到捏合事件。
     /// </summary>
     private void OnCanvasPinchUpdated(
@@ -277,8 +319,8 @@ public partial class WorkspacePage
 
         CancelNodeDrag();
 
-        // 单指平移量一起作废，避免平移与缩放叠加
-        _panViewport.End();
+        // 捏合期间也不让 ScrollView 抢走触摸
+        SuppressScrollIntercept(Canvas);
     }
 
     /// <summary>
@@ -318,120 +360,87 @@ public partial class WorkspacePage
 
     #endregion
 
-    #region 平移
+    #region 手势让路
 
     /// <summary>
-    /// 单指在空白处拖动：整体平移画布。
+    /// 挂上画布与滚动宿主的原生触摸监听：第二根手指一落下就让 ScrollView 让路。
     ///
-    /// 与编辑器「移动模式」共用 <see cref="PanViewport"/>：
-    /// PanUpdated 只提供相对起点的累计位移，这里把 (TotalX, TotalY)
-    /// 当作一串从原点出发的触点喂给同一个状态机，取出逐帧位移。
-    /// 平移只改画布的 Translation，节点逻辑坐标不变。
+    /// 捏合手势要等手指移动、两指间距变化超过阈值后才会开始，
+    /// 而 ScrollView 在同一帧的移动里就可能已经把触摸抢走；
+    /// 所以在原生的 ACTION_POINTER_DOWN 上先置「不要拦截本次手势」。
+    /// 画布缩得比视口小时，空白处落在滚动宿主上，所以两层都要挂。
     /// </summary>
-    private void OnCanvasPanUpdated(
-        object? sender,
-        PanUpdatedEventArgs e)
+    private void AttachCanvasTouchSuppression()
     {
-        switch (e.StatusType)
+#if ANDROID
+        DetachCanvasTouchSuppression();
+
+        AttachTouchSuppression(Canvas);
+
+        AttachTouchSuppression(ScaledHost);
+#endif
+    }
+
+    /// <summary>给一个画布元素的平台视图挂上「第二根手指按下」的监听。</summary>
+    private void AttachTouchSuppression(
+        VisualElement element)
+    {
+#if ANDROID
+        if (element.Handler?.PlatformView is not Android.Views.View view)
         {
-            case GestureStatus.Started:
-                // 捏合中（含刚结束的冷却期）、或正在拖节点时不开始平移画布
-                if (IsPinching || IsDraggingNode)
-                {
-                    _panViewport.End();
-
-                    return;
-                }
-
-                _panViewport.Begin(new Point(0, 0));
-
-                return;
-
-            case GestureStatus.Running:
-                // 手势被抢占（第二根手指落下开始捏合、或节点拖动接管）：直接作废，不留半截平移
-                if (IsPinching || IsDraggingNode)
-                {
-                    _panViewport.End();
-
-                    return;
-                }
-
-                if (!_panViewport.TryMove(
-                        new Point(e.TotalX, e.TotalY),
-                        out double deltaX,
-                        out double deltaY))
-                {
-                    return;
-                }
-
-                SetCanvasPan(
-                    Canvas.TranslationX + deltaX,
-                    Canvas.TranslationY + deltaY);
-
-                return;
-
-            default:
-                _panViewport.End();
-
-                return;
+            return;
         }
+
+        void Handler(
+            object? sender,
+            Android.Views.View.TouchEventArgs e)
+        {
+            if (e.Event is { } motion &&
+                motion.ActionMasked == Android.Views.MotionEventActions.PointerDown)
+            {
+                SuppressScrollIntercept(element);
+            }
+        }
+
+        view.Touch += Handler;
+
+        _touchHooks[view] = Handler;
+#endif
+    }
+
+    /// <summary>摘掉所有原生触摸监听。</summary>
+    private void DetachCanvasTouchSuppression()
+    {
+#if ANDROID
+        foreach (KeyValuePair<Android.Views.View, EventHandler<Android.Views.View.TouchEventArgs>> pair in _touchHooks)
+        {
+            pair.Key.Touch -= pair.Value;
+        }
+
+        _touchHooks.Clear();
+#endif
     }
 
     /// <summary>
-    /// 设置画布平移量，并夹在可见范围内。
+    /// 请求外层滚动容器在本次手势中不要拦截触摸（仅 Android 需要）。
     ///
-    /// 平移量是画布相对左上角的显示偏移：0 表示看画布左上角（和旧版滚动到 0 一致）。
-    /// 内容比视口大时可以平移到内容边缘；比视口小时直接居中，避免把画布拖出视口。
+    /// 节点卡片在手指按下、画布在捏合开始时调用。
+    /// Android 的 ViewGroup 会把「不要拦截」逐级传给所有父容器，
+    /// 所以 ScrollView（Orientation=Both 时还包括它内层的横向滚动容器）
+    /// 都不会再把手势从卡片 / 画布手里抢走。
+    /// 这个标志由 Android 在下一根手指按下时自动清零，不需要手工恢复；
+    /// 也因此没有退回「Canvas.Translation + card.Translation」的双写方案。
     /// </summary>
-    private void SetCanvasPan(
-        double x,
-        double y)
+    private static void SuppressScrollIntercept(
+        VisualElement element)
     {
-        Canvas.TranslationX = ClampPanAxis(
-            x,
-            CanvasViewport.Width,
-            Canvas.WidthRequest,
-            _canvasScale);
-
-        Canvas.TranslationY = ClampPanAxis(
-            y,
-            CanvasViewport.Height,
-            Canvas.HeightRequest,
-            _canvasScale);
-    }
-
-    /// <summary>
-    /// 单个方向上的平移夹取。
-    ///
-    /// 画布按 1 倍尺寸布局、以中心为锚点缩放，
-    /// 所以视觉左上角比布局位置偏移 content × (1 − scale) / 2；
-    /// 夹取上下限时要把这段偏移算进去，否则放大后画布边缘会露白。
-    /// </summary>
-    private static double ClampPanAxis(
-        double offset,
-        double viewport,
-        double content,
-        double scale)
-    {
-        if (viewport <= 0 || content <= 0 || scale <= 0)
+#if ANDROID
+        if (element.Handler?.PlatformView is Android.Views.View view &&
+            view.Parent is Android.Views.IViewParent parent)
         {
-            return 0;
+            parent.RequestDisallowInterceptTouchEvent(true);
         }
-
-        double scaled = content * scale;
-
-        // 内容比视口小：居中显示，居中位置与缩放比例无关
-        if (scaled <= viewport)
-        {
-            return (viewport - content) / 2;
-        }
-
-        double half = content * (scale - 1) / 2;
-
-        // 上界：内容左边贴住视口左边；下界：内容右边贴住视口右边
-        double min = viewport - scaled + half;
-
-        return Math.Clamp(offset, min, half);
+#endif
     }
 
     #endregion
