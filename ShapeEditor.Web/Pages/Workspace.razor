@@ -500,7 +500,8 @@
     {
         if (Store.SelectedNode is WorkspaceNode node)
         {
-            Store.DeleteNode(node.Id);
+            // 与节点卡片上的 × 一致：有下游时二次确认。
+            ConfirmDelete(node);
         }
     }
 
