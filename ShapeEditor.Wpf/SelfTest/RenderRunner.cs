@@ -93,6 +93,9 @@ public static class RenderRunner
             CheckWorkspaceToolbar(
                 Path.Combine(outputDirectory, "workspace-ops.txt"));
 
+            CheckWorkspaceProjects(
+                Path.Combine(outputDirectory, "workspace-projects.txt"));
+
             CheckWorkspaceSync2(
                 Path.Combine(outputDirectory, "workspace-sync2.txt"));
 
@@ -994,6 +997,119 @@ public static class RenderRunner
                 deleted &&
                 addToEditorOk &&
                 disabledWithoutSelection;
+        }
+        catch (Exception exception)
+        {
+            lines.Add(exception.ToString());
+        }
+
+        lines.Insert(0, ok ? "PASS" : "FAIL");
+
+        File.WriteAllLines(path, lines);
+    }
+
+    /// <summary>
+    /// 工作区新建/删除的自检：确认删除前有确认、删除当前工作区后自动切换、
+    /// 删掉最后一个时会补一个空工作区，并且全局素材库不受影响。
+    /// 确认回调被替换成返回值，避免离屏运行时弹出 MessageBox。
+    /// </summary>
+    private static void CheckWorkspaceProjects(
+        string path)
+    {
+        var lines = new List<string>();
+
+        bool ok = false;
+
+        try
+        {
+            string storePath = Path.Combine(
+                Path.GetTempPath(),
+                $"shape-workspace-projects-{Guid.NewGuid():N}.json");
+
+            var store = new WorkspaceStore(storePath);
+
+            var viewModel = new WorkspaceViewModel(store);
+
+            bool initialOk = store.Projects.Count == 1 && store.Active is not null;
+
+            string firstId = store.Active?.Id ?? "";
+
+            // 素材是全局共享的，删除工作区不应影响它
+            store.AddMaterial(
+                "CuCu",
+                Core.Models.ShortCodeFormat.Full,
+                1,
+                4,
+                "selftest");
+
+            WorkspaceNode firstNode = store.CreateNodeAtPoint(80, 60);
+
+            viewModel.NewProjectCommand.Execute(null);
+
+            string secondId = store.Active?.Id ?? "";
+
+            WorkspaceNode secondNode = store.CreateNodeAtPoint(200, 60);
+
+            int createdCount = store.Projects.Count;
+
+            bool created =
+                store.Projects.Count == 2 &&
+                secondId.Length > 0 &&
+                secondId != firstId &&
+                viewModel.Tabs.Count == 2 &&
+                viewModel.Tabs.Count(tab => tab.IsActive) == 1 &&
+                store.Active?.Id == secondId;
+
+            // 取消确认：工作区数量与当前工作区都不变
+            int confirmCount = 0;
+
+            viewModel.ConfirmDeleteProject = _ =>
+            {
+                confirmCount++;
+
+                return false;
+            };
+
+            viewModel.DeleteProject(viewModel.Tabs.First(tab => tab.Id == secondId));
+
+            bool cancelOk =
+                confirmCount == 1 &&
+                store.Projects.Count == 2 &&
+                store.Active?.Id == secondId;
+
+            // 确认删除当前工作区：连同节点一起删掉，自动切回剩下的第一个
+            viewModel.ConfirmDeleteProject = _ => true;
+
+            viewModel.DeleteProject(viewModel.Tabs.First(tab => tab.Id == secondId));
+
+            bool removed =
+                store.Projects.Count == 1 &&
+                store.Active?.Id == firstId &&
+                store.FindNode(secondNode.Id) is null &&
+                store.FindNode(firstNode.Id) is not null &&
+                store.Materials.Count == 1 &&
+                viewModel.Tabs.Count == 1 &&
+                viewModel.Tabs[0].Id == firstId;
+
+            // 删除最后一个工作区：自动补一个空工作区，而不是留下 0 个
+            viewModel.DeleteProject(viewModel.Tabs[0]);
+
+            bool recreated =
+                store.Projects.Count == 1 &&
+                store.Active is not null &&
+                store.Active.Id != firstId &&
+                store.Nodes.Count == 0 &&
+                store.Materials.Count == 1 &&
+                viewModel.Tabs.Count == 1 &&
+                viewModel.Tabs[0].IsActive;
+
+            lines.Add($"初始工作区：{(initialOk ? "成功" : "失败")}");
+            lines.Add($"新建工作区：{(created ? "成功" : "失败")}（当前 {createdCount} 个）");
+            lines.Add($"取消删除：{(cancelOk ? "成功" : "失败")}");
+            lines.Add($"删除工作区：{(removed ? "成功（自动切换到剩余工作区）" : "失败")}");
+            lines.Add($"删除最后一个工作区：{(recreated ? "成功（自动新建空工作区）" : "失败")}");
+
+            ok = initialOk && created && cancelOk && removed && recreated;
         }
         catch (Exception exception)
         {

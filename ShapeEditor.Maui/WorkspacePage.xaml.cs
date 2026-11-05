@@ -235,6 +235,31 @@ public partial class WorkspacePage : ContentPage
             button.Clicked += (_, _) => _store.ActivateProject(id);
 
             TabBar.Add(button);
+
+            // 与 Web 一致：只有当前工作区的标签旁显示「×」删除入口
+            if (active)
+            {
+                string projectName = project.Name;
+
+                var delete = new Button
+                {
+                    Text = "×",
+                    FontSize = 13,
+                    WidthRequest = 28,
+                    HeightRequest = 32,
+                    Padding = 0,
+                    MinimumWidthRequest = 0,
+                    MinimumHeightRequest = 0,
+                    CornerRadius = 8,
+                    BackgroundColor = Colors.Transparent,
+                    TextColor = Color.FromArgb("#A00000")
+                };
+
+                delete.Clicked += async (_, _) =>
+                    await DeleteProjectAsync(id, projectName);
+
+                TabBar.Add(delete);
+            }
         }
 
         var add = new Button
@@ -623,7 +648,7 @@ public partial class WorkspacePage : ContentPage
             TextColor = Color.FromArgb("#A00000")
         };
 
-        delete.Clicked += (_, _) => _store!.DeleteNode(node.Id);
+        delete.Clicked += async (_, _) => await DeleteNodeAsync(node.Id);
 
         header.Add(delete, 1);
 
@@ -1629,7 +1654,7 @@ public partial class WorkspacePage : ContentPage
         _store.SelectNode(node);
     }
 
-    private void OnDeleteNode(
+    private async void OnDeleteNode(
         object? sender,
         EventArgs e)
     {
@@ -1638,7 +1663,38 @@ public partial class WorkspacePage : ContentPage
             return;
         }
 
-        _store.DeleteNode(node.Id);
+        await DeleteNodeAsync(node.Id);
+    }
+
+    /// <summary>
+    /// 删除节点：与 Web 一致，有下游节点时先用 DisplayAlert 二次确认，
+    /// 没有下游时直接删除；级联删除与选中清理都由 Store 完成。
+    /// </summary>
+    private async Task DeleteNodeAsync(
+        string nodeId)
+    {
+        if (_store is null)
+        {
+            return;
+        }
+
+        int downstream = _store.Downstream(nodeId).Count;
+
+        if (downstream > 0)
+        {
+            bool confirmed = await DisplayAlertAsync(
+                "删除节点",
+                $"将删除该节点及其 {downstream} 个下游节点，继续？",
+                "删除",
+                "取消");
+
+            if (!confirmed)
+            {
+                return;
+            }
+        }
+
+        _store.DeleteNode(nodeId);
     }
 
     private WorkspaceNodeBox? FindBox(
@@ -1754,11 +1810,26 @@ public partial class WorkspacePage : ContentPage
         }
     }
 
-    private void OnClear(
+    private async void OnClear(
         object? sender,
         EventArgs e)
     {
-        _store!.ClearNodes();
+        if (_store is null)
+        {
+            return;
+        }
+
+        // 与 Web 的「清空画布」一致：先确认，且不影响全局素材库
+        bool confirmed = await DisplayAlertAsync(
+            "清空画布",
+            "将删除画布上的所有节点，素材列表不受影响。",
+            "清空",
+            "取消");
+
+        if (confirmed)
+        {
+            _store.ClearNodes();
+        }
     }
 
     private async void OnExportImage(
@@ -1800,6 +1871,31 @@ public partial class WorkspacePage : ContentPage
         {
             Show("导出失败：" + exception.Message);
         }
+    }
+
+    /// <summary>
+    /// 删除工作区：先 DisplayAlert 二次确认，再由 Store 删掉该项目及其中节点。
+    /// 删除当前工作区后会自动切到剩下的第一个；删光时 Store 会补一个空工作区。
+    /// 素材库是全局共享的，不随工作区删除。
+    /// </summary>
+    private async Task DeleteProjectAsync(
+        string id,
+        string name)
+    {
+        bool confirmed = await DisplayAlertAsync(
+            "删除工作区",
+            $"将删除工作区「{name}」及其中的全部节点，素材列表不受影响。",
+            "删除",
+            "取消");
+
+        if (!confirmed || _store is null)
+        {
+            return;
+        }
+
+        _store.DeleteProject(id);
+
+        Render();
     }
 
     private async Task ExportProjectAsync()

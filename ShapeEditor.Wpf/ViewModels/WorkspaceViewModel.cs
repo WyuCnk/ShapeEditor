@@ -109,6 +109,12 @@ public sealed class WorkspaceViewModel : ObservableObject
     /// </summary>
     public Func<AnalysisTarget, bool>? AddToEditorHandler { get; set; }
 
+    /// <summary>
+    /// 删除工作区前的确认回调；默认为 MessageBox 二次确认。
+    /// 自检入口可以替换成直接返回 true，避免离屏运行时弹出模态框。
+    /// </summary>
+    public Func<WorkspaceTabViewModel, bool>? ConfirmDeleteProject { get; set; }
+
     public System.Windows.Input.ICommand CollapseCommand { get; }
 
     public System.Windows.Input.ICommand PinCommand { get; }
@@ -1390,19 +1396,28 @@ public sealed class WorkspaceViewModel : ObservableObject
         _store.RenameProject(tab.Id, name);
     }
 
+    /// <summary>
+    /// 删除工作区：先二次确认，再由 Store 删掉该项目及其中节点。
+    /// 删除当前工作区后会自动切到剩下的第一个；删光时 Store 会补一个空工作区。
+    /// 素材库是全局共享的，不随工作区删除。
+    /// </summary>
     public void DeleteProject(
         WorkspaceTabViewModel tab)
     {
-        MessageBoxResult answer = MessageBox.Show(
-            $"将删除工作区「{tab.Name}」及其中的全部节点，素材列表不受影响。",
-            "删除工作区",
-            MessageBoxButton.OKCancel,
-            MessageBoxImage.Warning);
+        bool confirmed = ConfirmDeleteProject is not null
+            ? ConfirmDeleteProject(tab)
+            : MessageBox.Show(
+                  $"将删除工作区「{tab.Name}」及其中的全部节点，素材列表不受影响。",
+                  "删除工作区",
+                  MessageBoxButton.OKCancel,
+                  MessageBoxImage.Warning) == MessageBoxResult.OK;
 
-        if (answer == MessageBoxResult.OK)
+        if (!confirmed)
         {
-            _store.DeleteProject(tab.Id);
+            return;
         }
+
+        _store.DeleteProject(tab.Id);
     }
 
     private void ExportImage()

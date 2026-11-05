@@ -63,6 +63,8 @@
                                 <Setter TargetName="Bd" Property="BorderBrush" Value="#D8D4E8" />
                                 <Setter Property="FontWeight" Value="SemiBold" />
                                 <Setter Property="Foreground" Value="#212121" />
+                                <!-- 当前标签右侧要留出「×」的位置 -->
+                                <Setter Property="Padding" Value="14,6,26,6" />
                             </DataTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -102,10 +104,29 @@
 
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <Button Style="{StaticResource TabButton}"
-                                Content="{Binding Name}"
-                                Click="OnTabClick"
-                                MouseDoubleClick="OnTabDoubleClick" />
+                        <Grid>
+                            <Button Style="{StaticResource TabButton}"
+                                    Content="{Binding Name}"
+                                    Click="OnTabClick"
+                                    MouseDoubleClick="OnTabDoubleClick" />
+
+                            <!-- 与 Web 一致：只有当前工作区显示「×」，删完自动切换 -->
+                            <Button Content="×"
+                                    Width="16"
+                                    Height="16"
+                                    Margin="0,0,7,2"
+                                    Padding="0"
+                                    FontSize="11"
+                                    BorderThickness="0"
+                                    Background="Transparent"
+                                    Foreground="#8A8A96"
+                                    Cursor="Hand"
+                                    HorizontalAlignment="Right"
+                                    VerticalAlignment="Center"
+                                    ToolTip="删除该工作区"
+                                    Visibility="{Binding IsActive, Converter={StaticResource BoolToVis}}"
+                                    Click="OnDeleteProject" />
+                        </Grid>
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>

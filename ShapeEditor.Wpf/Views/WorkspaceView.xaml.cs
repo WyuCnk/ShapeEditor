@@ -122,6 +122,23 @@ public partial class WorkspaceView : UserControl
         e.Handled = true;
     }
 
+    /// <summary>
+    /// 删除当前工作区：确认后由 Store 删除并自动切换；
+    /// 删掉最后一个时会新建一个空工作区，素材库是全局的，不受影响。
+    /// </summary>
+    private void OnDeleteProject(
+        object sender,
+        RoutedEventArgs e)
+    {
+        if (DataOf<WorkspaceTabViewModel>(sender) is WorkspaceTabViewModel tab &&
+            ViewModel is WorkspaceViewModel viewModel)
+        {
+            viewModel.DeleteProject(tab);
+
+            e.Handled = true;
+        }
+    }
+
     private void OnNewProject(
         object sender,
         RoutedEventArgs e)
