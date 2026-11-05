@@ -13,13 +13,21 @@ namespace ShapeEditor.Wpf.Rendering;
 /// </summary>
 public static class ShapeGridDrawing
 {
+    /// <summary>
+    /// 构建竖式图。
+    ///
+    /// <paramref name="shortCodeGlyphs"/> 为 true 时使用短代码字形
+    /// （c 晶体、S 普通形状、P 顶针），用于制作路径节点预览；
+    /// 默认的字形是编辑者习惯的「图 / 晶」。
+    /// </summary>
     public static DrawingGroup Build(
         ShapeDocument document,
         double cellWidth,
         double cellHeight,
         int? selectedLayer = null,
         int? selectedPart = null,
-        bool drawGrid = true)
+        bool drawGrid = true,
+        bool shortCodeGlyphs = false)
     {
         var group = new DrawingGroup();
 
@@ -55,7 +63,8 @@ public static class ShapeGridDrawing
                         y,
                         cellWidth,
                         cellHeight,
-                        borderPen);
+                        borderPen,
+                        shortCodeGlyphs);
                 }
             }
 
@@ -113,7 +122,8 @@ public static class ShapeGridDrawing
         double y,
         double width,
         double height,
-        Pen borderPen)
+        Pen borderPen,
+        bool shortCodeGlyphs)
     {
         ShapeTheme theme = ShapeTheme.Instance;
 
@@ -130,12 +140,19 @@ public static class ShapeGridDrawing
         {
             context.DrawRectangle(theme.EmptyBrush, null, rect);
 
-            context.DrawRectangle(
-                theme.PinBrush,
-                null,
-                ShapeTheme.GetPinBar(x, y, width, height));
+            /*
+             * 默认预览沿用「白底 + 中央黑条」的顶针画法；
+             * 短代码字形模式则只画字母 P，与其他格子保持一致的字母网格。
+             */
+            if (!shortCodeGlyphs)
+            {
+                context.DrawRectangle(
+                    theme.PinBrush,
+                    null,
+                    ShapeTheme.GetPinBar(x, y, width, height));
 
-            return;
+                return;
+            }
         }
 
         if (cell.Type == CellType.Crystal)
@@ -164,7 +181,7 @@ public static class ShapeGridDrawing
                 bandX += bandWidth;
             }
         }
-        else
+        else if (cell.Type != CellType.Pin)
         {
             context.DrawRectangle(
                 theme.GetShapeBrush(cell.ColorCode),
@@ -183,15 +200,20 @@ public static class ShapeGridDrawing
                 Math.Max(0, width - inset * 2),
                 Math.Max(0, height - inset * 2)));
 
-        if (!ShapeTheme.HasText(cell.Type))
+        if (!shortCodeGlyphs &&
+            !ShapeTheme.HasText(cell.Type))
         {
             return;
         }
 
         double fontSize = GridMetrics.GetFontSize(width, height);
 
+        string glyph = shortCodeGlyphs
+            ? ShapeText.LetterOf(cell).ToString()
+            : ShapeTheme.GetCellText(cell.Type);
+
         FormattedText text = theme.GetText(
-            ShapeTheme.GetCellText(cell.Type),
+            glyph,
             ShapePalette.NeedsLightText(cell.ColorCode),
             fontSize);
 

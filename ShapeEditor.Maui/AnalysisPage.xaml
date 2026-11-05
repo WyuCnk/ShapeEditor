@@ -13,7 +13,15 @@
             <Setter Property="FontSize" Value="14" />
             <Setter Property="FontAttributes" Value="Bold" />
             <Setter Property="TextColor" Value="#333333" />
-            <Setter Property="Margin" Value="0,0,0,6" />
+            <Setter Property="VerticalTextAlignment" Value="Center" />
+        </Style>
+
+        <!-- 制作路径下的子区域标题 -->
+        <Style x:Key="SubsectionTitle" TargetType="Label">
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontAttributes" Value="Bold" />
+            <Setter Property="TextColor" Value="#3A3A44" />
+            <Setter Property="VerticalTextAlignment" Value="Center" />
         </Style>
 
         <!-- 正文 -->
@@ -47,6 +55,20 @@
             <Setter Property="MinimumHeightRequest" Value="0" />
             <Setter Property="BackgroundColor" Value="#EFEAF9" />
             <Setter Property="TextColor" Value="#512BD4" />
+        </Style>
+
+        <!-- 板块标题右侧的显示 / 隐藏按钮 -->
+        <Style x:Key="SectionToggle" TargetType="Button">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="HeightRequest" Value="26" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Padding" Value="8,0" />
+            <Setter Property="MinimumWidthRequest" Value="0" />
+            <Setter Property="MinimumHeightRequest" Value="0" />
+            <Setter Property="BackgroundColor" Value="#EFEAF9" />
+            <Setter Property="TextColor" Value="#512BD4" />
+            <Setter Property="VerticalOptions" Value="Center" />
+            <Setter Property="HorizontalOptions" Value="End" />
         </Style>
 
         <!-- 每个板块的卡片 -->
@@ -134,21 +156,22 @@
                                      Spacing="10"
                                      IsVisible="False">
 
-                    <!-- 1. 竖式图：只读，格子固定 30×30 -->
-                    <Border Style="{StaticResource SectionCard}">
-                        <VerticalStackLayout Spacing="6">
+                    <!-- 1. 竖式图：按栏宽等比缩小，高度上限 320，不放大 -->
+                    <Border x:Name="PreviewCard"
+                            Style="{StaticResource SectionCard}"
+                            SizeChanged="OnPreviewCardSizeChanged">
+                        <VerticalStackLayout x:Name="PreviewHost"
+                                             Spacing="6"
+                                             HorizontalOptions="Fill">
 
                             <Label Text="竖式图"
                                    Style="{StaticResource SectionTitle}" />
 
-                            <ScrollView x:Name="PreviewScroll"
-                                        Orientation="Horizontal"
-                                        HorizontalScrollBarVisibility="Always">
-                                <GraphicsView x:Name="PreviewView"
-                                              InputTransparent="True"
-                                              HorizontalOptions="Start"
-                                              VerticalOptions="Start" />
-                            </ScrollView>
+                            <GraphicsView x:Name="PreviewView"
+                                          InputTransparent="True"
+                                          BackgroundColor="White"
+                                          HorizontalOptions="Center"
+                                          VerticalOptions="Start" />
 
                             <Label x:Name="DimensionLabel"
                                    Style="{StaticResource MutedText}"
@@ -158,107 +181,275 @@
 
                     <!-- 2. 图形性质 -->
                     <Border Style="{StaticResource SectionCard}">
-                        <VerticalStackLayout Spacing="2">
+                        <VerticalStackLayout Spacing="4">
 
-                            <Label Text="图形性质"
-                                   Style="{StaticResource SectionTitle}" />
+                            <Grid ColumnDefinitions="*,Auto"
+                                  ColumnSpacing="8">
+                                <Label Text="图形性质"
+                                       Style="{StaticResource SectionTitle}" />
+                                <Button x:Name="PropertyToggleButton"
+                                        Grid.Column="1"
+                                        Text="隐藏"
+                                        Style="{StaticResource SectionToggle}"
+                                        Clicked="OnSectionToggleClicked" />
+                            </Grid>
 
-                            <FlexLayout x:Name="PropertyList"
-                                        Wrap="Wrap"
-                                        Direction="Row"
-                                        AlignItems="Start" />
+                            <VerticalStackLayout x:Name="PropertyBody"
+                                                 Spacing="2">
 
-                            <Label x:Name="PropertyEmptyLabel"
-                                   Text="没有识别到任何性质。"
-                                   Style="{StaticResource MutedText}"
-                                   IsVisible="False" />
+                                <FlexLayout x:Name="PropertyList"
+                                            Wrap="Wrap"
+                                            Direction="Row"
+                                            AlignItems="Start" />
+
+                                <Label x:Name="PropertyEmptyLabel"
+                                       Text="没有识别到任何性质。"
+                                       Style="{StaticResource MutedText}"
+                                       IsVisible="False" />
+                            </VerticalStackLayout>
                         </VerticalStackLayout>
                     </Border>
 
-                    <!-- 3. 角的合法性 -->
+                    <!-- 3. 角的合法性：折叠时保留上方摘要 -->
                     <Border Style="{StaticResource SectionCard}">
                         <VerticalStackLayout Spacing="4">
 
-                            <Label Text="角的合法性"
-                                   Style="{StaticResource SectionTitle}" />
+                            <Grid ColumnDefinitions="*,Auto"
+                                  ColumnSpacing="8">
+                                <Label Text="角的合法性"
+                                       Style="{StaticResource SectionTitle}" />
+                                <Button x:Name="AngleToggleButton"
+                                        Grid.Column="1"
+                                        Text="隐藏"
+                                        Style="{StaticResource SectionToggle}"
+                                        Clicked="OnSectionToggleClicked" />
+                            </Grid>
 
                             <Label x:Name="AngleSummaryLabel"
                                    Style="{StaticResource MutedText}" />
 
-                            <Grid ColumnDefinitions="64,70,90,*"
-                                  ColumnSpacing="8"
-                                  Margin="0,2,0,2">
-                                <Label Grid.Column="0"
-                                       Text="角"
-                                       Style="{StaticResource TableHeader}" />
-                                <Label Grid.Column="1"
-                                       Text="合法性"
-                                       Style="{StaticResource TableHeader}" />
-                                <Label Grid.Column="2"
-                                       Text="可制作性"
-                                       Style="{StaticResource TableHeader}" />
-                                <Label Grid.Column="3"
-                                       Text="备注"
-                                       Style="{StaticResource TableHeader}" />
-                            </Grid>
+                            <VerticalStackLayout x:Name="AngleBody"
+                                                 Spacing="4">
 
-                            <VerticalStackLayout x:Name="AngleList"
-                                                 Spacing="0" />
+                                <Grid ColumnDefinitions="64,70,90,*"
+                                      ColumnSpacing="8"
+                                      Margin="0,2,0,2">
+                                    <Label Grid.Column="0"
+                                           Text="角"
+                                           Style="{StaticResource TableHeader}" />
+                                    <Label Grid.Column="1"
+                                           Text="合法性"
+                                           Style="{StaticResource TableHeader}" />
+                                    <Label Grid.Column="2"
+                                           Text="可制作性"
+                                           Style="{StaticResource TableHeader}" />
+                                    <Label Grid.Column="3"
+                                           Text="备注"
+                                           Style="{StaticResource TableHeader}" />
+                                </Grid>
 
-                            <Label Text="角的可制作性暂时等同于合法性，等角的制作算法接入后细化。"
-                                   Style="{StaticResource MutedText}"
-                                   Margin="0,4,0,0" />
+                                <VerticalStackLayout x:Name="AngleList"
+                                                     Spacing="0" />
+
+                                <Label Text="角的可制作性暂时等同于合法性，等角的制作算法接入后细化。"
+                                       Style="{StaticResource MutedText}"
+                                       Margin="0,4,0,0" />
+                            </VerticalStackLayout>
                         </VerticalStackLayout>
                     </Border>
 
                     <!-- 4. 稳定性 -->
                     <Border Style="{StaticResource SectionCard}">
-                        <VerticalStackLayout Spacing="0">
+                        <VerticalStackLayout Spacing="4">
 
-                            <Label Text="稳定性"
-                                   Style="{StaticResource SectionTitle}" />
+                            <Grid ColumnDefinitions="*,Auto"
+                                  ColumnSpacing="8">
+                                <Label Text="稳定性"
+                                       Style="{StaticResource SectionTitle}" />
+                                <Button x:Name="StabilityToggleButton"
+                                        Grid.Column="1"
+                                        Text="隐藏"
+                                        Style="{StaticResource SectionToggle}"
+                                        Clicked="OnSectionToggleClicked" />
+                            </Grid>
 
-                            <Label x:Name="StabilityLabel"
-                                   Style="{StaticResource BodyText}" />
+                            <VerticalStackLayout x:Name="StabilityBody">
+                                <Label x:Name="StabilityLabel"
+                                       Style="{StaticResource BodyText}" />
+                            </VerticalStackLayout>
                         </VerticalStackLayout>
                     </Border>
 
-                    <!-- 5. 半边稳定性 -->
+                    <!-- 5. 半边稳定性：一轴一块，方向自动换行 -->
                     <Border Style="{StaticResource SectionCard}">
                         <VerticalStackLayout Spacing="4">
 
-                            <Label Text="半边稳定性"
-                                   Style="{StaticResource SectionTitle}" />
+                            <Grid ColumnDefinitions="*,Auto"
+                                  ColumnSpacing="8">
+                                <Label Text="半边稳定性"
+                                       Style="{StaticResource SectionTitle}" />
+                                <Button x:Name="HalfToggleButton"
+                                        Grid.Column="1"
+                                        Text="隐藏"
+                                        Style="{StaticResource SectionToggle}"
+                                        Clicked="OnSectionToggleClicked" />
+                            </Grid>
 
                             <Label x:Name="HalfSummaryLabel"
                                    Style="{StaticResource BodyText}" />
 
-                            <Label Text="交换方向合法的定义：两个半边都稳定，并且该方向上左右各两个带柱子的半半边也全部稳定。"
-                                   Style="{StaticResource MutedText}"
-                                   Margin="0,2,0,4" />
+                            <VerticalStackLayout x:Name="HalfBody"
+                                                 Spacing="4">
 
-                            <VerticalStackLayout x:Name="AxisList"
-                                                 Spacing="10" />
+                                <Label Text="交换方向合法的定义：两个半边都稳定，并且该方向上左右各两个带柱子的半半边也全部稳定。"
+                                       Style="{StaticResource MutedText}"
+                                       Margin="0,2,0,2" />
 
-                            <Label x:Name="HalfNoteLabel"
-                                   Style="{StaticResource MutedText}"
-                                   IsVisible="False" />
+                                <Label Style="{StaticResource MutedText}">
+                                    <Label.FormattedText>
+                                        <FormattedString>
+                                            <Span Text="绿色"
+                                                  TextColor="#2E9E5B"
+                                                  FontAttributes="Bold" />
+                                            <Span Text=" 为合法方向，" />
+                                            <Span Text="红色"
+                                                  TextColor="#D64545"
+                                                  FontAttributes="Bold" />
+                                            <Span Text=" 为不合法方向。" />
+                                        </FormattedString>
+                                    </Label.FormattedText>
+                                </Label>
+
+                                <HorizontalStackLayout Spacing="6">
+                                    <Switch x:Name="OnlyLegalSwitch"
+                                            IsToggled="True"
+                                            VerticalOptions="Center"
+                                            Toggled="OnOnlyLegalDirectionsToggled" />
+                                    <Label Text="只显示合法方向"
+                                           Style="{StaticResource MutedText}"
+                                           VerticalTextAlignment="Center" />
+                                </HorizontalStackLayout>
+
+                                <VerticalStackLayout x:Name="AxisList"
+                                                     Spacing="10" />
+
+                                <Label x:Name="HalfNoteLabel"
+                                       Style="{StaticResource MutedText}"
+                                       IsVisible="False" />
+                            </VerticalStackLayout>
                         </VerticalStackLayout>
                     </Border>
 
-                    <!-- 6. 制作路径 -->
+                    <!-- 6. 制作路径：总开关 + 交换工序 / 角的工序两个独立开关 -->
                     <Border Style="{StaticResource SectionCard}">
                         <VerticalStackLayout Spacing="4">
 
-                            <Label Text="制作路径"
-                                   Style="{StaticResource SectionTitle}" />
+                            <Grid ColumnDefinitions="*,Auto"
+                                  ColumnSpacing="8">
+                                <Label Text="制作路径"
+                                       Style="{StaticResource SectionTitle}" />
+                                <Button x:Name="PathToggleButton"
+                                        Grid.Column="1"
+                                        Text="隐藏"
+                                        Style="{StaticResource SectionToggle}"
+                                        Clicked="OnSectionToggleClicked" />
+                            </Grid>
 
-                            <Label x:Name="PathSummaryLabel"
-                                   Style="{StaticResource BodyText}" />
+                            <VerticalStackLayout x:Name="PathBody"
+                                                 Spacing="8">
 
-                            <VerticalStackLayout x:Name="PathList"
-                                                 Spacing="4"
-                                                 Margin="0,4,0,0" />
+                                <!-- 交换工序：仅可交换时出现，默认显示 -->
+                                <VerticalStackLayout x:Name="PathExchangeSection"
+                                                     Spacing="6">
+
+                                    <BoxView HeightRequest="1"
+                                             Color="#E6E2F2"
+                                             Margin="0,2,0,0" />
+
+                                    <Grid ColumnDefinitions="*,Auto"
+                                          ColumnSpacing="8">
+                                        <Label Text="交换工序"
+                                               Style="{StaticResource SubsectionTitle}" />
+                                        <Button x:Name="PathExchangeToggleButton"
+                                                Grid.Column="1"
+                                                Text="隐藏"
+                                                Style="{StaticResource SectionToggle}"
+                                                Clicked="OnSectionToggleClicked" />
+                                    </Grid>
+
+                                    <VerticalStackLayout x:Name="PathExchangeBody"
+                                                         Spacing="6">
+
+                                        <Label x:Name="PathSummaryLabel"
+                                               Style="{StaticResource BodyText}" />
+
+                                        <!-- 节点图容器：横纵都可滚动 -->
+                                        <Border x:Name="PathGraphBox"
+                                                BackgroundColor="#FBFAFF"
+                                                Stroke="#E6E2F2"
+                                                StrokeThickness="1"
+                                                Padding="0"
+                                                StrokeShape="RoundRectangle 12">
+                                            <ScrollView x:Name="PathGraphScroll"
+                                                        Orientation="Both"
+                                                        HeightRequest="260"
+                                                        HorizontalScrollBarVisibility="Always"
+                                                        VerticalScrollBarVisibility="Always">
+                                                <GraphicsView x:Name="PathGraphView"
+                                                              InputTransparent="True"
+                                                              HorizontalOptions="Start"
+                                                              VerticalOptions="Start" />
+                                            </ScrollView>
+                                        </Border>
+
+                                        <Label x:Name="PathGraphNote"
+                                               Text="节点按 5 层从上到下排列，同层节点从左到右紧排，层间固定留 80 画箭头；预览保持 30 像素单元格原始尺寸，图形较宽或较高时容器可横纵滚动。废料节点淡显、虚线边框，指向废料的箭头为灰色虚线。"
+                                               Style="{StaticResource MutedText}" />
+                                    </VerticalStackLayout>
+                                </VerticalStackLayout>
+
+                                <!-- 角的工序：始终显示，先放占位；默认隐藏 -->
+                                <VerticalStackLayout Spacing="6">
+
+                                    <BoxView HeightRequest="1"
+                                             Color="#E6E2F2"
+                                             Margin="0,2,0,0" />
+
+                                    <Grid ColumnDefinitions="*,Auto"
+                                          ColumnSpacing="8">
+                                        <Label Text="角的工序"
+                                               Style="{StaticResource SubsectionTitle}" />
+                                        <Button x:Name="PathAnglesToggleButton"
+                                                Grid.Column="1"
+                                                Text="显示"
+                                                Style="{StaticResource SectionToggle}"
+                                                Clicked="OnSectionToggleClicked" />
+                                    </Grid>
+
+                                    <VerticalStackLayout x:Name="PathAnglesBody"
+                                                         Spacing="6"
+                                                         IsVisible="False">
+
+                                        <Border BackgroundColor="#FAF8FF"
+                                                Stroke="#B9A9EE"
+                                                StrokeThickness="1"
+                                                StrokeDashArray="4,3"
+                                                HeightRequest="64"
+                                                Padding="0"
+                                                StrokeShape="RoundRectangle 10">
+                                            <Label Text="待设计"
+                                                   FontSize="14"
+                                                   FontAttributes="Bold"
+                                                   TextColor="#512BD4"
+                                                   HorizontalTextAlignment="Center"
+                                                   VerticalTextAlignment="Center" />
+                                        </Border>
+
+                                        <Label Text="后续按角绘制：每个角补柱后的制作工序。"
+                                               Style="{StaticResource MutedText}" />
+                                    </VerticalStackLayout>
+                                </VerticalStackLayout>
+                            </VerticalStackLayout>
                         </VerticalStackLayout>
                     </Border>
 
@@ -268,24 +459,36 @@
                             Stroke="#EEEAF7">
                         <VerticalStackLayout Spacing="4">
 
-                            <Label Text="角的判定规则"
-                                   Style="{StaticResource SectionTitle}" />
+                            <Grid ColumnDefinitions="*,Auto"
+                                  ColumnSpacing="8">
+                                <Label Text="角的判定规则"
+                                       Style="{StaticResource SectionTitle}" />
+                                <Button x:Name="RulesToggleButton"
+                                        Grid.Column="1"
+                                        Text="隐藏"
+                                        Style="{StaticResource SectionToggle}"
+                                        Clicked="OnSectionToggleClicked" />
+                            </Grid>
 
-                            <Label Text="一、顶针下方相邻格必须非空；顶针在最底层时视为合法。"
-                                   Style="{StaticResource MutedText}" />
+                            <VerticalStackLayout x:Name="RulesBody"
+                                                 Spacing="4">
 
-                            <Label Text="二、晶体下方若存在顶针，该顶针要么在最底层，要么下方全部是顶针。"
-                                   Style="{StaticResource MutedText}" />
+                                <Label Text="一、顶针下方相邻格必须非空；顶针在最底层时视为合法。"
+                                       Style="{StaticResource MutedText}" />
 
-                            <Label Text="三、同列两层晶体之间若存在空层，则两者之间至少有两个非空格，且下方晶体的正上方非空。"
-                                   Style="{StaticResource MutedText}" />
+                                <Label Text="二、晶体下方若存在顶针，该顶针要么在最底层，要么下方全部是顶针。"
+                                       Style="{StaticResource MutedText}" />
 
-                            <Label Text="四、最低的那层晶体：在最底层、或下方有普通形状、或下方全部是顶针。"
-                                   Style="{StaticResource MutedText}" />
+                                <Label Text="三、同列两层晶体之间若存在空层，则两者之间至少有两个非空格，且下方晶体的正上方非空。"
+                                       Style="{StaticResource MutedText}" />
 
-                            <Label Text="角 = 竖式图的一列。四条规则全部满足才算合法。"
-                                   Style="{StaticResource MutedText}"
-                                   Margin="0,4,0,0" />
+                                <Label Text="四、最低的那层晶体：在最底层、或下方有普通形状、或下方全部是顶针。"
+                                       Style="{StaticResource MutedText}" />
+
+                                <Label Text="角 = 竖式图的一列。四条规则全部满足才算合法。"
+                                       Style="{StaticResource MutedText}"
+                                       Margin="0,4,0,0" />
+                            </VerticalStackLayout>
                         </VerticalStackLayout>
                     </Border>
 

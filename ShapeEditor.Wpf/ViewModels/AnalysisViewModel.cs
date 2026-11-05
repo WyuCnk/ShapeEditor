@@ -23,6 +23,8 @@ public sealed record AnalysisTarget(
 ///
 /// 只调用 Core 已有的分析器，不在这里重复判定逻辑；
 /// 切换下落类型时整体重新分析一次。
+/// 展示形态与 Web 分析页一致：板块可折叠、半边一轴一块、
+/// 制作路径拆成「交换工序」与「角的工序」两个子区域。
 /// </summary>
 public sealed class AnalysisViewModel : ObservableObject
 {
@@ -45,8 +47,6 @@ public sealed class AnalysisViewModel : ObservableObject
 
     private readonly ShortCodeParser _parser = new();
 
-    private readonly ShortCodeExporter _exporter = new();
-
     private readonly string _code;
 
     private readonly ShortCodeFormat _format;
@@ -60,6 +60,8 @@ public sealed class AnalysisViewModel : ObservableObject
     private HalfStabilityResult? _half;
 
     private ProductionPathResult? _pathResult;
+
+    private ProductionPathGraph? _pathGraph;
 
     private string _pathSummary = "";
 
@@ -75,7 +77,26 @@ public sealed class AnalysisViewModel : ObservableObject
 
     private string _halfSummary = "";
 
-    private string _halfNote = "";
+    private string _halfCollapsedSummary = "";
+
+    /// <summary>只显示合法方向；默认勾选，且只影响窗口显示，导出始终列出全部。</summary>
+    private bool _onlyLegalDirections = true;
+
+    // 分析板块的显隐开关，只影响窗口显示；与 Web 分析页一样默认展开。
+    private bool _isPropertiesExpanded = true;
+
+    private bool _isAnglesExpanded = true;
+
+    private bool _isStabilityExpanded = true;
+
+    private bool _isHalfExpanded = true;
+
+    private bool _isPathExpanded = true;
+
+    // 制作路径下两个子区域：交换工序默认显示；角的工序仍在设计中，默认隐藏。
+    private bool _isPathExchangeExpanded = true;
+
+    private bool _isPathAnglesExpanded;
 
     public AnalysisViewModel(
         string code,
@@ -117,6 +138,16 @@ public sealed class AnalysisViewModel : ObservableObject
     /// <summary>竖式图预览，按 30×30 单元格绘制后由界面等比缩放。</summary>
     public ImageSource? PreviewImage => _previewImage;
 
+    /// <summary>竖式图在 1:1 基准下的宽度（象限数 × 30），供左栏只缩小不放大。</summary>
+    public double PreviewNaturalWidth => _document is null
+        ? 0
+        : _document.PartCount * 30;
+
+    /// <summary>竖式图在 1:1 基准下的高度（层数 × 30）。</summary>
+    public double PreviewNaturalHeight => _document is null
+        ? 0
+        : _document.LayerCount * 30;
+
     public string DimensionText => _document is null
         ? ""
         : $"{_document.LayerCount} 层 × {_document.PartCount} 象限";
@@ -145,32 +176,42 @@ public sealed class AnalysisViewModel : ObservableObject
         }
     }
 
+    /// <summary>角的统计摘要：折叠与展开时显示同一句话。</summary>
     public string AngleSummary => _angleSummary;
 
     public string StabilityText => _stabilityText;
 
     public string HalfSummary => _halfSummary;
 
-    public string HalfNote => _halfNote;
+    /// <summary>半边板块折叠时显示的摘要，措辞与 Web 分析页一致。</summary>
+    public string HalfCollapsedSummary => _halfCollapsedSummary;
 
     /// <summary>
-    /// 只有存在合法交换方向时才展示制作路径板块；
-    /// 没有合法方向时整块不显示，与 Web 分析页的门控保持一致。
+    /// 制作路径板块（含「交换工序」与「角的工序」两个子区域）是否显示。
+    /// 只要解析出图形就显示，与 Web 的 @if (_half is not null) 对齐。
+    /// </summary>
+    public bool HasPathSection => _half is not null;
+
+    /// <summary>
+    /// 是否存在交换工序：只有图形可交换（半边分析存在合法方向）时才显示。
     /// </summary>
     public bool HasProductionPath =>
         _half is not null &&
         _half.IsExchangeable;
 
     /// <summary>
-    /// 制作路径的结论文本：可制作时给出方向及方向合法性。
+    /// 交换工序的结论文本：可制作时给出方向及方向合法性。
     /// 门控之外的情况不显示结论，也不显示「不可制作」。
     /// </summary>
     public string PathSummary => _pathSummary;
 
-    /// <summary>制作路径的每个步骤与对应的短代码。</summary>
-    public ObservableCollection<ProductionStepViewModel> PathSteps { get; } = new();
+    /// <summary>
+    /// 交换工序的分层节点图；不可制作或没有路径时为空。
+    /// 窗口与导出图片共用同一份布局结果。
+    /// </summary>
+    public ProductionPathGraph? PathGraph => _pathGraph;
 
-    public bool HasPathSteps => PathSteps.Count > 0;
+    public bool HasPathGraph => _pathGraph is not null;
 
     /// <summary>
     /// 全部交换方向（不截断），导出分析图时按轴分组使用。
@@ -194,8 +235,6 @@ public sealed class AnalysisViewModel : ObservableObject
         return _pathResult;
     }
 
-    public bool HasLegalDirections => LegalDirections.Count > 0;
-
     public bool HasProperties => _properties != ShapeProperty.None;
 
     public string PropertyEmptyText => _properties == ShapeProperty.None
@@ -208,8 +247,70 @@ public sealed class AnalysisViewModel : ObservableObject
     /// <summary>角的判定表格行。</summary>
     public ObservableCollection<AngleRowViewModel> Angles { get; } = new();
 
-    /// <summary>合法交换方向，最多保留前 60 个。</summary>
-    public ObservableCollection<string> LegalDirections { get; } = new();
+    /// <summary>
+    /// 半边稳定性按轴分块：每个轴一张卡片，块内方向在界面里自动换行。
+    /// 开关「只显示合法方向」只影响这里的可见方向，不影响导出。
+    /// </summary>
+    public ObservableCollection<HalfAxisGroupViewModel> HalfAxisGroups { get; } = new();
+
+    #region 板块显隐开关
+
+    public bool IsPropertiesExpanded
+    {
+        get => _isPropertiesExpanded;
+        set => SetProperty(ref _isPropertiesExpanded, value);
+    }
+
+    public bool IsAnglesExpanded
+    {
+        get => _isAnglesExpanded;
+        set => SetProperty(ref _isAnglesExpanded, value);
+    }
+
+    public bool IsStabilityExpanded
+    {
+        get => _isStabilityExpanded;
+        set => SetProperty(ref _isStabilityExpanded, value);
+    }
+
+    public bool IsHalfExpanded
+    {
+        get => _isHalfExpanded;
+        set => SetProperty(ref _isHalfExpanded, value);
+    }
+
+    public bool IsPathExpanded
+    {
+        get => _isPathExpanded;
+        set => SetProperty(ref _isPathExpanded, value);
+    }
+
+    public bool IsPathExchangeExpanded
+    {
+        get => _isPathExchangeExpanded;
+        set => SetProperty(ref _isPathExchangeExpanded, value);
+    }
+
+    public bool IsPathAnglesExpanded
+    {
+        get => _isPathAnglesExpanded;
+        set => SetProperty(ref _isPathAnglesExpanded, value);
+    }
+
+    #endregion
+
+    /// <summary>只显示合法方向；默认勾选，切回时恢复全部方向。</summary>
+    public bool OnlyLegalDirections
+    {
+        get => _onlyLegalDirections;
+        set
+        {
+            if (SetProperty(ref _onlyLegalDirections, value))
+            {
+                RebuildHalfGroups();
+            }
+        }
+    }
 
     /// <summary>
     /// 解析短代码并生成初始分析结果。
@@ -269,6 +370,8 @@ public sealed class AnalysisViewModel : ObservableObject
         OnPropertyChanged(nameof(HasDocument));
         OnPropertyChanged(nameof(Document));
         OnPropertyChanged(nameof(PreviewImage));
+        OnPropertyChanged(nameof(PreviewNaturalWidth));
+        OnPropertyChanged(nameof(PreviewNaturalHeight));
         OnPropertyChanged(nameof(DimensionText));
 
         Analyze();
@@ -341,13 +444,11 @@ public sealed class AnalysisViewModel : ObservableObject
             ? "稳定：按当前规则执行一次下落后，图形与原来完全一致。"
             : "不稳定：执行一次下落后图形会发生变化。";
 
-        LegalDirections.Clear();
-
-        _halfNote = "";
-
         if (_half is null)
         {
             _halfSummary = "需要在偶数象限的图形上分析。";
+
+            _halfCollapsedSummary = _halfSummary;
         }
         else
         {
@@ -355,35 +456,59 @@ public sealed class AnalysisViewModel : ObservableObject
                 ? $"可交换：共 {_half.DirectionCount} 个交换方向，其中 {_half.LegalDirections.Count} 个合法。"
                 : $"不可交换：共 {_half.DirectionCount} 个交换方向，没有合法的。";
 
-            foreach (string direction in _half.LegalDirections.Take(60))
-            {
-                LegalDirections.Add(direction);
-            }
-
-            if (_half.LegalDirections.Count > 60)
-            {
-                _halfNote = "合法方向较多，仅显示前 60 个。";
-            }
+            // 折叠时只保留统计摘要，与 Web 分析页的折叠态一致。
+            _halfCollapsedSummary =
+                $"共 {_half.DirectionCount} 个交换方向，其中 {_half.LegalDirections.Count} 个合法。";
         }
+
+        RebuildHalfGroups();
 
         OnPropertyChanged(nameof(AngleSummary));
         OnPropertyChanged(nameof(StabilityText));
         OnPropertyChanged(nameof(HalfSummary));
-        OnPropertyChanged(nameof(HalfNote));
+        OnPropertyChanged(nameof(HalfCollapsedSummary));
         OnPropertyChanged(nameof(PathSummary));
-        OnPropertyChanged(nameof(HasPathSteps));
+        OnPropertyChanged(nameof(PathGraph));
+        OnPropertyChanged(nameof(HasPathGraph));
+        OnPropertyChanged(nameof(HasPathSection));
         OnPropertyChanged(nameof(HasProductionPath));
-        OnPropertyChanged(nameof(HasLegalDirections));
+        OnPropertyChanged(nameof(HasHalfDirections));
         OnPropertyChanged(nameof(HasProperties));
         OnPropertyChanged(nameof(PropertyEmptyText));
     }
 
     /// <summary>
-    /// 按当前下落规则搜索制作路径，并生成界面展示用的结论与步骤。
+    /// 按轴重建半边卡片。开关只影响窗口显示；
+    /// 导出图片直接使用 <see cref="ExchangeDirections"/> 的全部方向。
+    /// </summary>
+    private void RebuildHalfGroups()
+    {
+        HalfAxisGroups.Clear();
+
+        if (_half is null)
+        {
+            return;
+        }
+
+        foreach (IGrouping<int, ExchangeDirection> group in
+                 _half.Directions
+                     .GroupBy(direction => direction.Axis)
+                     .OrderBy(group => group.Key))
+        {
+            List<ExchangeDirection> visible = group
+                .Where(direction => !_onlyLegalDirections || direction.IsLegal)
+                .ToList();
+
+            HalfAxisGroups.Add(new HalfAxisGroupViewModel(group.Key, visible));
+        }
+    }
+
+    /// <summary>
+    /// 按当前下落规则搜索制作路径，并生成界面展示用的结论与分层节点图。
     /// </summary>
     private void UpdateProductionPath()
     {
-        PathSteps.Clear();
+        _pathGraph = null;
 
         _pathResult = _document is null
             ? null
@@ -409,23 +534,11 @@ public sealed class AnalysisViewModel : ObservableObject
         _pathSummary =
             $"可制作：方向 {path.Direction}（{(path.DirectionLegal ? "合法方向" : "不合法方向")}）。";
 
-        int index = 1;
-
-        foreach (ProductionStep step in path.Steps)
-        {
-            string code = step.Shape is null
-                ? ""
-                : _exporter.Export(
-                    step.Shape,
-                    omitTopEmptyLayers: true);
-
-            PathSteps.Add(new ProductionStepViewModel(
-                index,
-                step.Title,
-                code));
-
-            index++;
-        }
+        /*
+         * 分层节点图与窗口、导出共用：按 Node.Row 分层，
+         * 节点尺寸与工作区一致，预览固定 30px 单元格不缩放。
+         */
+        _pathGraph = ProductionPathGraph.Create(path);
     }
 
     /// <summary>
@@ -442,9 +555,9 @@ public sealed class AnalysisViewModel : ObservableObject
 
         _pathResult = null;
 
-        _pathSummary = "";
+        _pathGraph = null;
 
-        PathSteps.Clear();
+        _pathSummary = "";
 
         _properties = ShapeProperty.None;
 
@@ -454,7 +567,7 @@ public sealed class AnalysisViewModel : ObservableObject
 
         Angles.Clear();
 
-        LegalDirections.Clear();
+        HalfAxisGroups.Clear();
 
         _angleSummary = "";
 
@@ -462,48 +575,52 @@ public sealed class AnalysisViewModel : ObservableObject
 
         _halfSummary = "";
 
-        _halfNote = "";
+        _halfCollapsedSummary = "";
 
         ErrorMessage = message;
 
         OnPropertyChanged(nameof(HasDocument));
         OnPropertyChanged(nameof(Document));
         OnPropertyChanged(nameof(PreviewImage));
+        OnPropertyChanged(nameof(PreviewNaturalWidth));
+        OnPropertyChanged(nameof(PreviewNaturalHeight));
         OnPropertyChanged(nameof(DimensionText));
         OnPropertyChanged(nameof(AngleSummary));
         OnPropertyChanged(nameof(StabilityText));
         OnPropertyChanged(nameof(HalfSummary));
-        OnPropertyChanged(nameof(HalfNote));
+        OnPropertyChanged(nameof(HalfCollapsedSummary));
         OnPropertyChanged(nameof(PathSummary));
-        OnPropertyChanged(nameof(HasPathSteps));
+        OnPropertyChanged(nameof(PathGraph));
+        OnPropertyChanged(nameof(HasPathGraph));
+        OnPropertyChanged(nameof(HasPathSection));
         OnPropertyChanged(nameof(HasProductionPath));
-        OnPropertyChanged(nameof(HasLegalDirections));
+        OnPropertyChanged(nameof(HasHalfDirections));
         OnPropertyChanged(nameof(HasProperties));
         OnPropertyChanged(nameof(PropertyEmptyText));
     }
 }
 
 /// <summary>
-/// 制作路径的一步：序号、标题与导出后的短代码。
-/// 最后一步「顶针与堆叠」没有图形，只显示标题。
+/// 半边稳定性的一个轴块：轴号 + 该轴当前可见的交换方向。
 /// </summary>
-public sealed class ProductionStepViewModel
+public sealed class HalfAxisGroupViewModel
 {
-    public ProductionStepViewModel(
-        int number,
-        string title,
-        string code)
+    public HalfAxisGroupViewModel(
+        int axis,
+        IReadOnlyList<ExchangeDirection> directions)
     {
-        Title = $"{number}. {title}";
+        Title = $"轴 {axis + 1}";
 
-        Code = code;
+        Directions = directions;
     }
 
     public string Title { get; }
 
-    public string Code { get; }
+    public IReadOnlyList<ExchangeDirection> Directions { get; }
 
-    public bool HasCode => !string.IsNullOrWhiteSpace(Code);
+    public bool HasDirections => Directions.Count > 0;
+
+    public string EmptyText => "没有合法的交换方向。";
 }
 
 /// <summary>

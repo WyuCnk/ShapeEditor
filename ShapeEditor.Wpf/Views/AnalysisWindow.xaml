@@ -45,12 +45,140 @@
             <Setter Property="Margin" Value="0,0,6,6" />
         </Style>
 
-        <Style x:Key="DirectionChip" TargetType="Border">
-            <Setter Property="Background" Value="#F3F1FA" />
-            <Setter Property="CornerRadius" Value="8" />
-            <Setter Property="Padding" Value="8,3" />
-            <Setter Property="Margin" Value="0,0,6,6" />
+        <!-- 板块显隐开关：与 Web 分析页右上角的「隐藏 / 显示」按钮一致 -->
+        <Style x:Key="SectionToggle" TargetType="ToggleButton">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{StaticResource Brush.Primary}" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Bd"
+                                Background="#EFEAF9"
+                                CornerRadius="6"
+                                Padding="10,3"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd"
+                                        Property="Background"
+                                        Value="#E4DCF7" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+
+            <Style.Triggers>
+                <Trigger Property="IsChecked" Value="True">
+                    <Setter Property="Content" Value="隐藏" />
+                </Trigger>
+                <Trigger Property="IsChecked" Value="False">
+                    <Setter Property="Content" Value="显示" />
+                </Trigger>
+            </Style.Triggers>
         </Style>
+
+        <!-- 制作路径子区域标题（交换工序 / 角的工序） -->
+        <Style x:Key="SubSectionTitle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="#3A3A44" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <!-- 制作路径节点卡片：图钉标题 + 1:1 竖式图预览 -->
+        <DataTemplate x:Key="PathGraphNodeTemplate">
+            <Grid Width="{Binding Width}"
+                  Height="{Binding Height}">
+                <!-- Border 不支持虚线，用 Rectangle 画卡片底与边框 -->
+                <Rectangle RadiusX="12"
+                           RadiusY="12">
+                    <Rectangle.Style>
+                        <Style TargetType="Rectangle">
+                            <Setter Property="Fill" Value="#FFFFFF" />
+                            <Setter Property="Stroke" Value="#D0D0D0" />
+                            <Setter Property="StrokeThickness" Value="1" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsResult}" Value="True">
+                                    <Setter Property="Fill" Value="#FAF8FF" />
+                                    <Setter Property="Stroke" Value="#512BD4" />
+                                    <Setter Property="StrokeThickness" Value="2" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding IsWaste}" Value="True">
+                                    <Setter Property="Fill" Value="#FBFBFC" />
+                                    <Setter Property="Stroke" Value="#C4C4CC" />
+                                    <Setter Property="StrokeThickness" Value="1.2" />
+                                    <Setter Property="StrokeDashArray" Value="4 3" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Rectangle.Style>
+                </Rectangle>
+
+                <Grid Margin="7">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="26" />
+                        <RowDefinition Height="4" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0"
+                               Text="{Binding Title}"
+                               FontSize="11"
+                               FontWeight="SemiBold"
+                               LineHeight="13"
+                               LineStackingStrategy="BlockLineHeight"
+                               TextWrapping="Wrap"
+                               ClipToBounds="True">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="#4A3F72" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsWaste}" Value="True">
+                                        <Setter Property="Foreground" Value="#9A9AA5" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <Grid Grid.Row="2"
+                          ClipToBounds="True">
+                        <Image Source="{Binding Preview}"
+                               Width="{Binding PreviewWidth}"
+                               Height="{Binding PreviewHeight}"
+                               Stretch="Fill"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Top"
+                               RenderOptions.BitmapScalingMode="HighQuality">
+                            <Image.Style>
+                                <Style TargetType="Image">
+                                    <Setter Property="Opacity" Value="1" />
+                                    <Style.Triggers>
+                                        <!-- 废料预览降低对比度，与 Web 的 0.55 一致 -->
+                                        <DataTrigger Binding="{Binding IsWaste}" Value="True">
+                                            <Setter Property="Opacity" Value="0.55" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Image.Style>
+                        </Image>
+
+                        <TextBlock Text="{Binding PlaceholderText}"
+                                   FontSize="12"
+                                   Foreground="#B0B0BA"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   Visibility="{Binding HasPreview, Converter={StaticResource InverseBoolToVis}}" />
+                    </Grid>
+                </Grid>
+            </Grid>
+        </DataTemplate>
     </Window.Resources>
 
     <Grid Margin="18">
@@ -137,7 +265,8 @@
                 Style="{StaticResource Card.Panel}"
                 Padding="0"
                 ClipToBounds="True">
-            <ScrollViewer VerticalScrollBarVisibility="Auto"
+            <ScrollViewer x:Name="AnalysisScroll"
+                          VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled">
                 <Grid Margin="14">
                     <Grid.ColumnDefinitions>
@@ -152,16 +281,28 @@
                                    Style="{StaticResource Text.SectionTitle}"
                                    Margin="0,0,0,6" />
 
-                        <Border Height="320"
-                                Background="#FFFFFF"
+                        <!--
+                            竖式图 1:1 基准为 30px 单元格，等比缩小到左栏宽度，
+                            高度上限 320；StretchDirection=DownOnly 保证小图不放大。
+                        -->
+                        <Border Background="#FFFFFF"
                                 BorderBrush="{StaticResource Brush.Border}"
                                 BorderThickness="1"
                                 CornerRadius="8"
-                                Padding="8">
+                                Padding="8"
+                                MinHeight="120">
                             <Grid>
-                                <Image Source="{Binding PreviewImage}"
-                                       Stretch="Uniform"
-                                       RenderOptions.BitmapScalingMode="HighQuality" />
+                                <Viewbox Stretch="Uniform"
+                                         StretchDirection="DownOnly"
+                                         MaxHeight="320"
+                                         HorizontalAlignment="Center"
+                                         VerticalAlignment="Center">
+                                    <Image Source="{Binding PreviewImage}"
+                                           Width="{Binding PreviewNaturalWidth}"
+                                           Height="{Binding PreviewNaturalHeight}"
+                                           Stretch="Fill"
+                                           RenderOptions.BitmapScalingMode="HighQuality" />
+                                </Viewbox>
 
                                 <TextBlock Text="没有可显示的图形"
                                            FontSize="12"
@@ -230,236 +371,477 @@
                             <!-- 图形性质 -->
                             <Border Style="{StaticResource SectionPanel}">
                                 <StackPanel>
-                                    <TextBlock Text="图形性质"
-                                               Style="{StaticResource Text.SectionTitle}"
-                                               Margin="0,0,0,6" />
+                                    <Grid Margin="0,0,0,6">
+                                        <TextBlock Text="图形性质"
+                                                   Style="{StaticResource Text.SectionTitle}"
+                                                   Margin="0" />
+                                        <ToggleButton Style="{StaticResource SectionToggle}"
+                                                      HorizontalAlignment="Right"
+                                                      IsChecked="{Binding IsPropertiesExpanded, Mode=TwoWay}" />
+                                    </Grid>
 
-                                    <ItemsControl ItemsSource="{Binding PropertyNames}">
-                                        <ItemsControl.ItemsPanel>
-                                            <ItemsPanelTemplate>
-                                                <WrapPanel />
-                                            </ItemsPanelTemplate>
-                                        </ItemsControl.ItemsPanel>
+                                    <StackPanel Visibility="{Binding IsPropertiesExpanded, Converter={StaticResource BoolToVis}}">
+                                        <ItemsControl ItemsSource="{Binding PropertyNames}">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <WrapPanel />
+                                                </ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
 
-                                        <ItemsControl.ItemTemplate>
-                                            <DataTemplate>
-                                                <Border Style="{StaticResource PropertyChip}">
-                                                    <TextBlock Text="{Binding}"
-                                                               FontSize="12"
-                                                               Foreground="{StaticResource Brush.PrimaryDark}" />
-                                                </Border>
-                                            </DataTemplate>
-                                        </ItemsControl.ItemTemplate>
-                                    </ItemsControl>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border Style="{StaticResource PropertyChip}">
+                                                        <TextBlock Text="{Binding}"
+                                                                   FontSize="12"
+                                                                   Foreground="{StaticResource Brush.PrimaryDark}" />
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
 
-                                    <TextBlock Text="{Binding PropertyEmptyText}"
-                                               Style="{StaticResource Text.Hint}" />
+                                        <TextBlock Text="{Binding PropertyEmptyText}"
+                                                   Style="{StaticResource Text.Hint}" />
 
-                                    <TextBlock Text="可制作性暂等同角合法性，等角制作算法接入后细化。"
-                                               Style="{StaticResource Text.Hint}"
-                                               Margin="0,4,0,0" />
+                                        <TextBlock Text="可制作性暂等同角合法性，等角制作算法接入后细化。"
+                                                   Style="{StaticResource Text.Hint}"
+                                                   Margin="0,4,0,0" />
+                                    </StackPanel>
                                 </StackPanel>
                             </Border>
 
-                            <!-- 角的合法性 -->
+                            <!-- 角的合法性：折叠时只留统计摘要 -->
                             <Border Style="{StaticResource SectionPanel}">
                                 <StackPanel>
-                                    <TextBlock Text="角的合法性"
-                                               Style="{StaticResource Text.SectionTitle}"
-                                               Margin="0,0,0,6" />
+                                    <Grid Margin="0,0,0,6">
+                                        <TextBlock Text="角的合法性"
+                                                   Style="{StaticResource Text.SectionTitle}"
+                                                   Margin="0" />
+                                        <ToggleButton Style="{StaticResource SectionToggle}"
+                                                      HorizontalAlignment="Right"
+                                                      IsChecked="{Binding IsAnglesExpanded, Mode=TwoWay}" />
+                                    </Grid>
 
                                     <TextBlock Text="{Binding AngleSummary}"
                                                Style="{StaticResource Text.Hint}"
                                                Margin="0,0,0,8" />
 
-                                    <Grid Margin="0,0,0,4">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="64" />
-                                            <ColumnDefinition Width="70" />
-                                            <ColumnDefinition Width="90" />
-                                            <ColumnDefinition Width="*" />
-                                        </Grid.ColumnDefinitions>
+                                    <StackPanel Visibility="{Binding IsAnglesExpanded, Converter={StaticResource BoolToVis}}">
+                                        <Grid Margin="0,0,0,4">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="64" />
+                                                <ColumnDefinition Width="70" />
+                                                <ColumnDefinition Width="90" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
 
-                                        <TextBlock Grid.Column="0"
-                                                   Text="角"
-                                                   Style="{StaticResource TableHeaderText}" />
-                                        <TextBlock Grid.Column="1"
-                                                   Text="合法性"
-                                                   Style="{StaticResource TableHeaderText}" />
-                                        <TextBlock Grid.Column="2"
-                                                   Text="可制作性"
-                                                   Style="{StaticResource TableHeaderText}" />
-                                        <TextBlock Grid.Column="3"
-                                                   Text="备注"
-                                                   Style="{StaticResource TableHeaderText}"
-                                                   Margin="0" />
-                                    </Grid>
+                                            <TextBlock Grid.Column="0"
+                                                       Text="角"
+                                                       Style="{StaticResource TableHeaderText}" />
+                                            <TextBlock Grid.Column="1"
+                                                       Text="合法性"
+                                                       Style="{StaticResource TableHeaderText}" />
+                                            <TextBlock Grid.Column="2"
+                                                       Text="可制作性"
+                                                       Style="{StaticResource TableHeaderText}" />
+                                            <TextBlock Grid.Column="3"
+                                                       Text="备注"
+                                                       Style="{StaticResource TableHeaderText}"
+                                                       Margin="0" />
+                                        </Grid>
 
-                                    <ItemsControl ItemsSource="{Binding Angles}">
-                                        <ItemsControl.ItemTemplate>
-                                            <DataTemplate>
-                                                <Border BorderBrush="#F0EDF8"
-                                                        BorderThickness="0,0,0,1"
-                                                        Padding="0,5">
-                                                    <Border.Style>
-                                                        <Style TargetType="Border">
-                                                            <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding IsLegal}" Value="False">
-                                                                    <Setter Property="Background" Value="{StaticResource Brush.DangerSoft}" />
-                                                                </DataTrigger>
-                                                            </Style.Triggers>
-                                                        </Style>
-                                                    </Border.Style>
+                                        <ItemsControl ItemsSource="{Binding Angles}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border BorderBrush="#F0EDF8"
+                                                            BorderThickness="0,0,0,1"
+                                                            Padding="0,5">
+                                                        <Border.Style>
+                                                            <Style TargetType="Border">
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsLegal}" Value="False">
+                                                                        <Setter Property="Background" Value="{StaticResource Brush.DangerSoft}" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Border.Style>
 
-                                                    <Grid>
-                                                        <Grid.ColumnDefinitions>
-                                                            <ColumnDefinition Width="64" />
-                                                            <ColumnDefinition Width="70" />
-                                                            <ColumnDefinition Width="90" />
-                                                            <ColumnDefinition Width="*" />
-                                                        </Grid.ColumnDefinitions>
+                                                        <Grid>
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="64" />
+                                                                <ColumnDefinition Width="70" />
+                                                                <ColumnDefinition Width="90" />
+                                                                <ColumnDefinition Width="*" />
+                                                            </Grid.ColumnDefinitions>
 
-                                                        <TextBlock Grid.Column="0"
-                                                                   Text="{Binding AngleText}"
-                                                                   Style="{StaticResource TableCellText}" />
+                                                            <TextBlock Grid.Column="0"
+                                                                       Text="{Binding AngleText}"
+                                                                       Style="{StaticResource TableCellText}" />
 
-                                                        <TextBlock Grid.Column="1"
-                                                                   Text="{Binding LegalityText}">
-                                                            <TextBlock.Style>
-                                                                <Style TargetType="TextBlock"
-                                                                       BasedOn="{StaticResource TableCellText}">
-                                                                    <Setter Property="Foreground" Value="#2E7D32" />
-                                                                    <Style.Triggers>
-                                                                        <DataTrigger Binding="{Binding IsLegal}" Value="False">
-                                                                            <Setter Property="Foreground" Value="{StaticResource Brush.Danger}" />
-                                                                        </DataTrigger>
-                                                                    </Style.Triggers>
-                                                                </Style>
-                                                            </TextBlock.Style>
-                                                        </TextBlock>
+                                                            <TextBlock Grid.Column="1"
+                                                                       Text="{Binding LegalityText}">
+                                                                <TextBlock.Style>
+                                                                    <Style TargetType="TextBlock"
+                                                                           BasedOn="{StaticResource TableCellText}">
+                                                                        <Setter Property="Foreground" Value="#2E7D32" />
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding IsLegal}" Value="False">
+                                                                                <Setter Property="Foreground" Value="{StaticResource Brush.Danger}" />
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </TextBlock.Style>
+                                                            </TextBlock>
 
-                                                        <TextBlock Grid.Column="2"
-                                                                   Text="{Binding ManufacturabilityText}"
-                                                                   Style="{StaticResource TableCellText}"
-                                                                   Foreground="{StaticResource Brush.TextMuted}" />
+                                                            <TextBlock Grid.Column="2"
+                                                                       Text="{Binding ManufacturabilityText}"
+                                                                       Style="{StaticResource TableCellText}"
+                                                                       Foreground="{StaticResource Brush.TextMuted}" />
 
-                                                        <TextBlock Grid.Column="3"
-                                                                   Text="{Binding NoteText}"
-                                                                   FontSize="11"
-                                                                   Foreground="{StaticResource Brush.TextMuted}"
-                                                                   TextWrapping="Wrap"
-                                                                   VerticalAlignment="Center"
-                                                                   Margin="0" />
-                                                    </Grid>
-                                                </Border>
-                                            </DataTemplate>
-                                        </ItemsControl.ItemTemplate>
-                                    </ItemsControl>
+                                                            <TextBlock Grid.Column="3"
+                                                                       Text="{Binding NoteText}"
+                                                                       FontSize="11"
+                                                                       Foreground="{StaticResource Brush.TextMuted}"
+                                                                       TextWrapping="Wrap"
+                                                                       VerticalAlignment="Center"
+                                                                       Margin="0" />
+                                                        </Grid>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
 
-                                    <TextBlock Text="角的可制作性暂时等同于合法性，等角的制作算法接入后细化。"
-                                               Style="{StaticResource Text.Hint}"
-                                               Margin="0,6,0,0" />
+                                        <TextBlock Text="角的可制作性暂时等同于合法性，等角的制作算法接入后细化。"
+                                                   Style="{StaticResource Text.Hint}"
+                                                   Margin="0,6,0,0" />
+                                    </StackPanel>
                                 </StackPanel>
                             </Border>
 
                             <!-- 稳定性 -->
                             <Border Style="{StaticResource SectionPanel}">
                                 <StackPanel>
-                                    <TextBlock Text="稳定性"
-                                               Style="{StaticResource Text.SectionTitle}"
-                                               Margin="0,0,0,6" />
+                                    <Grid Margin="0,0,0,6">
+                                        <TextBlock Text="稳定性"
+                                                   Style="{StaticResource Text.SectionTitle}"
+                                                   Margin="0" />
+                                        <ToggleButton Style="{StaticResource SectionToggle}"
+                                                      HorizontalAlignment="Right"
+                                                      IsChecked="{Binding IsStabilityExpanded, Mode=TwoWay}" />
+                                    </Grid>
 
                                     <TextBlock Text="{Binding StabilityText}"
                                                FontSize="12"
                                                Foreground="{StaticResource Brush.Text}"
-                                               TextWrapping="Wrap" />
+                                               TextWrapping="Wrap"
+                                               Visibility="{Binding IsStabilityExpanded, Converter={StaticResource BoolToVis}}" />
                                 </StackPanel>
                             </Border>
 
-                            <!-- 半边稳定性 -->
+                            <!-- 半边稳定性：一轴一块，块内自动换行，整块区域纵向滚动 -->
                             <Border Style="{StaticResource SectionPanel}">
                                 <StackPanel>
-                                    <TextBlock Text="半边稳定性"
-                                               Style="{StaticResource Text.SectionTitle}"
-                                               Margin="0,0,0,6" />
+                                    <Grid Margin="0,0,0,6">
+                                        <TextBlock Text="半边稳定性"
+                                                   Style="{StaticResource Text.SectionTitle}"
+                                                   Margin="0" />
+                                        <ToggleButton Style="{StaticResource SectionToggle}"
+                                                      HorizontalAlignment="Right"
+                                                      IsChecked="{Binding IsHalfExpanded, Mode=TwoWay}" />
+                                    </Grid>
 
-                                    <TextBlock Text="{Binding HalfSummary}"
+                                    <!-- 折叠态摘要 -->
+                                    <TextBlock Text="{Binding HalfCollapsedSummary}"
                                                FontSize="12"
                                                Foreground="{StaticResource Brush.Text}"
-                                               TextWrapping="Wrap" />
+                                               TextWrapping="Wrap"
+                                               Visibility="{Binding IsHalfExpanded, Converter={StaticResource InverseBoolToVis}}" />
 
-                                    <ItemsControl ItemsSource="{Binding LegalDirections}"
-                                                  Margin="0,8,0,0">
-                                        <ItemsControl.ItemsPanel>
-                                            <ItemsPanelTemplate>
-                                                <WrapPanel />
-                                            </ItemsPanelTemplate>
-                                        </ItemsControl.ItemsPanel>
+                                    <StackPanel Visibility="{Binding IsHalfExpanded, Converter={StaticResource BoolToVis}}">
+                                        <TextBlock Text="{Binding HalfSummary}"
+                                                   FontSize="12"
+                                                   Foreground="{StaticResource Brush.Text}"
+                                                   TextWrapping="Wrap" />
 
-                                        <ItemsControl.ItemTemplate>
-                                            <DataTemplate>
-                                                <Border Style="{StaticResource DirectionChip}">
-                                                    <TextBlock Text="{Binding}"
-                                                               FontSize="11"
-                                                               FontFamily="Consolas, Microsoft YaHei UI"
-                                                               Foreground="{StaticResource Brush.TextMuted}" />
-                                                </Border>
-                                            </DataTemplate>
-                                        </ItemsControl.ItemTemplate>
-                                    </ItemsControl>
+                                        <TextBlock Style="{StaticResource Text.Hint}"
+                                                   Margin="0,4,0,0"
+                                                   Text="交换方向合法的定义：两个半边都稳定，并且该方向上左右各两个带柱子的半半边也全部稳定。" />
 
-                                    <TextBlock Text="{Binding HalfNote}"
-                                               Style="{StaticResource Text.Hint}"
-                                               Margin="0,2,0,0" />
+                                        <!-- 图例：只用颜色区分合法与不合法 -->
+                                        <TextBlock Style="{StaticResource Text.Hint}"
+                                                   Margin="0,4,0,6">
+                                            <Run Text="绿色"
+                                                 Foreground="#2E9E5B"
+                                                 FontWeight="SemiBold" />
+                                            <Run Text=" 为合法方向，" />
+                                            <Run Text="红色"
+                                                 Foreground="#D64545"
+                                                 FontWeight="SemiBold" />
+                                            <Run Text=" 为不合法方向。" />
+                                        </TextBlock>
+
+                                        <CheckBox Content="只显示合法方向"
+                                                  FontSize="12"
+                                                  Foreground="{StaticResource Brush.TextMuted}"
+                                                  Margin="0,0,0,8"
+                                                  IsChecked="{Binding OnlyLegalDirections, Mode=TwoWay}" />
+
+                                        <ScrollViewer MaxHeight="360"
+                                                      VerticalScrollBarVisibility="Auto"
+                                                      HorizontalScrollBarVisibility="Disabled"
+                                                      Padding="0,0,4,0">
+                                            <ItemsControl ItemsSource="{Binding HalfAxisGroups}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Border Background="#FBFAFF"
+                                                                BorderBrush="#E6E2F2"
+                                                                BorderThickness="1"
+                                                                CornerRadius="10"
+                                                                Padding="10,8,12,12"
+                                                                Margin="0,0,0,10">
+                                                            <StackPanel>
+                                                                <TextBlock Text="{Binding Title}"
+                                                                           FontSize="13"
+                                                                           FontWeight="SemiBold"
+                                                                           Foreground="#4527A0"
+                                                                           Margin="0,0,0,4" />
+
+                                                                <TextBlock Text="{Binding EmptyText}"
+                                                                           FontSize="12"
+                                                                           Foreground="#8A8A95"
+                                                                           Margin="0,2,0,2"
+                                                                           Visibility="{Binding HasDirections, Converter={StaticResource InverseBoolToVis}}" />
+
+                                                                <!-- 方向逐个列出、各占一格：宽时一行多个，窄时自动折行 -->
+                                                                <ItemsControl ItemsSource="{Binding Directions}">
+                                                                    <ItemsControl.ItemsPanel>
+                                                                        <ItemsPanelTemplate>
+                                                                            <WrapPanel />
+                                                                        </ItemsPanelTemplate>
+                                                                    </ItemsControl.ItemsPanel>
+
+                                                                    <ItemsControl.ItemTemplate>
+                                                                        <DataTemplate>
+                                                                            <TextBlock Text="{Binding Display}"
+                                                                                       FontSize="13"
+                                                                                       FontFamily="Consolas, Microsoft YaHei UI"
+                                                                                       MinWidth="168"
+                                                                                       Margin="0,2,16,2"
+                                                                                       TextWrapping="Wrap">
+                                                                                <TextBlock.Style>
+                                                                                    <Style TargetType="TextBlock">
+                                                                                        <Setter Property="Foreground" Value="#D64545" />
+                                                                                        <Style.Triggers>
+                                                                                            <DataTrigger Binding="{Binding IsLegal}" Value="True">
+                                                                                                <Setter Property="Foreground" Value="#2E9E5B" />
+                                                                                            </DataTrigger>
+                                                                                        </Style.Triggers>
+                                                                                    </Style>
+                                                                                </TextBlock.Style>
+                                                                            </TextBlock>
+                                                                        </DataTemplate>
+                                                                    </ItemsControl.ItemTemplate>
+                                                                </ItemsControl>
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </ScrollViewer>
+                                    </StackPanel>
                                 </StackPanel>
                             </Border>
 
-                            <!-- 制作路径：只有存在合法交换方向时显示，整块隐藏时不留空行 -->
+                            <!-- 制作路径：总开关 + 交换工序 / 角的工序 两个子区域 -->
                             <Border Style="{StaticResource SectionPanel}"
                                     BorderThickness="0"
                                     Padding="0"
                                     Margin="0"
-                                    Visibility="{Binding HasProductionPath, Converter={StaticResource BoolToVis}}">
+                                    Visibility="{Binding HasPathSection, Converter={StaticResource BoolToVis}}">
                                 <StackPanel>
-                                    <TextBlock Text="制作路径"
-                                               Style="{StaticResource Text.SectionTitle}"
-                                               Margin="0,0,0,6" />
+                                    <Grid Margin="0,0,0,6">
+                                        <TextBlock Text="制作路径"
+                                                   Style="{StaticResource Text.SectionTitle}"
+                                                   Margin="0" />
+                                        <ToggleButton Style="{StaticResource SectionToggle}"
+                                                      HorizontalAlignment="Right"
+                                                      IsChecked="{Binding IsPathExpanded, Mode=TwoWay}" />
+                                    </Grid>
 
-                                    <Border Background="#FAFAFA"
-                                            BorderBrush="{StaticResource Brush.Border}"
-                                            BorderThickness="1"
-                                            CornerRadius="8"
-                                            Padding="12">
-                                        <StackPanel>
-                                            <TextBlock Text="{Binding PathSummary}"
-                                                       FontSize="12"
-                                                       Foreground="{StaticResource Brush.Text}"
-                                                       TextWrapping="Wrap" />
+                                    <StackPanel Visibility="{Binding IsPathExpanded, Converter={StaticResource BoolToVis}}">
 
-                                            <ItemsControl ItemsSource="{Binding PathSteps}"
-                                                          Margin="0,8,0,0">
-                                                <ItemsControl.ItemTemplate>
-                                                    <DataTemplate>
-                                                        <StackPanel Margin="0,0,0,8">
-                                                            <TextBlock Text="{Binding Title}"
-                                                                       FontSize="12"
-                                                                       FontWeight="SemiBold"
-                                                                       Foreground="{StaticResource Brush.Text}"
-                                                                       TextWrapping="Wrap" />
+                                        <!-- 交换工序：只有存在合法交换方向时才显示 -->
+                                        <Border BorderBrush="#E6E2F2"
+                                                BorderThickness="0,1,0,0"
+                                                Padding="0,12,0,0"
+                                                Margin="0,2,0,0"
+                                                Visibility="{Binding HasProductionPath, Converter={StaticResource BoolToVis}}">
+                                            <StackPanel>
+                                                <Grid Margin="0,0,0,6">
+                                                    <TextBlock Text="交换工序"
+                                                               Style="{StaticResource SubSectionTitle}" />
+                                                    <ToggleButton Style="{StaticResource SectionToggle}"
+                                                                  HorizontalAlignment="Right"
+                                                                  IsChecked="{Binding IsPathExchangeExpanded, Mode=TwoWay}" />
+                                                </Grid>
 
-                                                            <TextBlock Text="{Binding Code}"
-                                                                       FontFamily="Consolas, Microsoft YaHei UI"
-                                                                       FontSize="11"
-                                                                       Foreground="{StaticResource Brush.PrimaryDark}"
-                                                                       TextWrapping="Wrap"
-                                                                       Margin="14,2,0,0"
-                                                                       Visibility="{Binding HasCode, Converter={StaticResource BoolToVis}}" />
-                                                        </StackPanel>
-                                                    </DataTemplate>
-                                                </ItemsControl.ItemTemplate>
-                                            </ItemsControl>
-                                        </StackPanel>
-                                    </Border>
+                                                <StackPanel Visibility="{Binding IsPathExchangeExpanded, Converter={StaticResource BoolToVis}}">
+                                                    <TextBlock Text="{Binding PathSummary}"
+                                                               FontSize="12"
+                                                               Foreground="{StaticResource Brush.Text}"
+                                                               TextWrapping="Wrap" />
+
+                                                    <!-- 节点图容器：横纵都可滚动，预览保持 30px 单元格不缩放 -->
+                                                    <Border Background="#FBFAFF"
+                                                            BorderBrush="#E6E2F2"
+                                                            BorderThickness="1"
+                                                            CornerRadius="12"
+                                                            ClipToBounds="True"
+                                                            Margin="0,8,0,0">
+                                                        <ScrollViewer x:Name="PathGraphScroll"
+                                                                      HorizontalScrollBarVisibility="Auto"
+                                                                      VerticalScrollBarVisibility="Auto"
+                                                                      MaxHeight="560"
+                                                                      HorizontalContentAlignment="Left"
+                                                                      VerticalContentAlignment="Top">
+                                                            <Grid Width="{Binding PathGraph.Width}"
+                                                                  Height="{Binding PathGraph.Height}">
+
+                                                                <!-- 连线画在节点之下 -->
+                                                                <ItemsControl ItemsSource="{Binding PathGraph.Edges}"
+                                                                              IsHitTestVisible="False">
+                                                                    <ItemsControl.ItemsPanel>
+                                                                        <ItemsPanelTemplate>
+                                                                            <Canvas />
+                                                                        </ItemsPanelTemplate>
+                                                                    </ItemsControl.ItemsPanel>
+
+                                                                    <ItemsControl.ItemContainerStyle>
+                                                                        <Style TargetType="ContentPresenter">
+                                                                            <Setter Property="Canvas.Left" Value="0" />
+                                                                            <Setter Property="Canvas.Top" Value="0" />
+                                                                        </Style>
+                                                                    </ItemsControl.ItemContainerStyle>
+
+                                                                    <ItemsControl.ItemTemplate>
+                                                                        <DataTemplate>
+                                                                            <Path Data="{Binding LineGeometry}">
+                                                                                <Path.Style>
+                                                                                    <Style TargetType="Path">
+                                                                                        <Setter Property="Stroke" Value="#512BD4" />
+                                                                                        <Setter Property="StrokeThickness" Value="2" />
+                                                                                        <Setter Property="StrokeStartLineCap" Value="Round" />
+                                                                                        <Setter Property="StrokeEndLineCap" Value="Round" />
+                                                                                        <Style.Triggers>
+                                                                                            <DataTrigger Binding="{Binding IsWaste}" Value="True">
+                                                                                                <Setter Property="Stroke" Value="#9A9AA5" />
+                                                                                                <Setter Property="StrokeDashArray" Value="2.5 2" />
+                                                                                            </DataTrigger>
+                                                                                        </Style.Triggers>
+                                                                                    </Style>
+                                                                                </Path.Style>
+                                                                            </Path>
+                                                                        </DataTemplate>
+                                                                    </ItemsControl.ItemTemplate>
+                                                                </ItemsControl>
+
+                                                                <!-- 节点卡片 -->
+                                                                <ItemsControl ItemsSource="{Binding PathGraph.Nodes}"
+                                                                              ItemTemplate="{StaticResource PathGraphNodeTemplate}">
+                                                                    <ItemsControl.ItemsPanel>
+                                                                        <ItemsPanelTemplate>
+                                                                            <Canvas />
+                                                                        </ItemsPanelTemplate>
+                                                                    </ItemsControl.ItemsPanel>
+
+                                                                    <ItemsControl.ItemContainerStyle>
+                                                                        <Style TargetType="ContentPresenter">
+                                                                            <Setter Property="Canvas.Left" Value="{Binding X}" />
+                                                                            <Setter Property="Canvas.Top" Value="{Binding Y}" />
+                                                                        </Style>
+                                                                    </ItemsControl.ItemContainerStyle>
+                                                                </ItemsControl>
+
+                                                                <!-- 箭头单独一层，画在节点之上，与工作区一致 -->
+                                                                <ItemsControl ItemsSource="{Binding PathGraph.Edges}"
+                                                                              IsHitTestVisible="False">
+                                                                    <ItemsControl.ItemsPanel>
+                                                                        <ItemsPanelTemplate>
+                                                                            <Canvas />
+                                                                        </ItemsPanelTemplate>
+                                                                    </ItemsControl.ItemsPanel>
+
+                                                                    <ItemsControl.ItemContainerStyle>
+                                                                        <Style TargetType="ContentPresenter">
+                                                                            <Setter Property="Canvas.Left" Value="0" />
+                                                                            <Setter Property="Canvas.Top" Value="0" />
+                                                                        </Style>
+                                                                    </ItemsControl.ItemContainerStyle>
+
+                                                                    <ItemsControl.ItemTemplate>
+                                                                        <DataTemplate>
+                                                                            <Path Data="{Binding ArrowGeometry}">
+                                                                                <Path.Style>
+                                                                                    <Style TargetType="Path">
+                                                                                        <Setter Property="Fill" Value="#512BD4" />
+                                                                                        <Style.Triggers>
+                                                                                            <DataTrigger Binding="{Binding IsWaste}" Value="True">
+                                                                                                <Setter Property="Fill" Value="#9A9AA5" />
+                                                                                            </DataTrigger>
+                                                                                        </Style.Triggers>
+                                                                                    </Style>
+                                                                                </Path.Style>
+                                                                            </Path>
+                                                                        </DataTemplate>
+                                                                    </ItemsControl.ItemTemplate>
+                                                                </ItemsControl>
+                                                            </Grid>
+                                                        </ScrollViewer>
+                                                    </Border>
+
+                                                    <TextBlock Style="{StaticResource Text.Hint}"
+                                                               Margin="0,6,0,0"
+                                                               Text="节点按 5 层从上到下排列，同层节点从左到右紧排，层间固定留 80px 画箭头；预览保持 30px 单元格原始尺寸，图形较宽或较高时容器可横纵滚动。废料节点淡显、虚线边框，指向废料的箭头为灰色虚线。" />
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Border>
+
+                                        <!-- 角的工序：始终显示（占位），默认隐藏内容 -->
+                                        <Border BorderBrush="#E6E2F2"
+                                                BorderThickness="0,1,0,0"
+                                                Padding="0,12,0,0"
+                                                Margin="0,12,0,0">
+                                            <StackPanel>
+                                                <Grid Margin="0,0,0,6">
+                                                    <TextBlock Text="角的工序"
+                                                               Style="{StaticResource SubSectionTitle}" />
+                                                    <ToggleButton Style="{StaticResource SectionToggle}"
+                                                                  HorizontalAlignment="Right"
+                                                                  IsChecked="{Binding IsPathAnglesExpanded, Mode=TwoWay}" />
+                                                </Grid>
+
+                                                <StackPanel Visibility="{Binding IsPathAnglesExpanded, Converter={StaticResource BoolToVis}}">
+                                                    <Grid MinHeight="64">
+                                                        <Rectangle RadiusX="10"
+                                                                   RadiusY="10"
+                                                                   Fill="#FAF8FF"
+                                                                   Stroke="#B9A9EE"
+                                                                   StrokeThickness="1"
+                                                                   StrokeDashArray="4 3" />
+
+                                                        <TextBlock Text="待设计：后续按角绘制（每个角补柱后的制作工序）"
+                                                                   Foreground="#512BD4"
+                                                                   FontSize="13"
+                                                                   FontWeight="SemiBold"
+                                                                   TextWrapping="Wrap"
+                                                                   TextAlignment="Center"
+                                                                   HorizontalAlignment="Center"
+                                                                   VerticalAlignment="Center"
+                                                                   Margin="14" />
+                                                    </Grid>
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Border>
+                                    </StackPanel>
                                 </StackPanel>
                             </Border>
                         </StackPanel>

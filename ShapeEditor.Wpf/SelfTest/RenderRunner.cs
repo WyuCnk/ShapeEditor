@@ -427,6 +427,9 @@ public static class RenderRunner
         /*
          * 分析窗口的入口在编辑器和工作区，这里直接按同样的参数构造，
          * 显示到屏幕外再离屏渲染，检查 XAML、绑定与表格布局。
+         *
+         * 自检图需要同时看到半边稳定的「一轴一块」与制作路径的分层节点图，
+         * 所以把窗口放大到能容纳整页内容（真实使用时由外层滚动查看）。
          */
         var window = new AnalysisWindow(
             code,
@@ -441,8 +444,8 @@ public static class RenderRunner
             WindowStartupLocation = WindowStartupLocation.Manual,
             Left = -20000,
             Top = -20000,
-            Width = 1000,
-            Height = 700,
+            Width = 1160,
+            Height = 2500,
             Opacity = 0
         };
 
@@ -450,21 +453,63 @@ public static class RenderRunner
 
         window.UpdateLayout();
 
-        if (window.Content is FrameworkElement content)
+        /*
+         * 正式界面里节点图容器限高 560，图更大时在容器内滚动。
+         * 自检图需要在同一张 PNG 里看到完整的分层 DAG，
+         * 这里临时取消限高，让整页按节点图的实际高度排布。
+         */
+        double graphMaxHeight = window.PathGraphScroll.MaxHeight;
+
+        window.PathGraphScroll.MaxHeight = double.PositiveInfinity;
+
+        window.UpdateLayout();
+
+        if (window.AnalysisScroll?.Content is FrameworkElement page)
         {
             /*
-             * 元素本身带 Margin，渲染时会保留这段布局偏移；
-             * 位图必须把四周的边距一起算进去，否则右侧和底部会被裁掉。
+             * 窗口高度会被桌面大小限制，屏幕外的窗口装不下整页内容。
+             * 外层 ScrollViewer 已按无限高度排布内容，因此直接渲染
+             * 它的内容元素就能得到「一整页」自检图：
+             * 半边稳定的一轴一块与制作路径的分层节点图都会出现在同一张图里。
              */
-            Thickness margin = content.Margin;
+            page.UpdateLayout();
+
+            Thickness margin = page.Margin;
 
             int width = (int)Math.Max(
                 1,
-                content.ActualWidth + margin.Left + margin.Right);
+                Math.Ceiling(page.ActualWidth + margin.Left + margin.Right));
 
             int height = (int)Math.Max(
                 1,
-                content.ActualHeight + margin.Top + margin.Bottom);
+                Math.Ceiling(page.ActualHeight + margin.Top + margin.Bottom));
+
+            var visual = new DrawingVisual();
+
+            using (DrawingContext context = visual.RenderOpen())
+            {
+                context.DrawRectangle(
+                    Brushes.White,
+                    null,
+                    new Rect(0, 0, width, height));
+
+                // 用 VisualBrush 把整页内容画进白底，保留 Grid 自身的 14px 边距。
+                var brush = new VisualBrush(page)
+                {
+                    Stretch = Stretch.Fill,
+                    AlignmentX = AlignmentX.Left,
+                    AlignmentY = AlignmentY.Top
+                };
+
+                context.DrawRectangle(
+                    brush,
+                    null,
+                    new Rect(
+                        margin.Left,
+                        margin.Top,
+                        page.ActualWidth,
+                        page.ActualHeight));
+            }
 
             var bitmap = new RenderTargetBitmap(
                 width,
@@ -473,10 +518,12 @@ public static class RenderRunner
                 96,
                 PixelFormats.Pbgra32);
 
-            bitmap.Render(content);
+            bitmap.Render(visual);
 
             SaveBitmap(bitmap, path);
         }
+
+        window.PathGraphScroll.MaxHeight = graphMaxHeight;
 
         window.Close();
     }
@@ -523,6 +570,29 @@ public static class RenderRunner
                 viewModel.HasHalfDirections &&
                 viewModel.ExchangeDirections.Count > 0;
 
+            /*
+             * 半边稳定性：一轴一块。默认勾选「只显示合法方向」，
+             * 每个轴块只放合法方向；取消勾选后恢复该轴的全部方向。
+             */
+            int halfAxisCount = viewModel.ExchangeDirections
+                .Select(direction => direction.Axis)
+                .Distinct()
+                .Count();
+
+            bool halfGroupsReady =
+                halfAxisCount > 0 &&
+                viewModel.HalfAxisGroups.Count == halfAxisCount &&
+                viewModel.HalfAxisGroups.All(
+                    group => group.Directions.All(direction => direction.IsLegal));
+
+            viewModel.OnlyLegalDirections = false;
+
+            bool halfAllVisible =
+                viewModel.HalfAxisGroups.Sum(group => group.Directions.Count) ==
+                viewModel.ExchangeDirections.Count;
+
+            viewModel.OnlyLegalDirections = true;
+
             ProductionPathResult? productionPath =
                 viewModel.GetProductionPath();
 
@@ -533,12 +603,46 @@ public static class RenderRunner
 
             string initialPathSummary = viewModel.PathSummary;
 
-            int initialPathStepCount = viewModel.PathSteps.Count;
+            ProductionPathGraph? initialGraph = viewModel.PathGraph;
 
-            // 可制作时步骤数必须与路径结果一致；不可制作时不应残留步骤。
-            bool pathStepsReady =
+            int initialPathNodeCount = initialGraph?.Nodes.Count ?? 0;
+
+            int initialPathEdgeCount = initialGraph?.Edges.Count ?? 0;
+
+            // 节点图必须与 Core 的图结构一一对应，且使用 1:1 预览。
+            bool pathGraphReady =
                 productionPath?.Path is null ||
-                viewModel.PathSteps.Count == productionPath.Path.Steps.Count;
+                (initialGraph is not null &&
+                 initialGraph.Nodes.Count == productionPath.Path.Nodes.Count &&
+                 initialGraph.Edges.Count == productionPath.Path.Edges.Count);
+
+            /*
+             * 4 象限样例：16 节点 / 15 条边，按层分布 4/4/4/2/2，
+             * 3 个废料节点（含末端废料）与 3 条废料箭头。
+             */
+            string rowDistribution = initialGraph is null
+                ? ""
+                : string.Join(
+                    "/",
+                    initialGraph.Nodes
+                        .GroupBy(node => node.Row)
+                        .OrderBy(group => group.Key)
+                        .Select(group => group.Count()));
+
+            bool graphLayoutReady =
+                initialGraph is not null &&
+                initialPathNodeCount == 16 &&
+                initialPathEdgeCount == 15 &&
+                rowDistribution == "4/4/4/2/2" &&
+                initialGraph.Nodes.Count(node => node.IsWaste) == 3 &&
+                initialGraph.Edges.Count(edge => edge.IsWaste) == 3 &&
+                initialGraph.Nodes.All(node => node.Preview is not null);
+
+            // 制作路径分两区：交换工序默认显示，角的工序默认隐藏。
+            bool pathSubSectionsReady =
+                viewModel.IsPathExpanded &&
+                viewModel.IsPathExchangeExpanded &&
+                !viewModel.IsPathAnglesExpanded;
 
             viewModel.IsFloorMode = true;
 
@@ -557,11 +661,15 @@ public static class RenderRunner
 
             bool pathFollowsMode =
                 viewModel.PathSummary == floorViewModel.PathSummary &&
-                viewModel.PathSteps.Count == floorViewModel.PathSteps.Count;
+                (viewModel.PathGraph?.Nodes.Count ?? -1) ==
+                    (floorViewModel.PathGraph?.Nodes.Count ?? -1) &&
+                (viewModel.PathGraph?.Edges.Count ?? -1) ==
+                    (floorViewModel.PathGraph?.Edges.Count ?? -1);
 
             /*
              * 2 象限没有合法的交换方向：
-             * 制作路径板块应当整块隐藏，也不能退化成「不可制作」文本。
+             * 「交换工序」整块隐藏，但「角的工序」占位仍在，
+             * 也不能退化成「不可制作」文本。
              */
             var noPathViewModel = new AnalysisViewModel(
                 "Cu",
@@ -572,28 +680,35 @@ public static class RenderRunner
 
             bool pathGateHidden =
                 noPathViewModel.HasDocument &&
+                noPathViewModel.HasPathSection &&
                 !noPathViewModel.HasProductionPath &&
-                string.IsNullOrWhiteSpace(noPathViewModel.PathSummary) &&
-                noPathViewModel.PathSteps.Count == 0;
+                noPathViewModel.PathGraph is null &&
+                string.IsNullOrWhiteSpace(noPathViewModel.PathSummary);
 
             lines.Add($"解析与预览：{(loaded ? "成功" : "失败")}");
             lines.Add($"图形性质：{viewModel.PropertyNames.Count} 项，{(properties ? "成功" : "失败")}");
             lines.Add($"稳定性：{viewModel.StabilityText}");
             lines.Add($"半边稳定性：{viewModel.HalfSummary}");
-            lines.Add($"交换方向表格：{viewModel.ExchangeDirections.Count} 行，{(halfDirections ? "成功" : "失败")}");
-            lines.Add($"制作路径：{initialPathSummary}（{initialPathStepCount} 步）");
+            lines.Add($"交换方向：{viewModel.ExchangeDirections.Count} 个，{halfAxisCount} 个轴块，默认仅合法：{(halfGroupsReady ? "成功" : "失败")}，取消勾选后全部方向：{(halfAllVisible ? "成功" : "失败")}");
+            lines.Add($"交换工序节点图：{initialPathNodeCount} 节点 / {initialPathEdgeCount} 箭头，行分布 {rowDistribution}，废料 {initialGraph?.Nodes.Count(node => node.IsWaste) ?? 0} 个，{(graphLayoutReady ? "成功" : "失败")}");
+            lines.Add($"制作路径：{initialPathSummary}（{initialPathNodeCount} 节点 / {initialPathEdgeCount} 箭头）");
             lines.Add($"切换仅地面：{(modeSwitched ? "成功" : "失败")}");
             lines.Add($"切换后制作路径重算：{(pathFollowsMode ? "成功" : "失败")}");
-            lines.Add($"无合法交换方向时隐藏制作路径：{(pathGateHidden ? "成功" : "失败")}");
+            lines.Add($"制作路径分两区：{(pathSubSectionsReady ? "成功" : "失败")}");
+            lines.Add($"无合法交换方向时隐藏交换工序：{(pathGateHidden ? "成功" : "失败")}");
 
             ok = loaded &&
                  properties &&
                  stability &&
                  half &&
                  halfDirections &&
+                 halfGroupsReady &&
+                 halfAllVisible &&
                  pathReady &&
                  pathSummaryReady &&
-                 pathStepsReady &&
+                 pathGraphReady &&
+                 graphLayoutReady &&
+                 pathSubSectionsReady &&
                  modeSwitched &&
                  pathFollowsMode &&
                  pathGateHidden;

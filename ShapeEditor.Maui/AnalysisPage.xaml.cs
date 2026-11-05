@@ -1,3 +1,5 @@
+using Microsoft.Maui.Controls.Shapes;
+using Microsoft.Maui.Layouts;
 using ShapeEditor.Core.Analysis;
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Physics;
@@ -12,6 +14,11 @@ namespace ShapeEditor.Maui;
 /// 切换下落规则时整体重新分析一次。布局是单栏 ScrollView，
 /// 从上到下：竖式图、图形性质、角的合法性、稳定性、半边稳定性、
 /// 制作路径、角的判定规则。
+///
+/// 与 Web 分析页对齐的交互：
+/// 每个板块都有独立的显示 / 隐藏开关；角的合法性折叠后仍显示角数摘要；
+/// 半边稳定性一轴一卡、只显示合法方向的开关只影响页面；
+/// 制作路径分成「交换工序」（分层 DAG）与「角的工序」（占位）两个独立开关。
 /// </summary>
 public partial class AnalysisPage : ContentPage
 {
@@ -22,15 +29,15 @@ public partial class AnalysisPage : ContentPage
 
     private static readonly Color Muted = Color.FromArgb("#6B6B76");
 
-    private static readonly Color Danger = Color.FromArgb("#A00000");
+    private static readonly Color Danger = Color.FromArgb("#D64545");
 
-    private static readonly Color Legal = Color.FromArgb("#2E7D32");
+    private static readonly Color Legal = Color.FromArgb("#2E9E5B");
 
     private static readonly Color BadRowBackground = Color.FromArgb("#FFF5F5");
 
-    private static readonly Color StepBackground = Color.FromArgb("#FAFAFA");
+    private static readonly Color AxisCardBackground = Color.FromArgb("#FBFAFF");
 
-    private static readonly Color StepBorder = Color.FromArgb("#EEEAF7");
+    private static readonly Color AxisCardStroke = Color.FromArgb("#E6E2F2");
 
     private static readonly Color ModeIdleBackground = Color.FromArgb("#EFEAF9");
 
@@ -39,6 +46,14 @@ public partial class AnalysisPage : ContentPage
 
     /// <summary>整页最多显示多少条交换方向。</summary>
     private const int MaxDirectionRows = 240;
+
+    /// <summary>顶部竖式图的高度上限。</summary>
+    private const double PreviewMaxHeight = 320;
+
+    /// <summary>节点图容器的兜底高度区间，与 Web 一致。</summary>
+    private const double GraphViewportMinHeight = 220;
+
+    private const double GraphViewportMaxHeight = 560;
 
     /// <summary>
     /// 性质的固定展示顺序，与 Web / WPF 分析页保持一致。
@@ -59,13 +74,24 @@ public partial class AnalysisPage : ContentPage
 
     private readonly ShortCodeParser _parser = new();
 
-    private readonly ShortCodeExporter _exporter = new();
+    /// <summary>板块标题右侧的开关按钮 → 被它控制的内容区。</summary>
+    private readonly Dictionary<Button, VisualElement> _sectionBodies = new();
 
     private ShapeDocument? _document;
+
+    private HalfStabilityResult? _half;
 
     private CollapseMode _mode = CollapseMode.IncludeCycles;
 
     private string _code = "";
+
+    /// <summary>顶部竖式图当前的图形与可用栏宽。</summary>
+    private ShapeDocument? _previewDocument;
+
+    private double _previewAvailableWidth;
+
+    /// <summary>只显示合法方向：默认开启，仅影响页面显示，不影响分析结果。</summary>
+    private bool _onlyLegalDirections = true;
 
     /// <summary>重算 / 重绘守卫，避免在刷新界面时再次触发分析。</summary>
     private bool _rendering;
@@ -73,6 +99,22 @@ public partial class AnalysisPage : ContentPage
     public AnalysisPage()
     {
         InitializeComponent();
+
+        RegisterSection(PropertyToggleButton, PropertyBody);
+
+        RegisterSection(AngleToggleButton, AngleBody);
+
+        RegisterSection(StabilityToggleButton, StabilityBody);
+
+        RegisterSection(HalfToggleButton, HalfBody);
+
+        RegisterSection(PathToggleButton, PathBody);
+
+        RegisterSection(PathExchangeToggleButton, PathExchangeBody);
+
+        RegisterSection(PathAnglesToggleButton, PathAnglesBody);
+
+        RegisterSection(RulesToggleButton, RulesBody);
 
         UpdateModeButtons();
     }
@@ -153,6 +195,38 @@ public partial class AnalysisPage : ContentPage
 
         Recompute();
     }
+
+    #region 板块开关
+
+    /// <summary>
+    /// 登记一个板块开关。默认文案按内容区当前的可见状态设置，
+    /// 后续由 <see cref="OnSectionToggleClicked"/> 只改可见性与文案。
+    /// </summary>
+    private void RegisterSection(
+        Button button,
+        VisualElement body)
+    {
+        _sectionBodies[button] = body;
+
+        button.Text = body.IsVisible ? "隐藏" : "显示";
+    }
+
+    private void OnSectionToggleClicked(
+        object? sender,
+        EventArgs e)
+    {
+        if (sender is not Button button ||
+            !_sectionBodies.TryGetValue(button, out VisualElement? body))
+        {
+            return;
+        }
+
+        body.IsVisible = !body.IsVisible;
+
+        button.Text = body.IsVisible ? "隐藏" : "显示";
+    }
+
+    #endregion
 
     #region 下落规则
 
@@ -271,6 +345,8 @@ public partial class AnalysisPage : ContentPage
             document,
             _mode);
 
+        _half = half;
+
         RenderPreview(document);
 
         RenderProperties(properties);
@@ -281,7 +357,7 @@ public partial class AnalysisPage : ContentPage
 
         RenderHalfStability(document, half);
 
-        RenderProductionPath(path);
+        RenderProductionPath(path, half);
     }
 
     private void ClearSections()
@@ -292,25 +368,90 @@ public partial class AnalysisPage : ContentPage
 
         AxisList.Clear();
 
-        PathList.Clear();
-
         PropertyEmptyLabel.IsVisible = false;
 
         HalfNoteLabel.IsVisible = false;
+
+        PathGraphView.Drawable = null;
+
+        PathGraphBox.IsVisible = false;
+
+        PathGraphNote.IsVisible = false;
+
+        PathSummaryLabel.Text = "";
     }
 
     private void RenderPreview(
         ShapeDocument document)
     {
-        double height = document.LayerCount * WorkspaceLayout.CellSize;
+        _previewDocument = document;
 
-        PreviewView.WidthRequest = document.PartCount * WorkspaceLayout.CellSize;
+        UpdatePreviewLayout();
+    }
 
-        PreviewView.HeightRequest = Math.Max(WorkspaceLayout.CellSize, height);
+    private void OnPreviewCardSizeChanged(
+        object? sender,
+        EventArgs e)
+    {
+        // SectionCard 左右内边距合计 20；用卡片宽度而不是内部 Stack 的宽度，
+        // 避免预览先按估算宽度撑大内部布局后拿不到真实栏宽。
+        double width = PreviewCard.Width - 20;
 
-        PreviewView.Drawable = new WorkspaceCellDrawable(document);
+        // 只有栏宽变化才需要重算比例，高度变化（子元素换行等）不重复重绘。
+        if (width <= 1 || Math.Abs(width - _previewAvailableWidth) < 0.5)
+        {
+            return;
+        }
 
-        PreviewScroll.HeightRequest = Math.Max(WorkspaceLayout.CellSize, height);
+        _previewAvailableWidth = width;
+
+        UpdatePreviewLayout();
+    }
+
+    /// <summary>
+    /// 顶部竖式图：以 30 像素单元格为 1:1 基准，等比缩小到栏宽，
+    /// 高度不超过 320；缩放比例上限为 1，小图形保持原尺寸。
+    /// </summary>
+    private void UpdatePreviewLayout()
+    {
+        if (_previewDocument is not ShapeDocument document)
+        {
+            return;
+        }
+
+        double availableWidth = _previewAvailableWidth > 1
+            ? _previewAvailableWidth
+            : 320;
+
+        double naturalWidth = document.PartCount * WorkspaceLayout.CellSize;
+
+        double naturalHeight = document.LayerCount * WorkspaceLayout.CellSize;
+
+        if (naturalWidth <= 0 || naturalHeight <= 0)
+        {
+            return;
+        }
+
+        double scale = Math.Min(
+            1,
+            Math.Min(
+                availableWidth / naturalWidth,
+                PreviewMaxHeight / naturalHeight));
+
+        if (scale <= 0)
+        {
+            return;
+        }
+
+        PreviewView.WidthRequest = naturalWidth * scale;
+
+        PreviewView.HeightRequest = naturalHeight * scale;
+
+        PreviewView.Drawable = new AnalysisPreviewDrawable(
+            document,
+            WorkspaceLayout.CellSize * scale);
+
+        PreviewView.Invalidate();
 
         DimensionLabel.Text = $"{document.LayerCount} 层 × {document.PartCount} 象限";
     }
@@ -339,6 +480,7 @@ public partial class AnalysisPage : ContentPage
     private void RenderAngles(
         ShapeAnalysisResult analysis)
     {
+        // 折叠与展开显示同一句话；折叠时板块里只保留这句摘要。
         AngleSummaryLabel.Text =
             $"共 {analysis.Angles.Count} 个角，{analysis.LegalCount} 个合法" +
             (analysis.IsFullyLegal ? "（全部合法）" : "");
@@ -357,10 +499,16 @@ public partial class AnalysisPage : ContentPage
             : "不稳定：执行一次下落后图形会发生变化。";
     }
 
+    /// <summary>
+    /// 半边稳定性：每个轴一张卡片，卡片内方向自动换行；
+    /// 整块区域跟随页面纵向滚动，不出现横向滚动。
+    /// </summary>
     private void RenderHalfStability(
         ShapeDocument document,
         HalfStabilityResult half)
     {
+        AxisList.Clear();
+
         // 奇数象限或象限数不足 4 时，Core 返回空结果
         if (document.PartCount % 2 != 0 || document.PartCount / 2 < 2)
         {
@@ -393,7 +541,7 @@ public partial class AnalysisPage : ContentPage
                 break;
             }
 
-            AxisList.Add(BuildAxisTable(group, ref shown, ref truncated));
+            AxisList.Add(BuildAxisCard(group, ref shown, ref truncated));
 
             if (truncated)
             {
@@ -409,54 +557,50 @@ public partial class AnalysisPage : ContentPage
     }
 
     /// <summary>
-    /// 一个轴的交换方向表格：轴标题 + 表头 + 若干行。
+    /// 一个轴的交换方向卡片：轴标题 + 可自动换行的方向标签。
+    /// 合法 / 不合法只靠文字颜色区分（绿 / 红）。
     /// </summary>
-    private View BuildAxisTable(
+    private View BuildAxisCard(
         IGrouping<int, ExchangeDirection> group,
         ref int shown,
         ref bool truncated)
     {
+        var card = new Border
+        {
+            BackgroundColor = AxisCardBackground,
+            Stroke = AxisCardStroke,
+            StrokeThickness = 1,
+            Padding = new Thickness(10),
+            StrokeShape = new RoundRectangle
+            {
+                CornerRadius = 10
+            }
+        };
+
         var layout = new VerticalStackLayout
         {
-            Spacing = 2
+            Spacing = 6
         };
 
         layout.Add(new Label
         {
             Text = $"轴 {group.Key + 1}",
-            FontSize = 12,
+            FontSize = 13,
             FontAttributes = FontAttributes.Bold,
-            TextColor = Muted
+            TextColor = Accent
         });
 
-        var header = new Grid
+        var flex = new FlexLayout
         {
-            ColumnSpacing = 8
+            Wrap = FlexWrap.Wrap,
+            Direction = FlexDirection.Row,
+            AlignItems = FlexAlignItems.Start,
+            JustifyContent = FlexJustify.Start
         };
 
-        header.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
-
-        header.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(64)));
-
-        header.Add(new Label
-        {
-            Text = "交换方向",
-            FontSize = 11,
-            FontAttributes = FontAttributes.Bold,
-            TextColor = Muted
-        }, 0, 0);
-
-        header.Add(new Label
-        {
-            Text = "合法",
-            FontSize = 11,
-            FontAttributes = FontAttributes.Bold,
-            TextColor = Muted
-        }, 1, 0);
-
-        layout.Add(header);
-
         int shownInAxis = 0;
+
+        bool any = false;
 
         foreach (ExchangeDirection direction in group)
         {
@@ -467,19 +611,80 @@ public partial class AnalysisPage : ContentPage
                 break;
             }
 
-            layout.Add(BuildDirectionRow(direction));
+            // 开关只影响页面显示；摘要与交换工序的判断始终使用完整结果。
+            if (_onlyLegalDirections && !direction.IsLegal)
+            {
+                continue;
+            }
+
+            flex.Add(new Label
+            {
+                Text = direction.Display,
+                FontSize = 12,
+                TextColor = direction.IsLegal ? Legal : Danger,
+                WidthRequest = 168,
+                LineBreakMode = LineBreakMode.CharacterWrap,
+                Margin = new Thickness(0, 0, 12, 4)
+            });
+
+            any = true;
 
             shown++;
 
             shownInAxis++;
         }
 
-        return layout;
+        if (any)
+        {
+            layout.Add(flex);
+        }
+        else
+        {
+            layout.Add(new Label
+            {
+                Text = _onlyLegalDirections
+                    ? "没有合法的交换方向。"
+                    : "没有交换方向。",
+                FontSize = 11,
+                TextColor = Muted
+            });
+        }
+
+        card.Content = layout;
+
+        return card;
     }
 
-    private void RenderProductionPath(
-        ProductionPathResult path)
+    private void OnOnlyLegalDirectionsToggled(
+        object? sender,
+        ToggledEventArgs e)
     {
+        _onlyLegalDirections = e.Value;
+
+        if (_document is null || _half is null)
+        {
+            return;
+        }
+
+        // 只重绘半边板块，不重跑分析。
+        RenderHalfStability(_document, _half);
+    }
+
+    /// <summary>
+    /// 制作路径：交换工序只在可交换时出现；角的工序始终占位。
+    /// 两块各自有独立开关，外层「制作路径」总开关由板块开关统一管理。
+    /// </summary>
+    private void RenderProductionPath(
+        ProductionPathResult path,
+        HalfStabilityResult half)
+    {
+        PathExchangeSection.IsVisible = half.IsExchangeable;
+
+        if (!half.IsExchangeable)
+        {
+            return;
+        }
+
         if (!path.IsProducible || path.Path is null)
         {
             PathSummaryLabel.Text = "不可制作：" +
@@ -492,10 +697,30 @@ public partial class AnalysisPage : ContentPage
             $"可制作：方向 {path.Path.Direction}" +
             $"（{(path.Path.DirectionLegal ? "合法方向" : "不合法方向")}）。";
 
-        foreach (ProductionStep step in path.Path.Steps)
+        ProductionPathGraphLayout? graph = ProductionPathGraphLayout.Create(path.Path);
+
+        if (graph is null)
         {
-            PathList.Add(BuildPathStepRow(step));
+            return;
         }
+
+        PathGraphView.WidthRequest = graph.Width;
+
+        PathGraphView.HeightRequest = graph.Height;
+
+        PathGraphView.Drawable = new ProductionPathGraphDrawable(graph);
+
+        PathGraphView.Invalidate();
+
+        // 节点少时按内容自适应，节点多时固定高度并纵横滚动。
+        PathGraphScroll.HeightRequest = Math.Clamp(
+            Math.Ceiling(graph.Height),
+            GraphViewportMinHeight,
+            GraphViewportMaxHeight);
+
+        PathGraphBox.IsVisible = true;
+
+        PathGraphNote.IsVisible = true;
     }
 
     #endregion
@@ -571,87 +796,6 @@ public partial class AnalysisPage : ContentPage
         };
     }
 
-    private static View BuildDirectionRow(
-        ExchangeDirection direction)
-    {
-        var grid = new Grid
-        {
-            ColumnSpacing = 8
-        };
-
-        grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
-
-        grid.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(64)));
-
-        grid.Add(new Label
-        {
-            Text = direction.Display,
-            FontSize = 11,
-            TextColor = Text,
-            LineBreakMode = LineBreakMode.TailTruncation,
-            VerticalTextAlignment = TextAlignment.Center
-        }, 0, 0);
-
-        grid.Add(Cell(
-            direction.IsLegal ? "是" : "否",
-            direction.IsLegal ? Legal : Danger), 1, 0);
-
-        return new Border
-        {
-            Stroke = Colors.Transparent,
-            StrokeThickness = 0,
-            Padding = new Thickness(0, 2),
-            BackgroundColor = direction.IsLegal
-                ? Colors.Transparent
-                : BadRowBackground,
-            Content = grid
-        };
-    }
-
-    private View BuildPathStepRow(
-        ProductionStep step)
-    {
-        var grid = new Grid
-        {
-            ColumnSpacing = 8
-        };
-
-        grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
-
-        grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
-
-        grid.Add(new Label
-        {
-            Text = step.Title,
-            FontSize = 12,
-            TextColor = Text,
-            VerticalTextAlignment = TextAlignment.Center
-        }, 0, 0);
-
-        if (step.Shape is not null)
-        {
-            grid.Add(new Label
-            {
-                Text = _exporter.Export(step.Shape, omitTopEmptyLayers: true),
-                FontSize = 11,
-                TextColor = Muted,
-                LineBreakMode = LineBreakMode.TailTruncation,
-                HorizontalTextAlignment = TextAlignment.End,
-                VerticalTextAlignment = TextAlignment.Center,
-                MaximumWidthRequest = 220
-            }, 1, 0);
-        }
-
-        return new Border
-        {
-            BackgroundColor = StepBackground,
-            Stroke = StepBorder,
-            StrokeThickness = 1,
-            Padding = new Thickness(8, 4),
-            Content = grid
-        };
-    }
-
     private static Label Cell(
         string text,
         Color? color = null)
@@ -683,6 +827,12 @@ public partial class AnalysisPage : ContentPage
     {
         _document = null;
 
+        _half = null;
+
+        _previewDocument = null;
+
+        PreviewView.Drawable = null;
+
         ContentPanel.IsVisible = false;
 
         ErrorLabel.IsVisible = false;
@@ -699,6 +849,12 @@ public partial class AnalysisPage : ContentPage
         string message)
     {
         _document = null;
+
+        _half = null;
+
+        _previewDocument = null;
+
+        PreviewView.Drawable = null;
 
         ContentPanel.IsVisible = false;
 

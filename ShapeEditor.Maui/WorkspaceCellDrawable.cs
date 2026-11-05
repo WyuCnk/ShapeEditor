@@ -1,5 +1,6 @@
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Theme;
+using GraphicsFont = Microsoft.Maui.Graphics.Font;
 
 namespace ShapeEditor.Maui;
 
@@ -14,66 +15,100 @@ public sealed class WorkspaceCellDrawable : IDrawable
 
     private readonly ShapeDocument _document;
 
-    private readonly int _layers;
-
-    private readonly int _parts;
-
     public WorkspaceCellDrawable(
         ShapeDocument document)
     {
         _document = document;
-        _layers = document.LayerCount;
-        _parts = document.PartCount;
     }
 
     public void Draw(
         ICanvas canvas,
         RectF dirtyRect)
     {
-        if (_layers <= 0 || _parts <= 0)
+        DrawDocument(
+            canvas,
+            _document,
+            0,
+            0,
+            (float)WorkspaceLayout.CellSize);
+    }
+
+    /// <summary>
+    /// 在画布指定位置按给定单元格边长画一张竖式图。
+    ///
+    /// 分析页的顶部预览（等比缩小）和制作路径节点（固定 30）都调用这里，
+    /// 保证字母（c / S / P）、颜色与格线三处完全一致。
+    /// </summary>
+    public static void DrawDocument(
+        ICanvas canvas,
+        ShapeDocument document,
+        float originX,
+        float originY,
+        float cell)
+    {
+        int layers = document.LayerCount;
+
+        int parts = document.PartCount;
+
+        if (layers <= 0 || parts <= 0 || cell <= 0)
         {
             return;
         }
 
-        float cell = (float)WorkspaceLayout.CellSize;
+        // 调用方可能刚画过粗体标题，预览里的字母统一用常规字重。
+        canvas.Font = GraphicsFont.Default;
 
-        for (int visualRow = 0; visualRow < _layers; visualRow++)
+        // 缩小时线宽、内缩与字号一起按比例收，避免小尺寸预览糊成一片。
+        float inset = Math.Max(0.5f, cell * 0.033f);
+
+        float fontSize = Math.Clamp(cell * 0.53f, 4f, 16f);
+
+        // 顶部预览可能缩得很小，格子不足 7 时字母会溢出，干脆只保留颜色。
+        bool showLetter = cell >= 7f;
+
+        float stroke = Math.Max(0.4f, cell * 0.02f);
+
+        for (int visualRow = 0; visualRow < layers; visualRow++)
         {
             // 最高层画在最上面，和编辑器竖式图一致
-            int layer = _layers - 1 - visualRow;
+            int layer = layers - 1 - visualRow;
 
-            for (int part = 0; part < _parts; part++)
+            for (int part = 0; part < parts; part++)
             {
-                float x = part * cell;
-                float y = visualRow * cell;
+                float x = originX + part * cell;
 
-                ShapeCell shape = _document[layer, part];
+                float y = originY + visualRow * cell;
+
+                ShapeCell shape = document[layer, part];
 
                 if (shape.Type != CellType.Empty)
                 {
                     canvas.FillColor = ColorFor(shape);
 
                     canvas.FillRectangle(
-                        x + 1,
-                        y + 1,
-                        cell - 2,
-                        cell - 2);
+                        x + inset,
+                        y + inset,
+                        cell - inset * 2,
+                        cell - inset * 2);
 
                     canvas.FontColor = Colors.White;
-                    canvas.FontSize = 16;
+                    canvas.FontSize = fontSize;
 
-                    canvas.DrawString(
-                        LetterOf(shape),
-                        x,
-                        y,
-                        cell,
-                        cell,
-                        HorizontalAlignment.Center,
-                        VerticalAlignment.Center);
+                    if (showLetter)
+                    {
+                        canvas.DrawString(
+                            LetterOf(shape),
+                            x,
+                            y,
+                            cell,
+                            cell,
+                            HorizontalAlignment.Center,
+                            VerticalAlignment.Center);
+                    }
                 }
 
                 canvas.StrokeColor = GridLine;
-                canvas.StrokeSize = 0.6f;
+                canvas.StrokeSize = stroke;
 
                 canvas.DrawRectangle(x, y, cell, cell);
             }

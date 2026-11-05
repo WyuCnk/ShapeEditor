@@ -5,7 +5,6 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using ShapeEditor.Core.Analysis;
 using ShapeEditor.Core.Models;
-using ShapeEditor.Core.Services;
 using ShapeEditor.Wpf.ViewModels;
 
 namespace ShapeEditor.Wpf.Rendering;
@@ -15,21 +14,22 @@ namespace ShapeEditor.Wpf.Rendering;
 ///
 /// 版式与 Web 的「导出分析图」对齐，自上而下依次是：
 /// 标题与短代码、竖式图、图形性质、角的合法性、稳定性、
-/// 半边稳定性（按轴分组）、制作路径，最后是尺寸与生成时间。
+/// 半边稳定性（一轴一块）、制作路径（分层节点图），最后是尺寸与生成时间。
 ///
-/// 全部内容由 DrawingVisual 一次性离屏绘制，
-/// 竖式图单元格复用 <see cref="ShapeGridDrawing"/>，与编辑器保持同一套配色。
+/// 全部内容由 DrawingVisual 一次性离屏绘制：
+/// 竖式图与节点预览复用 <see cref="ShapeGridDrawing"/>，与编辑器保持同一套配色；
+/// 画布宽度会随制作路径节点图自动加宽，节点图不缩放、不分片。
 /// </summary>
 public static class AnalysisImageExporter
 {
-    /// <summary>画布宽度。</summary>
-    private const double CanvasWidth = 820;
+    /// <summary>单栏版式的最小画布宽度。</summary>
+    private const double MinCanvasWidth = 820;
 
     /// <summary>四周留白。</summary>
     private const double PagePadding = 36;
 
-    /// <summary>单栏内容宽度。</summary>
-    private const double ContentWidth = CanvasWidth - PagePadding * 2;
+    /// <summary>单栏内容的最小宽度。</summary>
+    private const double MinContentWidth = MinCanvasWidth - PagePadding * 2;
 
     /// <summary>顶部主色装饰条高度。</summary>
     private const double TopBarHeight = 6;
@@ -43,11 +43,20 @@ public static class AnalysisImageExporter
     /// <summary>竖式图允许的最大宽度。</summary>
     private const double MaxShapeWidth = 600;
 
-    /// <summary>
-    /// 交换方向表格最多画多少行。
-    /// 象限数很大时方向数会爆炸，导出图只保留前若干行并给出提示。
-    /// </summary>
-    private const int MaxDirectionRows = 80;
+    /// <summary>半边方向在轴块内的最小列宽，与 Web 的 minmax(168px, 1fr) 一致。</summary>
+    private const double HalfDirectionColumnWidth = 168;
+
+    /// <summary>半边方向列之间的水平间距。</summary>
+    private const double HalfDirectionColumnGap = 16;
+
+    /// <summary>半边方向行高。</summary>
+    private const double HalfDirectionRowHeight = 20;
+
+    /// <summary>半边方向行间距。</summary>
+    private const double HalfDirectionRowGap = 4;
+
+    /// <summary>节点图四周的圆角半径。</summary>
+    private const double GraphCornerRadius = 12;
 
     private const string UiFontFamily =
         "Microsoft YaHei UI, Microsoft YaHei, Segoe UI";
@@ -99,15 +108,48 @@ public static class AnalysisImageExporter
 
     private static readonly Brush SuccessBrush = CreateBrush(0x2E, 0x7D, 0x32);
 
+    /// <summary>合法的交换方向：与 Web 一致的绿色。</summary>
+    private static readonly Brush LegalDirectionBrush =
+        CreateBrush(0x2E, 0x9E, 0x5B);
+
+    /// <summary>不合法的交换方向：与 Web 一致的红色。</summary>
+    private static readonly Brush IllegalDirectionBrush =
+        CreateBrush(0xD6, 0x45, 0x45);
+
     private static readonly Brush ZebraBrush = CreateBrush(0xFB, 0xFA, 0xFE);
 
     private static readonly Brush ShapeCardBrush = CreateBrush(0xFA, 0xF8, 0xFF);
+
+    private static readonly Brush GraphBackgroundBrush =
+        CreateBrush(0xFB, 0xFA, 0xFF);
+
+    private static readonly Brush NodeBorderBrush = CreateBrush(0xD0, 0xD0, 0xD0);
+
+    private static readonly Brush NodeTitleBrush = CreateBrush(0x4A, 0x3F, 0x72);
+
+    private static readonly Brush WasteFillBrush = CreateBrush(0xFB, 0xFB, 0xFC);
+
+    private static readonly Brush WasteBorderBrush = CreateBrush(0xC4, 0xC4, 0xCC);
+
+    private static readonly Brush WasteTitleBrush = CreateBrush(0x9A, 0x9A, 0xA5);
+
+    private static readonly Brush WasteEdgeBrush = CreateBrush(0x9A, 0x9A, 0xA5);
 
     private static readonly Pen BorderPen = CreatePen(BorderBrush, 1);
 
     private static readonly Pen DividerPen = CreatePen(DividerBrush, 1);
 
-    private static readonly ShortCodeExporter Exporter = new();
+    private static readonly Pen NodeBorderPen = CreatePen(NodeBorderBrush, 1.2);
+
+    private static readonly Pen WasteNodePen = CreateDashedPen(WasteBorderBrush, 1.2);
+
+    private static readonly Pen EdgePen = CreatePen(PrimaryBrush, 2);
+
+    private static readonly Pen WasteEdgePen = CreateDashedPen(WasteEdgeBrush, 2);
+
+    private static readonly Pen PlaceholderPen = CreateDashedPen(
+        CreateBrush(0xB9, 0xA9, 0xEE),
+        1);
 
     /// <summary>
     /// 导出当前分析结果。调用方负责处理保存对话框与异常提示。
@@ -123,9 +165,26 @@ public static class AnalysisImageExporter
             throw new InvalidOperationException("没有可导出的图形。");
         }
 
+        /*
+         * 制作路径节点图按原始尺寸整张输出：
+         * 图比单栏宽时把画布加宽，绝不缩放预览、也不分片。
+         */
+        double contentWidth = MinContentWidth;
+
+        if (viewModel.HasProductionPath &&
+            viewModel.IsPathExpanded &&
+            viewModel.IsPathExchangeExpanded &&
+            viewModel.PathGraph is ProductionPathGraph graph)
+        {
+            contentWidth = Math.Max(contentWidth, graph.Width);
+        }
+
+        double canvasWidth = PagePadding * 2 + contentWidth;
+
         DrawingGroup content = BuildContent(
             viewModel,
             document,
+            contentWidth,
             out double height);
 
         var visual = new DrawingVisual();
@@ -135,19 +194,19 @@ public static class AnalysisImageExporter
             context.DrawRectangle(
                 Brushes.White,
                 null,
-                new Rect(0, 0, CanvasWidth, height));
+                new Rect(0, 0, canvasWidth, height));
 
             // 顶部主色装饰条，与站点主色 #512BD4 一致。
             context.DrawRectangle(
                 PrimaryBrush,
                 null,
-                new Rect(0, 0, CanvasWidth, TopBarHeight));
+                new Rect(0, 0, canvasWidth, TopBarHeight));
 
             context.DrawDrawing(content);
         }
 
         var bitmap = new RenderTargetBitmap(
-            (int)Math.Ceiling(CanvasWidth),
+            (int)Math.Ceiling(canvasWidth),
             (int)Math.Ceiling(height),
             96,
             96,
@@ -172,6 +231,7 @@ public static class AnalysisImageExporter
     private static DrawingGroup BuildContent(
         AnalysisViewModel viewModel,
         ShapeDocument document,
+        double contentWidth,
         out double height)
     {
         var group = new DrawingGroup();
@@ -181,25 +241,52 @@ public static class AnalysisImageExporter
 
         using (DrawingContext context = group.Open())
         {
-            y = DrawHeader(context, viewModel.Code, y);
+            y = DrawHeader(context, viewModel.Code, contentWidth, y);
 
-            y = DrawShapeBlock(context, document, y);
+            y = DrawShapeBlock(context, document, contentWidth, y);
 
-            y = DrawPropertiesSection(context, viewModel, y);
-
-            y = DrawAnglesSection(context, viewModel, y);
-
-            y = DrawStabilitySection(context, viewModel, y);
-
-            y = DrawHalfSection(context, viewModel, y);
-
-            // 与窗口一致：没有合法交换方向时不画制作路径板块。
-            if (viewModel.HasProductionPath)
+            /*
+             * 与 Web 的导出规则一致：窗口里折叠的板块不进入图片，
+             * 默认全部展开时与原来完全一致。
+             */
+            if (viewModel.IsPropertiesExpanded)
             {
-                y = DrawPathSection(context, viewModel, y);
+                y = DrawPropertiesSection(context, viewModel, contentWidth, y);
             }
 
-            y = DrawFooter(context, viewModel, y);
+            if (viewModel.IsAnglesExpanded)
+            {
+                y = DrawAnglesSection(context, viewModel, contentWidth, y);
+            }
+
+            if (viewModel.IsStabilityExpanded)
+            {
+                y = DrawStabilitySection(context, viewModel, contentWidth, y);
+            }
+
+            if (viewModel.IsHalfExpanded)
+            {
+                y = DrawHalfSection(context, viewModel, contentWidth, y);
+            }
+
+            /*
+             * 制作路径与窗口保持一致：
+             * 总开关关闭、两个子区域都关闭、或没有可画的内容时不输出。
+             */
+            bool hasExchange =
+                viewModel.HasProductionPath &&
+                viewModel.IsPathExchangeExpanded;
+
+            bool hasAnglesProcess = viewModel.IsPathAnglesExpanded;
+
+            if (viewModel.HasPathSection &&
+                viewModel.IsPathExpanded &&
+                (hasExchange || hasAnglesProcess))
+            {
+                y = DrawPathSection(context, viewModel, contentWidth, y);
+            }
+
+            y = DrawFooter(context, viewModel, contentWidth, y);
         }
 
         height = Math.Ceiling(y + PagePadding);
@@ -217,6 +304,7 @@ public static class AnalysisImageExporter
     private static double DrawHeader(
         DrawingContext context,
         string code,
+        double contentWidth,
         double y)
     {
         FormattedText title = CreateText(
@@ -225,7 +313,7 @@ public static class AnalysisImageExporter
             TextBrush,
             bold: true);
 
-        title.MaxTextWidth = ContentWidth;
+        title.MaxTextWidth = contentWidth;
 
         title.TextAlignment = TextAlignment.Center;
 
@@ -241,7 +329,7 @@ public static class AnalysisImageExporter
                 PrimaryDarkBrush,
                 mono: true);
 
-            codeText.MaxTextWidth = ContentWidth;
+            codeText.MaxTextWidth = contentWidth;
 
             codeText.TextAlignment = TextAlignment.Center;
 
@@ -259,7 +347,7 @@ public static class AnalysisImageExporter
         context.DrawLine(
             DividerPen,
             new Point(PagePadding, y),
-            new Point(PagePadding + ContentWidth, y));
+            new Point(PagePadding + contentWidth, y));
 
         return y + 16;
     }
@@ -275,6 +363,7 @@ public static class AnalysisImageExporter
     private static double DrawShapeBlock(
         DrawingContext context,
         ShapeDocument document,
+        double contentWidth,
         double y)
     {
         y = DrawSectionTitle(context, "竖式图", y);
@@ -292,12 +381,12 @@ public static class AnalysisImageExporter
         double gridHeight = document.LayerCount * cell;
 
         double cardWidth = Math.Min(
-            ContentWidth,
+            contentWidth,
             gridWidth + 36);
 
         double cardHeight = gridHeight + 36;
 
-        double cardLeft = PagePadding + (ContentWidth - cardWidth) / 2;
+        double cardLeft = PagePadding + (contentWidth - cardWidth) / 2;
 
         var card = new Rect(
             cardLeft,
@@ -342,7 +431,7 @@ public static class AnalysisImageExporter
         context.DrawText(
             dimension,
             new Point(
-                PagePadding + (ContentWidth - dimension.Width) / 2,
+                PagePadding + (contentWidth - dimension.Width) / 2,
                 y));
 
         return y + dimension.Height + 14;
@@ -356,6 +445,7 @@ public static class AnalysisImageExporter
     private static double DrawPropertiesSection(
         DrawingContext context,
         AnalysisViewModel viewModel,
+        double contentWidth,
         double y)
     {
         y = DrawSectionTitle(context, "图形性质", y);
@@ -366,21 +456,23 @@ public static class AnalysisImageExporter
                 context,
                 "没有识别到任何性质。",
                 y,
+                contentWidth,
                 13,
                 MutedBrush);
         }
         else
         {
-            y = DrawChips(context, viewModel.PropertyNames, y);
+            y = DrawChips(context, viewModel.PropertyNames, contentWidth, y);
         }
 
-        return EndSection(context, y);
+        return EndSection(context, y, contentWidth);
     }
 
     /// <summary>角的合法性：汇总行 + 四列表格。</summary>
     private static double DrawAnglesSection(
         DrawingContext context,
         AnalysisViewModel viewModel,
+        double contentWidth,
         double y)
     {
         y = DrawSectionTitle(context, "角的合法性", y);
@@ -389,6 +481,7 @@ public static class AnalysisImageExporter
             context,
             viewModel.AngleSummary,
             y,
+            contentWidth,
             13,
             MutedBrush);
 
@@ -424,7 +517,7 @@ public static class AnalysisImageExporter
                 context,
                 new[] { "角", "合法性", "可制作性", "备注" },
                 rows,
-                new[] { 90.0, 100.0, 120.0, ContentWidth - 310 },
+                new[] { 90.0, 100.0, 120.0, contentWidth - 310 },
                 y,
                 row => alertRows[row]);
 
@@ -432,17 +525,19 @@ public static class AnalysisImageExporter
                 context,
                 "角的可制作性暂时等同于合法性，等角的制作算法接入后细化。",
                 y,
+                contentWidth,
                 11.5,
                 MutedBrush);
         }
 
-        return EndSection(context, y);
+        return EndSection(context, y, contentWidth);
     }
 
     /// <summary>稳定性：直接使用分析窗口里的结论文本。</summary>
     private static double DrawStabilitySection(
         DrawingContext context,
         AnalysisViewModel viewModel,
+        double contentWidth,
         double y)
     {
         y = DrawSectionTitle(context, "稳定性", y);
@@ -451,18 +546,22 @@ public static class AnalysisImageExporter
             context,
             viewModel.StabilityText,
             y,
+            contentWidth,
             13,
             BodyBrush);
 
-        return EndSection(context, y);
+        return EndSection(context, y, contentWidth);
     }
 
     /// <summary>
-    /// 半边稳定性：汇总、定义说明，然后按轴分组画交换方向表格。
+    /// 半边稳定性：汇总、定义说明，然后一轴一块，
+    /// 每个轴块内的方向按列自动折行，文本按合法性着绿 / 红。
+    /// 导出始终列出全部方向，不受窗口「只显示合法方向」开关影响。
     /// </summary>
     private static double DrawHalfSection(
         DrawingContext context,
         AnalysisViewModel viewModel,
+        double contentWidth,
         double y)
     {
         y = DrawSectionTitle(context, "半边稳定性", y);
@@ -471,176 +570,395 @@ public static class AnalysisImageExporter
             context,
             viewModel.HalfSummary,
             y,
+            contentWidth,
             13,
             BodyBrush);
 
         if (!viewModel.HasHalfDirections)
         {
-            return EndSection(context, y);
+            return EndSection(context, y, contentWidth);
         }
 
         y = DrawParagraph(
             context,
             "交换方向合法的定义：两个半边都稳定，并且该方向上左右各两个带柱子的半半边也全部稳定。",
             y,
+            contentWidth,
             11.5,
             MutedBrush);
 
-        int drawnRows = 0;
-
-        bool truncated = false;
+        y = DrawParagraph(
+            context,
+            "绿色为合法方向，红色为不合法方向。",
+            y,
+            contentWidth,
+            11.5,
+            MutedBrush);
 
         foreach (IGrouping<int, ExchangeDirection> group in
                  viewModel.ExchangeDirections
                      .GroupBy(direction => direction.Axis)
                      .OrderBy(group => group.Key))
         {
-            if (drawnRows >= MaxDirectionRows)
-            {
-                truncated = true;
-
-                break;
-            }
-
-            var rows = new List<AnalysisTableCell[]>();
-
-            var alertRows = new List<bool>();
-
-            foreach (ExchangeDirection direction in group)
-            {
-                if (drawnRows >= MaxDirectionRows)
-                {
-                    truncated = true;
-
-                    break;
-                }
-
-                rows.Add(new[]
-                {
-                    new AnalysisTableCell(
-                        direction.Display,
-                        BodyBrush,
-                        Mono: true,
-                        Size: 11),
-                    new AnalysisTableCell(
-                        direction.IsLegal ? "是" : "否",
-                        direction.IsLegal ? SuccessBrush : DangerBrush)
-                });
-
-                alertRows.Add(!direction.IsLegal);
-
-                drawnRows++;
-            }
-
-            if (rows.Count == 0)
-            {
-                break;
-            }
-
-            y = DrawSubTitle(context, $"轴 {group.Key + 1}", y);
-
-            y = DrawTable(
+            y = DrawHalfAxisBlock(
                 context,
-                new[] { "交换方向", "合法" },
-                rows,
-                new[] { ContentWidth - 110.0, 110.0 },
-                y,
-                row => alertRows[row]);
-
-            if (truncated)
-            {
-                break;
-            }
+                group.Key,
+                group.ToList(),
+                contentWidth,
+                y);
         }
 
-        if (truncated)
-        {
-            y = DrawParagraph(
-                context,
-                $"交换方向较多，导出图只列出前 {MaxDirectionRows} 个。",
-                y,
-                11.5,
-                MutedBrush);
-        }
-
-        return EndSection(context, y);
+        return EndSection(context, y, contentWidth);
     }
 
     /// <summary>
-    /// 制作路径：存在合法交换方向时按顺序列出步骤与每步短代码。
-    /// 没有路径结果时整段不画，也不输出「不可制作」。
+    /// 一个轴块：标题「轴 N」+ 块内方向列表。
+    /// 方向按列排布、列数由可用宽度决定（最小列宽 168），超出自动换行。
+    /// </summary>
+    private static double DrawHalfAxisBlock(
+        DrawingContext context,
+        int axis,
+        IReadOnlyList<ExchangeDirection> directions,
+        double contentWidth,
+        double y)
+    {
+        const double paddingX = 12;
+
+        const double paddingTop = 10;
+
+        const double paddingBottom = 12;
+
+        double innerWidth = contentWidth - paddingX * 2;
+
+        int columns = Math.Max(
+            1,
+            (int)((innerWidth + HalfDirectionColumnGap) /
+                  (HalfDirectionColumnWidth + HalfDirectionColumnGap)));
+
+        double columnWidth =
+            (innerWidth - (columns - 1) * HalfDirectionColumnGap) / columns;
+
+        int rows = Math.Max(
+            1,
+            (directions.Count + columns - 1) / columns);
+
+        FormattedText title = CreateText(
+            $"轴 {axis + 1}",
+            13,
+            PrimaryDarkBrush,
+            bold: true);
+
+        double titleTop = y + paddingTop;
+
+        double directionsTop = titleTop + title.Height + 8;
+
+        double cardHeight = paddingTop +
+                            title.Height +
+                            8 +
+                            rows * HalfDirectionRowHeight +
+                            (rows - 1) * HalfDirectionRowGap +
+                            paddingBottom;
+
+        var card = new Rect(
+            PagePadding,
+            y,
+            contentWidth,
+            cardHeight);
+
+        context.DrawRoundedRectangle(
+            GraphBackgroundBrush,
+            BorderPen,
+            card,
+            10,
+            10);
+
+        context.DrawText(title, new Point(PagePadding + paddingX, titleTop));
+
+        for (int index = 0; index < directions.Count; index++)
+        {
+            ExchangeDirection direction = directions[index];
+
+            int row = index / columns;
+
+            int column = index % columns;
+
+            FormattedText text = CreateText(
+                direction.Display,
+                13,
+                direction.IsLegal ? LegalDirectionBrush : IllegalDirectionBrush);
+
+            text.MaxTextWidth = Math.Max(1, columnWidth);
+
+            context.DrawText(
+                text,
+                new Point(
+                    PagePadding + paddingX + column * (columnWidth + HalfDirectionColumnGap),
+                    directionsTop + row * (HalfDirectionRowHeight + HalfDirectionRowGap)));
+        }
+
+        return y + cardHeight + 10;
+    }
+
+    /// <summary>
+    /// 制作路径：先「交换工序」（分层节点图），再按开关画「角的工序」占位。
     /// </summary>
     private static double DrawPathSection(
         DrawingContext context,
         AnalysisViewModel viewModel,
+        double contentWidth,
         double y)
     {
-        ProductionPathResult? result = viewModel.GetProductionPath();
+        y = DrawSectionTitle(context, "制作路径", y);
 
-        if (result is null ||
-            result.Path is null)
+        if (viewModel.HasProductionPath &&
+            viewModel.IsPathExchangeExpanded)
+        {
+            y = DrawExchangeSubSection(context, viewModel, contentWidth, y);
+        }
+
+        if (viewModel.IsPathAnglesExpanded)
+        {
+            y = DrawAnglesProcessSubSection(context, contentWidth, y);
+        }
+
+        return EndSection(context, y, contentWidth);
+    }
+
+    /// <summary>
+    /// 交换工序：结论 + 分层节点图。
+    ///
+    /// 节点图按原始尺寸整张画进导出图：节点宽高与页面一致，
+    /// 预览固定 30px 单元格不缩放；废料节点淡显、虚线边框，
+    /// 指向废料的箭头为灰色虚线。
+    /// </summary>
+    private static double DrawExchangeSubSection(
+        DrawingContext context,
+        AnalysisViewModel viewModel,
+        double contentWidth,
+        double y)
+    {
+        y = DrawSubSectionTitle(context, "交换工序", contentWidth, y);
+
+        y = DrawParagraph(
+            context,
+            viewModel.PathSummary,
+            y,
+            contentWidth,
+            13,
+            BodyBrush);
+
+        ProductionPathGraph? graph = viewModel.PathGraph;
+
+        if (graph is null)
         {
             return y;
         }
 
-        y = DrawSectionTitle(context, "制作路径", y);
+        var graphRect = new Rect(
+            PagePadding,
+            y,
+            graph.Width,
+            graph.Height);
 
-        ProductionPath path = result.Path;
+        context.DrawRoundedRectangle(
+            GraphBackgroundBrush,
+            BorderPen,
+            graphRect,
+            GraphCornerRadius,
+            GraphCornerRadius);
+
+        context.PushClip(new RectangleGeometry(
+            graphRect,
+            GraphCornerRadius,
+            GraphCornerRadius));
+
+        context.PushTransform(new TranslateTransform(
+            PagePadding,
+            y));
+
+        foreach (ProductionPathGraphNode node in graph.Nodes)
+        {
+            DrawPathNode(context, node);
+        }
+
+        // 箭头画在节点之上，尖端不会被卡片遮住。
+        foreach (ProductionPathGraphEdge edge in graph.Edges)
+        {
+            DrawPathEdge(context, edge);
+        }
+
+        context.Pop();
+
+        context.Pop();
+
+        y = graphRect.Bottom + 8;
 
         y = DrawParagraph(
             context,
-            $"可制作：方向 {path.Direction}（{(path.DirectionLegal ? "合法方向" : "不合法方向")}）。",
+            "节点按 5 层从上到下排列，同层节点从左到右紧排，层间固定留 80px 画箭头；预览保持 30px 单元格原始尺寸。废料节点淡显、虚线边框，指向废料的箭头为灰色虚线。",
             y,
+            contentWidth,
+            11.5,
+            MutedBrush);
+
+        return y;
+    }
+
+    /// <summary>角的工序：占位说明，等角的制作算法接入后再绘制内容。</summary>
+    private static double DrawAnglesProcessSubSection(
+        DrawingContext context,
+        double contentWidth,
+        double y)
+    {
+        y = DrawSubSectionTitle(context, "角的工序", contentWidth, y);
+
+        const double boxHeight = 64;
+
+        var box = new Rect(
+            PagePadding,
+            y,
+            contentWidth,
+            boxHeight);
+
+        context.DrawRoundedRectangle(
+            ShapeCardBrush,
+            PlaceholderPen,
+            box,
+            10,
+            10);
+
+        FormattedText text = CreateText(
+            "待设计：后续按角绘制（每个角补柱后的制作工序）",
             13,
-            BodyBrush);
+            PrimaryBrush,
+            bold: true);
 
-        int stepIndex = 1;
+        text.MaxTextWidth = Math.Max(1, contentWidth - 28);
 
-        foreach (ProductionStep step in path.Steps)
+        text.TextAlignment = TextAlignment.Center;
+
+        context.DrawText(
+            text,
+            new Point(
+                PagePadding + 14,
+                y + (boxHeight - text.Height) / 2));
+
+        return y + boxHeight + 6;
+    }
+
+    #endregion
+
+    #region 节点图
+
+    /// <summary>画一个制作路径节点：卡片、标题与 1:1 预览。</summary>
+    private static void DrawPathNode(
+        DrawingContext context,
+        ProductionPathGraphNode node)
+    {
+        var rect = new Rect(
+            node.X,
+            node.Y,
+            node.Width,
+            node.Height);
+
+        Brush fill = node.IsWaste
+            ? WasteFillBrush
+            : node.IsResult
+                ? ShapeCardBrush
+                : Brushes.White;
+
+        Brush border = node.IsWaste
+            ? WasteBorderBrush
+            : node.IsResult
+                ? PrimaryBrush
+                : NodeBorderBrush;
+
+        Pen pen = node.IsWaste
+            ? WasteNodePen
+            : node.IsResult
+                ? new Pen(PrimaryBrush, 2)
+                : NodeBorderPen;
+
+        // 结果节点用 2px 主色边框；创建后立即冻结，避免渲染线程拷贝。
+        if (node.IsResult)
         {
-            FormattedText title = CreateText(
-                $"{stepIndex}. {step.Title}",
-                12.5,
-                BodyBrush,
-                bold: true);
-
-            title.MaxTextWidth = ContentWidth - 8;
-
-            context.DrawText(title, new Point(PagePadding + 4, y));
-
-            y += title.Height + 2;
-
-            if (step.Shape is not null)
-            {
-                string code = Exporter.Export(
-                    step.Shape,
-                    omitTopEmptyLayers: true);
-
-                FormattedText codeText = CreateText(
-                    code,
-                    11,
-                    PrimaryDarkBrush,
-                    mono: true);
-
-                codeText.MaxTextWidth = ContentWidth - 30;
-
-                codeText.MaxLineCount = 3;
-
-                codeText.Trimming = TextTrimming.CharacterEllipsis;
-
-                context.DrawText(codeText, new Point(PagePadding + 26, y));
-
-                y += codeText.Height + 10;
-            }
-            else
-            {
-                y += 4;
-            }
-
-            stepIndex++;
+            pen.Freeze();
         }
 
-        return EndSection(context, y);
+        context.DrawRoundedRectangle(
+            fill,
+            pen,
+            rect,
+            GraphCornerRadius,
+            GraphCornerRadius);
+
+        // 标题最多两行，与页面卡片一致。
+        FormattedText title = CreateText(
+            node.Title,
+            11,
+            node.IsWaste ? WasteTitleBrush : NodeTitleBrush,
+            bold: true);
+
+        title.MaxTextWidth = Math.Max(1, rect.Width - 14);
+
+        title.MaxLineCount = 2;
+
+        title.Trimming = TextTrimming.CharacterEllipsis;
+
+        context.DrawText(
+            title,
+            new Point(rect.X + 7, rect.Y + 7));
+
+        if (node.Preview is null)
+        {
+            FormattedText placeholder = CreateText(
+                node.PlaceholderText,
+                12,
+                MutedBrush);
+
+            context.DrawText(
+                placeholder,
+                new Point(
+                    rect.X + (rect.Width - placeholder.Width) / 2,
+                    rect.Y + 37 + (rect.Height - 37 - placeholder.Height) / 2));
+
+            return;
+        }
+
+        var previewRect = new Rect(
+            rect.X + (rect.Width - node.PreviewWidth) / 2,
+            rect.Y + 37,
+            node.PreviewWidth,
+            node.PreviewHeight);
+
+        // 废料预览降低对比度，与窗口的 0.55 一致。
+        if (node.IsWaste)
+        {
+            context.PushOpacity(0.55);
+        }
+
+        context.DrawImage(node.Preview, previewRect);
+
+        if (node.IsWaste)
+        {
+            context.Pop();
+        }
+    }
+
+    /// <summary>画一条箭头：主路径紫色实线，指向废料的箭头灰色虚线。</summary>
+    private static void DrawPathEdge(
+        DrawingContext context,
+        ProductionPathGraphEdge edge)
+    {
+        context.DrawGeometry(
+            null,
+            edge.IsWaste ? WasteEdgePen : EdgePen,
+            edge.LineGeometry);
+
+        context.DrawGeometry(
+            edge.IsWaste ? WasteEdgeBrush : PrimaryBrush,
+            null,
+            edge.ArrowGeometry);
     }
 
     #endregion
@@ -651,6 +969,7 @@ public static class AnalysisImageExporter
     private static double DrawFooter(
         DrawingContext context,
         AnalysisViewModel viewModel,
+        double contentWidth,
         double y)
     {
         y += 4;
@@ -658,7 +977,7 @@ public static class AnalysisImageExporter
         context.DrawLine(
             BorderPen,
             new Point(PagePadding, y),
-            new Point(PagePadding + ContentWidth, y));
+            new Point(PagePadding + contentWidth, y));
 
         y += 14;
 
@@ -680,7 +999,7 @@ public static class AnalysisImageExporter
         context.DrawText(
             generatedText,
             new Point(
-                PagePadding + ContentWidth - generatedText.Width,
+                PagePadding + contentWidth - generatedText.Width,
                 y));
 
         return y + dimension.Height;
@@ -716,21 +1035,31 @@ public static class AnalysisImageExporter
         return y + SectionTitleHeight;
     }
 
-    /// <summary>子标题，用于按轴分组的表格。</summary>
-    private static double DrawSubTitle(
+    /// <summary>制作路径下的子区域标题，上方用一道细分隔线收束。</summary>
+    private static double DrawSubSectionTitle(
         DrawingContext context,
         string title,
+        double contentWidth,
         double y)
     {
+        y += 4;
+
+        context.DrawLine(
+            DividerPen,
+            new Point(PagePadding, y),
+            new Point(PagePadding + contentWidth, y));
+
+        y += 12;
+
         FormattedText text = CreateText(
             title,
-            13,
-            PrimaryDarkBrush,
+            14,
+            BodyBrush,
             bold: true);
 
-        context.DrawText(text, new Point(PagePadding + 2, y));
+        context.DrawText(text, new Point(PagePadding, y));
 
-        return y + text.Height + 6;
+        return y + text.Height + 8;
     }
 
     /// <summary>一段可换行的正文。</summary>
@@ -738,6 +1067,7 @@ public static class AnalysisImageExporter
         DrawingContext context,
         string text,
         double y,
+        double contentWidth,
         double size = 13,
         Brush? brush = null,
         double indent = 0)
@@ -747,7 +1077,7 @@ public static class AnalysisImageExporter
             size,
             brush ?? BodyBrush);
 
-        formatted.MaxTextWidth = Math.Max(1, ContentWidth - indent);
+        formatted.MaxTextWidth = Math.Max(1, contentWidth - indent);
 
         context.DrawText(
             formatted,
@@ -760,6 +1090,7 @@ public static class AnalysisImageExporter
     private static double DrawChips(
         DrawingContext context,
         IEnumerable<string> labels,
+        double contentWidth,
         double y)
     {
         const double chipHeight = 28;
@@ -780,7 +1111,7 @@ public static class AnalysisImageExporter
             double chipWidth = text.Width + chipPadding * 2;
 
             if (x > PagePadding &&
-                x + chipWidth > PagePadding + ContentWidth)
+                x + chipWidth > PagePadding + contentWidth)
             {
                 x = PagePadding;
 
@@ -985,12 +1316,13 @@ public static class AnalysisImageExporter
     /// <summary>板块内容之后画一条细分隔线，并留出下一板块的间距。</summary>
     private static double EndSection(
         DrawingContext context,
-        double y)
+        double y,
+        double contentWidth)
     {
         context.DrawLine(
             DividerPen,
             new Point(PagePadding, y + 2),
-            new Point(PagePadding + ContentWidth, y + 2));
+            new Point(PagePadding + contentWidth, y + 2));
 
         return y + SectionGap;
     }
@@ -1034,6 +1366,21 @@ public static class AnalysisImageExporter
         double thickness)
     {
         var pen = new Pen(brush, thickness);
+
+        pen.Freeze();
+
+        return pen;
+    }
+
+    /// <summary>灰色虚线画笔，用于废料节点与废料箭头。</summary>
+    private static Pen CreateDashedPen(
+        Brush brush,
+        double thickness)
+    {
+        var pen = new Pen(brush, thickness)
+        {
+            DashStyle = new DashStyle(new[] { 2.5, 2.0 }, 0)
+        };
 
         pen.Freeze();
 
