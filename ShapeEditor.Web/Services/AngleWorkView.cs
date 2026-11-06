@@ -1,5 +1,6 @@
 using System.Globalization;
 using ShapeEditor.Core.Analysis;
+using ShapeEditor.Core.Analysis.Production;
 using ShapeEditor.Core.Models;
 
 namespace ShapeEditor.Web.Services;
@@ -55,6 +56,7 @@ public sealed class AngleWorkNode
         AngleWorkStepKind.Cut => "angle-kind-cut",
         AngleWorkStepKind.Collapse => "angle-kind-collapse",
         AngleWorkStepKind.Pin => "angle-kind-pin",
+        AngleWorkStepKind.Support => "angle-kind-support",
         AngleWorkStepKind.Crystallize => "angle-kind-crystallize",
         AngleWorkStepKind.Target => "angle-kind-target",
         _ => "angle-kind-note"
@@ -67,6 +69,7 @@ public sealed class AngleWorkNode
         AngleWorkStepKind.Cut => "切",
         AngleWorkStepKind.Collapse => "落",
         AngleWorkStepKind.Pin => "顶",
+        AngleWorkStepKind.Support => "撑",
         AngleWorkStepKind.Crystallize => "晶",
         AngleWorkStepKind.Target => "目标",
         _ => ""
@@ -79,6 +82,7 @@ public sealed class AngleWorkNode
         AngleWorkStepKind.Cut => "angle-cut",
         AngleWorkStepKind.Collapse => "angle-collapse",
         AngleWorkStepKind.Pin => "angle-pin",
+        AngleWorkStepKind.Support => "angle-support",
         AngleWorkStepKind.Crystallize => "angle-crystallize",
         AngleWorkStepKind.Target => "angle-target",
         _ => "angle-note"
@@ -93,8 +97,8 @@ public sealed record AngleWorkEdge(
     string Arrow);
 
 /// <summary>
-/// 一个角的工序卡片：分类、构造、步骤节点链与验证状态。
-/// 页面与导出共用这份数据。
+/// 一个角的工序卡片：分类、算法、构造、顶针次数、造塔子配方、
+/// 步骤节点链与验证状态。页面与导出共用这份数据。
 /// </summary>
 public sealed class AngleWorkColumn
 {
@@ -103,6 +107,15 @@ public sealed class AngleWorkColumn
     public AngleBuildKind Kind { get; init; }
 
     public AngleConstruction Construction { get; init; }
+
+    /// <summary>实际采用的论文分档算法。</summary>
+    public AngleAlgorithm Algorithm { get; init; }
+
+    /// <summary>角工序自己的顶针次数（子配方 rank 不计入）。</summary>
+    public int Rank { get; init; }
+
+    /// <summary>造塔子配方（交换链）；只有算法 6 等带子配方的列才有。</summary>
+    public AngleSubRecipe? SubRecipe { get; init; }
 
     public bool IsComplete { get; init; }
 
@@ -123,21 +136,108 @@ public sealed class AngleWorkColumn
 
     public string KindText => IsSimple ? "简单角" : "碎晶角";
 
-    /// <summary>简单角的一行说明；碎晶角不使用。</summary>
-    public string SimpleText => AngleWorkColumnBuilder.SimpleText;
+    /// <summary>
+    /// 分类芯片是否显示：无晶体 / Simple 的算法文案已经带分类，
+    /// 再显示「简单角」会重复，所以这两种算法隐藏分类芯片。
+    /// </summary>
+    public bool ShowKindChip =>
+        Algorithm is not (AngleAlgorithm.NoCrystal or AngleAlgorithm.SimpleTail);
 
-    /// <summary>构造文本；没有可用构造时为 null。</summary>
-    public string? ConstructionText => Construction switch
+    /// <summary>
+    /// 简单角的一行说明；碎晶角不使用。
+    /// 无晶体 / Simple 档按论文分档写明真实做法，避免和标题里的
+    /// 「构造 C」「构造 A + C」自相矛盾（这里的「无需工序」指无需碎晶）。
+    /// </summary>
+    public string SimpleText => Algorithm switch
     {
-        AngleConstruction.G => "构造 G",
-        AngleConstruction.F => "构造 F",
-        AngleConstruction.H => "构造 H",
-        AngleConstruction.FillBreak => "填充 + 暴破",
-        _ => null
+        AngleAlgorithm.NoCrystal =>
+            "无晶体：按构造 C 从地面往上逐层追加 T/P，没有碎晶工序。",
+        AngleAlgorithm.SimpleTail =>
+            "最高晶体连续接地：先用构造 A 做紧列，再用构造 C 追加尾部，没有碎晶工序。",
+        _ => AngleWorkColumnBuilder.SimpleText
     };
+
+    /// <summary>
+    /// 算法文案。未知枚举值回退成原始枚举名，绝不返回空字符串；
+    /// <see cref="AngleAlgorithm.None"/> 表示没有分档，不显示芯片。
+    /// </summary>
+    public string? AlgorithmText => Algorithm switch
+    {
+        AngleAlgorithm.NoCrystal => "无晶体",
+        AngleAlgorithm.SimpleTail => "简单角",
+        AngleAlgorithm.Algorithm1 => "算法 1",
+        AngleAlgorithm.Algorithm2 => "算法 2",
+        AngleAlgorithm.Algorithm3 => "算法 3",
+        AngleAlgorithm.Algorithm4 => "算法 4",
+        AngleAlgorithm.Algorithm5 => "算法 5",
+        AngleAlgorithm.Algorithm6 => "算法 6",
+        AngleAlgorithm.Fallback => "兜底构造",
+        AngleAlgorithm.None => null,
+        _ => Algorithm.ToString()
+    };
+
+    /// <summary>
+    /// 构造文案。未知枚举值回退成原始枚举名，绝不返回空字符串；
+    /// Simple 档的枚举只记 A，但实际是「紧列 A + 尾部 C」，这里如实写全。
+    /// </summary>
+    public string? ConstructionText =>
+        Algorithm == AngleAlgorithm.SimpleTail
+            ? "构造 A + C"
+            : Construction switch
+            {
+                AngleConstruction.A => "构造 A",
+                AngleConstruction.C => "构造 C",
+                AngleConstruction.G => "构造 G",
+                AngleConstruction.F => "构造 F",
+                AngleConstruction.H => "构造 H",
+                AngleConstruction.FillBreak => "填充 + 暴破",
+                AngleConstruction.None => null,
+                _ => Construction.ToString()
+            };
+
+    /// <summary>
+    /// 顶针次数文案。简单角没有工序；没有分档的失败单（Algorithm 为 None）
+    /// 也谈不上顶针次数，这两种情况都不显示芯片。
+    /// </summary>
+    public string? RankText =>
+        !IsSimple && (Algorithm != AngleAlgorithm.None || Rank > 0)
+            ? $"顶针次数 {Rank}"
+            : null;
 
     /// <summary>未完全验证时的小字标题。</summary>
     public string? StatusText => IsComplete ? null : "该列工序尚未完全验证";
+}
+
+/// <summary>
+/// 造塔子配方（角工序里的 rank 0 交换链）的展开视图。
+///
+/// <para>页面在「展开全部子配方」打开时按 <see cref="Items"/> 逐个画图形预览；
+/// 导出图不画预览（四片并排太宽），只在卡片里用小字列出每个步骤名。</para>
+/// </summary>
+public sealed class AngleSubRecipe
+{
+    /// <summary>折叠区区标题，例如「造塔子配方（交换链，rank 0）」。</summary>
+    public string Title { get; init; } = "";
+
+    /// <summary>一行流程摘要，例如「制作零件 1/2/3/4 → 两次交换 → 目标」。</summary>
+    public string Summary { get; init; } = "";
+
+    /// <summary>展开后的步骤，每项带图形预览；废料项标记为 waste。</summary>
+    public IReadOnlyList<AngleSubRecipeItem> Items { get; init; } =
+        Array.Empty<AngleSubRecipeItem>();
+}
+
+/// <summary>造塔子配方展开后的一个步骤（零件 / 交换输出 / 废料 / 目标）。</summary>
+public sealed class AngleSubRecipeItem
+{
+    /// <summary>步骤名，例如「制作零件 1」「左交换」「目标：造塔 X」。</summary>
+    public string Title { get; init; } = "";
+
+    /// <summary>该步骤的图形快照；仅用于页面预览。</summary>
+    public ShapeDocument? Shape { get; init; }
+
+    /// <summary>废料：页面用淡显虚线样式，与制作路径的废料节点一致。</summary>
+    public bool IsWaste { get; init; }
 }
 
 /// <summary>
@@ -217,6 +317,9 @@ public static class AngleWorkColumnBuilder
     private static AngleWorkColumn Create(
         AngleWorkOrder order)
     {
+        // 子配方与节点链互不影响：简单角也一并带上（当前只有造塔档才有）。
+        AngleSubRecipe? subRecipe = CreateSubRecipe(order);
+
         // 简单角只显示一行说明，不生成节点预览。
         if (order.Kind == AngleBuildKind.Simple)
         {
@@ -225,6 +328,9 @@ public static class AngleWorkColumnBuilder
                 Column = order.Column,
                 Kind = order.Kind,
                 Construction = order.Construction,
+                Algorithm = order.Algorithm,
+                Rank = order.Rank,
+                SubRecipe = subRecipe,
                 IsComplete = order.IsComplete,
                 Note = order.Note,
                 Limitations = order.Limitations
@@ -283,6 +389,9 @@ public static class AngleWorkColumnBuilder
             Column = order.Column,
             Kind = order.Kind,
             Construction = order.Construction,
+            Algorithm = order.Algorithm,
+            Rank = order.Rank,
+            SubRecipe = subRecipe,
             IsComplete = order.IsComplete,
             Note = order.Note,
             Limitations = order.Limitations,
@@ -294,6 +403,106 @@ public static class AngleWorkColumnBuilder
                 : graphHeight + GraphMargin * 2
         };
     }
+
+    /// <summary>
+    /// 把 Core 的造塔子配方（交换链，rank 0）转成可展开的视图。
+    ///
+    /// <para>
+    /// 优先使用 <see cref="Recipe.Exchange"/> 的 ExchangeDetails：
+    /// 四片（送入交换时的旋转版）→ 左 / 右交换输出 → 废料 → 目标。
+    /// 没有 ExchangeDetails 时退回 <see cref="Recipe.Steps"/> 的快照；
+    /// 连步骤都没有时只保留「目标」，页面仍会显示流程摘要，不会出现空区块。
+    /// </para>
+    /// </summary>
+    private static AngleSubRecipe? CreateSubRecipe(
+        AngleWorkOrder order)
+    {
+        Recipe? recipe = order.SubRecipe;
+
+        if (recipe is null)
+        {
+            return null;
+        }
+
+        var items = new List<AngleSubRecipeItem>();
+        bool hasExchange = recipe.Exchange is not null;
+
+        if (recipe.Exchange is { } exchange)
+        {
+            /*
+             * 四片：画送入交换机时的旋转版（Rotated），这才是实际参与交换的形态；
+             * Raw 是刚构造出来的样子，页面不重复画，避免一行八张图过宽。
+             */
+            items.Add(Piece("制作零件 1", exchange.P1.Rotated));
+            items.Add(Piece("制作零件 2", exchange.P2.Rotated));
+            items.Add(Piece("制作零件 3", exchange.P3.Rotated));
+            items.Add(Piece("制作零件 4", exchange.P4.Rotated));
+
+            items.Add(new AngleSubRecipeItem
+            {
+                Title = "左交换",
+                Shape = exchange.Left.Result
+            });
+
+            items.Add(new AngleSubRecipeItem
+            {
+                Title = "右交换",
+                Shape = exchange.Right.Result
+            });
+
+            ShapeDocument? waste =
+                exchange.Waste ??
+                exchange.Left.Waste ??
+                exchange.Right.Waste;
+
+            if (waste is not null)
+            {
+                items.Add(new AngleSubRecipeItem
+                {
+                    Title = "废料",
+                    Shape = waste,
+                    IsWaste = true
+                });
+            }
+        }
+        else
+        {
+            // 保守回退：按 Recipe 自带的过程快照逐个列出。
+            foreach (RecipeStep step in recipe.Steps)
+            {
+                items.Add(new AngleSubRecipeItem
+                {
+                    Title = step.Title,
+                    Shape = step.Shape,
+                    IsWaste = step.IsWaste
+                });
+            }
+        }
+
+        items.Add(new AngleSubRecipeItem
+        {
+            Title = "目标：造塔 X",
+            Shape = recipe.Shape
+        });
+
+        return new AngleSubRecipe
+        {
+            Title = $"造塔子配方（交换链，rank {recipe.Rank}）",
+            Summary = hasExchange
+                ? "制作零件 1/2/3/4 → 两次交换 → 目标"
+                : "按配方步骤装配 → 目标",
+            Items = items
+        };
+    }
+
+    private static AngleSubRecipeItem Piece(
+        string title,
+        ShapeDocument shape) =>
+        new()
+        {
+            Title = title,
+            Shape = shape
+        };
 
     /// <summary>
     /// 节点链首帧箭头：同一行内从左侧节点右边缘中点连到右侧节点左边缘中点。

@@ -90,8 +90,26 @@ public sealed class AnalysisExportAngleColumn
     /// <summary>分类文本：简单角 / 碎晶角。</summary>
     public string KindText { get; set; } = "";
 
-    /// <summary>构造文本，例如「构造 G」「填充 + 暴破」；没有构造时为空。</summary>
+    /// <summary>
+    /// 是否绘制分类芯片。无晶体 / Simple 的算法文本已经带分类，
+    /// 页面会隐藏分类芯片，导出沿用同一个判断，保证两边标题一致。
+    /// </summary>
+    public bool ShowKindChip { get; set; } = true;
+
+    /// <summary>算法文本，例如「算法 6」「无晶体」「简单角」「兜底构造」；没有分档时为空。</summary>
+    public string AlgorithmText { get; set; } = "";
+
+    /// <summary>构造文本，例如「构造 G」「构造 C」「填充 + 暴破」；没有构造时为空。</summary>
     public string ConstructionText { get; set; } = "";
+
+    /// <summary>顶针次数文本，例如「顶针次数 1」；简单角为空。</summary>
+    public string RankText { get; set; } = "";
+
+    /// <summary>
+    /// 造塔子配方的小字步骤名。导出不画子配方预览（四片并排会过宽），
+    /// 只按「制作零件 1 → … → 目标」列成一行或多行小字。
+    /// </summary>
+    public List<string> SubRecipeLines { get; set; } = new();
 
     /// <summary>简单角只画一行说明，不画节点链。</summary>
     public bool IsSimple { get; set; }
@@ -160,12 +178,15 @@ public sealed class AnalysisExportGraphNode
 
     /// <summary>
     /// 节点类型：pin / stack / block（制作路径），
-    /// 或 angle-pre / angle-cut / angle-collapse / angle-pin /
+    /// 或 angle-pre / angle-cut / angle-collapse / angle-pin / angle-support /
     /// angle-crystallize / angle-target / angle-note（角的工序）。
     /// </summary>
     public string Kind { get; set; } = "";
 
-    /// <summary>右上角类型小标签：顶P / 堆 / 块；角工序为 前态/切/落/顶/晶/目标。</summary>
+    /// <summary>
+    /// 右上角类型小标签：顶P / 堆 / 块；
+    /// 角工序为 前态/切/落/顶/撑/晶/目标。
+    /// </summary>
     public string KindTag { get; set; } = "";
 }
 

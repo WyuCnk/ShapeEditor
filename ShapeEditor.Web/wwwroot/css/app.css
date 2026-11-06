@@ -2324,6 +2324,14 @@ button {
     color: #3a3a44;
 }
 
+/* 子区域标题右侧可能有多个开关（展开全部子配方 / 隐藏） */
+.analysis-head-actions {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    gap: 8px;
+}
+
 .path-placeholder {
     display: flex;
     align-items: center;
@@ -2598,7 +2606,9 @@ button {
     }
 
 .angle-kind,
+.angle-algorithm,
 .angle-construction,
+.angle-rank,
 .angle-status-chip {
     padding: 1px 8px;
     border-radius: 999px;
@@ -2617,9 +2627,20 @@ button {
     color: #b26a00;
 }
 
+.angle-algorithm {
+    background: #e8eefc;
+    color: #3f51b5;
+}
+
 .angle-construction {
     background: #f0ecfb;
     color: #512bd4;
+}
+
+/* 顶针次数：与顶针步骤同一青绿色 */
+.angle-rank {
+    background: #e6f5f6;
+    color: #0e7c86;
 }
 
 .angle-status-chip {
@@ -2694,6 +2715,13 @@ button {
     background: #f2fbfb;
 }
 
+/* 构造 C 的支柱交接步骤：紫蓝色边框，与其它步骤区分 */
+.angle-node.angle-kind-support {
+    border-color: #3f51b5;
+    border-width: 2px;
+    background: #eef1fc;
+}
+
 .angle-node.angle-kind-crystallize {
     border-color: #1565c0;
     border-width: 2px;
@@ -2726,6 +2754,10 @@ button {
 
 .angle-node.angle-kind-pin .path-node-kind {
     background: #0e7c86;
+}
+
+.angle-node.angle-kind-support .path-node-kind {
+    background: #3f51b5;
 }
 
 .angle-node.angle-kind-crystallize .path-node-kind {
@@ -2772,6 +2804,80 @@ button {
     font-size: 11px;
     line-height: 17px;
     color: #6b6b76;
+}
+
+/*
+ * 造塔子配方（交换链，rank 0）：标题常显，展开后按横向条带列出
+ * 四片 / 两次交换 / 废料 / 目标的 30px 预览；条带过宽时横向滚动。
+ */
+.angle-subrecipe {
+    margin-top: 10px;
+    padding: 8px 10px;
+    border: 1px dashed #b9a9ee;
+    border-radius: 10px;
+    background: #f7f4ff;
+}
+
+.angle-subrecipe-head {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+    .angle-subrecipe-head h5 {
+        margin: 0;
+        font-size: 12px;
+        color: #4527a0;
+    }
+
+.angle-subrecipe-summary {
+    font-size: 11px;
+    color: #5b5b66;
+}
+
+.angle-subrecipe-hint {
+    font-size: 11px;
+    color: #8a8a95;
+}
+
+.angle-subrecipe-items {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-top: 8px;
+    padding-bottom: 4px;
+    overflow-x: auto;
+}
+
+.angle-subrecipe-item {
+    flex: 0 0 auto;
+    padding: 6px;
+    border: 1px solid #e0d8f5;
+    border-radius: 8px;
+    background: #ffffff;
+}
+
+    .angle-subrecipe-item.waste {
+        border-style: dashed;
+        border-color: #c4c4cc;
+        background: #fbfbfc;
+        opacity: 0.7;
+    }
+
+.angle-subrecipe-item-title {
+    margin-bottom: 4px;
+    font-size: 11px;
+    color: #4a3f72;
+    white-space: nowrap;
+}
+
+.angle-subrecipe-item.waste .angle-subrecipe-item-title {
+    color: #9a9aa5;
+}
+
+.angle-subrecipe-item canvas {
+    display: block;
 }
 
 /* 固定 30px 单元格，由 JS 按 DPR 设置画布后备尺寸 */

@@ -389,14 +389,25 @@
                                 </section>
                             }
 
-                            @* 角的工序：按列列出分类、构造与步骤节点链；默认隐藏。 *@
+                            @* 角的工序：按列列出分类、算法、构造、顶针次数、子配方与步骤节点链；默认隐藏。 *@
                             <section class="analysis-subsection">
                                 <div class="analysis-section-head analysis-subsection-head">
                                     <h3>角的工序</h3>
-                                    <button type="button" class="analysis-toggle"
-                                            @onclick="TogglePathAngles">
-                                        @(_showPathAngles ? "隐藏" : "显示")
-                                    </button>
+                                    <div class="analysis-head-actions">
+                                        @* 子配方展开状态用页面字段记住，一处开关控制全部列。 *@
+                                        @if (_showPathAngles && HasSubRecipes)
+                                        {
+                                            <button type="button" class="analysis-toggle"
+                                                    @onclick="ToggleSubRecipes">
+                                                @(_expandSubRecipes ? "收起全部子配方" : "展开全部子配方")
+                                            </button>
+                                        }
+
+                                        <button type="button" class="analysis-toggle"
+                                                @onclick="TogglePathAngles">
+                                            @(_showPathAngles ? "隐藏" : "显示")
+                                        </button>
+                                    </div>
                                 </div>
 
                                 @if (_showPathAngles)
@@ -414,9 +425,11 @@
                                     <p class="analysis-summary">@AngleWorkSummary</p>
 
                                     <p class="analysis-note">
-                                        碎晶角按「前态 → 切割 → 下落 → 目标」列出；节点预览固定 30px 单元格、1:1 不缩放。
+                                        碎晶角按「前态 → 切割 → 下落 → 顶针 → 支柱交接（撑）→ 目标」列出；
+                                        标题显示论文分档算法与构造（无晶体 / 简单角 / 算法 1–6 / 兜底构造）。
+                                        节点预览固定 30px 单元格、1:1 不缩放。
                                         工序前态按目标图形层数作为画布高度，需要更高脚手架才能成立的构造会标为尚未完全验证。
-                                        简单角的最高晶体连续触地，不需要工序。
+                                        造塔子配方（交换链，rank 0）可折叠展开，展开状态由标题栏的开关统一控制。
                                     </p>
 
                                     <div class="angle-work-list">
@@ -425,11 +438,26 @@
                                             <section class="angle-work-card" data-angle-column="@work.Column">
                                                 <div class="angle-work-head">
                                                     <h4>角 @(work.Column + 1)</h4>
-                                                    <span class="angle-kind @(work.IsSimple ? "simple" : "break")">@work.KindText</span>
+
+                                                    @* 无晶体 / Simple 的算法文案已经带分类，不再重复显示「简单角」。 *@
+                                                    @if (work.ShowKindChip)
+                                                    {
+                                                        <span class="angle-kind @(work.IsSimple ? "simple" : "break")">@work.KindText</span>
+                                                    }
+
+                                                    @if (!string.IsNullOrEmpty(work.AlgorithmText))
+                                                    {
+                                                        <span class="angle-algorithm">@work.AlgorithmText</span>
+                                                    }
 
                                                     @if (!string.IsNullOrEmpty(work.ConstructionText))
                                                     {
                                                         <span class="angle-construction">@work.ConstructionText</span>
+                                                    }
+
+                                                    @if (!string.IsNullOrEmpty(work.RankText))
+                                                    {
+                                                        <span class="angle-rank">@work.RankText</span>
                                                     }
 
                                                     @if (!work.IsComplete)
@@ -524,6 +552,40 @@
                                                         </div>
                                                     }
                                                 }
+
+                                                @if (work.SubRecipe is not null)
+                                                {
+                                                    @* 造塔子配方：标题常显，内容由「展开全部子配方」开关控制。 *@
+                                                    <section class="angle-subrecipe">
+                                                        <div class="angle-subrecipe-head">
+                                                            <h5>@work.SubRecipe.Title</h5>
+                                                            <span class="angle-subrecipe-summary">@work.SubRecipe.Summary</span>
+                                                            @if (!_expandSubRecipes)
+                                                            {
+                                                                <span class="angle-subrecipe-hint">
+                                                                    （点上方「展开全部子配方」查看零件预览）
+                                                                </span>
+                                                            }
+                                                        </div>
+
+                                                        @if (_expandSubRecipes)
+                                                        {
+                                                            <div class="angle-subrecipe-items">
+                                                                @foreach (AngleSubRecipeItem item in work.SubRecipe.Items)
+                                                                {
+                                                                    <div class="angle-subrecipe-item @(item.IsWaste ? "waste" : "")">
+                                                                        <div class="angle-subrecipe-item-title">@item.Title</div>
+
+                                                                        @if (item.Shape is not null)
+                                                                        {
+                                                                            <PathNodePreview Document="item.Shape" />
+                                                                        }
+                                                                    </div>
+                                                                }
+                                                            </div>
+                                                        }
+                                                    </section>
+                                                }
                                             </section>
                                         }
                                     </div>
@@ -617,6 +679,10 @@
     /// </summary>
     private IReadOnlyList<AngleWorkColumn> AngleWorks =>
         _angleWorks ?? Array.Empty<AngleWorkColumn>();
+
+    /// <summary>当前已构建的列里是否有造塔子配方；没有时不显示展开开关。</summary>
+    private bool HasSubRecipes =>
+        AngleWorks.Any(work => work.SubRecipe is not null);
 
     /// <summary>角工序区域的汇总：简单角数量与碎晶角验证进度。</summary>
     private string AngleWorkSummary
@@ -798,6 +864,12 @@
     // 角的工序默认隐藏（用户要求）；展开时才构建工序，避免隐藏时白算。
     private bool _showPathAngles = false;
 
+    /// <summary>
+    /// 是否展开全部造塔子配方。用一个页面字段记住展开状态，重渲染不会丢；
+    /// 子配方预览较宽，默认收起，避免每列都撑出一大块内容。
+    /// </summary>
+    private bool _expandSubRecipes;
+
     private bool _showRules = true;
 
     private readonly ShapeProperty[] _propertyOrder =
@@ -858,6 +930,12 @@
         }
 
         await BuildAngleWorksAsync();
+    }
+
+    /// <summary>切换全部子配方的展开状态；状态保存在页面字段里。</summary>
+    private void ToggleSubRecipes()
+    {
+        _expandSubRecipes = !_expandSubRecipes;
     }
 
     private void SetMode(
@@ -1033,6 +1111,7 @@
     /// 角的工序板块：与页面一致，每个角一张卡片。
     ///
     /// 简单角只导出一行说明；碎晶角导出步骤节点链（每条链一个图，保持 30px 单元格 1:1）；
+    /// 卡片标题带分类 / 算法 / 构造 / 顶针次数；造塔子配方只以小字列步骤名，不画预览；
     /// 未完全验证时在节点链后追加「该列工序尚未完全验证」、Note 与 Limitations。
     /// 只有该区域已展开并完成按列构建时才导出；隐藏或构建中不会触发额外计算。
     /// </summary>
@@ -1047,9 +1126,20 @@
 
         section.Lines.Add(AngleWorkSummary);
         section.Lines.Add(
-            "碎晶角按「前态 → 切割 → 下落 → 目标」列出；节点预览为 30px 单元格的 1:1 竖式图。");
+            "碎晶角按「前态 → 切割 → 下落 → 顶针 → 支柱交接 → 目标」列出；" +
+            "标题包含论文分档算法与构造，节点预览为 30px 单元格的 1:1 竖式图。");
         section.Lines.Add(
             "工序前态按目标图形层数作为画布高度，需要更高脚手架才能成立的构造会标为尚未完全验证。");
+
+        if (works.Any(work => work.SubRecipe is not null))
+        {
+            /*
+             * 子配方导出策略（二选一里选了「小字列步骤名」）：
+             * 四片并排预览会把导出图撑得很宽，所以统一只列步骤名，不画预览。
+             */
+            section.Lines.Add(
+                "造塔子配方以文字步骤名列在卡片小字里，不导出零件预览（避免导出图过宽）。");
+        }
 
         foreach (AngleWorkColumn work in works)
         {
@@ -1057,13 +1147,25 @@
             {
                 Title = $"角 {work.Column + 1}",
                 KindText = work.KindText,
+                ShowKindChip = work.ShowKindChip,
+                AlgorithmText = work.AlgorithmText ?? "",
                 ConstructionText = work.ConstructionText ?? "",
+                RankText = work.RankText ?? "",
                 IsSimple = work.IsSimple,
                 IsComplete = work.IsComplete,
                 StatusText = work.StatusText ?? "",
                 SimpleText = work.IsSimple ? work.SimpleText : "",
                 Note = work.Note,
-                Limitations = work.Limitations.ToList()
+                Limitations = work.Limitations.ToList(),
+                SubRecipeLines = work.SubRecipe is null
+                    ? new List<string>()
+                    : new List<string>
+                    {
+                        work.SubRecipe.Title + "：" +
+                        string.Join(
+                            " → ",
+                            work.SubRecipe.Items.Select(item => item.Title))
+                    }
             };
 
             if (work.Nodes.Count > 0)

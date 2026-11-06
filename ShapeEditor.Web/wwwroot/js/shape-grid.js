@@ -2935,6 +2935,7 @@ function drawAnalysisNodeKindTag(ctx, rect, tag, kind) {
         "angle-cut": "#C62828",
         "angle-collapse": "#B26A00",
         "angle-pin": "#0E7C86",
+        "angle-support": "#3F51B5",
         "angle-crystallize": "#1565C0",
         "angle-target": "#2E7D32",
         "angle-note": "#9A9AA5"
@@ -3086,6 +3087,12 @@ function drawAnalysisPathGraph(ctx, graph, left, top) {
         else if (node.kind === "angle-pin") {
             fillColor = "#F2FBFB";
             strokeColor = "#0E7C86";
+            lineWidth = 2;
+        }
+        else if (node.kind === "angle-support") {
+            // 构造 C 的支柱交接步骤：紫蓝色边框，与其它步骤区分。
+            fillColor = "#EEF1FC";
+            strokeColor = "#3F51B5";
             lineWidth = 2;
         }
         else if (node.kind === "angle-crystallize") {
@@ -3811,6 +3818,13 @@ const ANALYSIS_ANGLE_NOTE_FONT = '400 12px "Microsoft YaHei", "Noto Sans SC", sa
 
 const ANALYSIS_ANGLE_NOTE_LINE_HEIGHT = 17;
 
+/* 造塔子配方步骤名：小字、紫蓝色，与支柱交接步骤同一色系。 */
+const ANALYSIS_ANGLE_SUBRECIPE_FONT = '400 12px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+
+const ANALYSIS_ANGLE_SUBRECIPE_LINE_HEIGHT = 17;
+
+const ANALYSIS_ANGLE_SUBRECIPE_COLOR = "#3F51B5";
+
 const ANALYSIS_ANGLE_GRAPH_GAP = 10;
 
 const ANALYSIS_ANGLE_TITLE_COLOR = "#4527A0";
@@ -3853,12 +3867,30 @@ function normalizeAnalysisAngleColumns(rawColumns) {
                 })
             : [];
 
+        const subRecipeLines = Array.isArray(raw.subRecipeLines)
+            ? raw.subRecipeLines
+                .map(function (value) {
+                    return value === null || value === undefined ? "" : String(value);
+                })
+                .filter(function (value) {
+                    return value !== "";
+                })
+            : [];
+
         result.push({
             title: raw.title === null || raw.title === undefined ? "" : String(raw.title),
             kindText: raw.kindText === null || raw.kindText === undefined ? "" : String(raw.kindText),
+            showKindChip: raw.showKindChip === undefined ? true : !!raw.showKindChip,
+            algorithmText: raw.algorithmText === null || raw.algorithmText === undefined
+                ? ""
+                : String(raw.algorithmText),
             constructionText: raw.constructionText === null || raw.constructionText === undefined
                 ? ""
                 : String(raw.constructionText),
+            rankText: raw.rankText === null || raw.rankText === undefined
+                ? ""
+                : String(raw.rankText),
+            subRecipeLines: subRecipeLines,
             isSimple: !!raw.isSimple,
             isComplete: !!raw.isComplete,
             statusText: raw.statusText === null || raw.statusText === undefined
@@ -3896,10 +3928,23 @@ function layoutAnalysisAngleColumns(measure, rawColumns, maxWidth) {
     for (let i = 0; i < columns.length; i++) {
         const column = columns[i];
 
-        const headerParts = [column.title, column.kindText];
+        // 与页面一致：无晶体 / Simple 隐藏分类芯片，避免「简单角 · 简单角」。
+        const headerParts = [column.title];
+
+        if (column.showKindChip) {
+            headerParts.push(column.kindText);
+        }
+
+        if (column.algorithmText !== "") {
+            headerParts.push(column.algorithmText);
+        }
 
         if (column.constructionText !== "") {
             headerParts.push(column.constructionText);
+        }
+
+        if (column.rankText !== "") {
+            headerParts.push(column.rankText);
         }
 
         // 与页面标题行的「尚未完全验证」状态标签保持一致。
@@ -3928,6 +3973,25 @@ function layoutAnalysisAngleColumns(measure, rawColumns, maxWidth) {
         const limitationTitleLines = [];
         const limitationLines = [];
 
+        /*
+         * 造塔子配方：导出只列步骤名，按小字字号换行。
+         * 高度在排版阶段算好，绘制阶段直接复用，避免卡片高度与内容错位。
+         */
+        const subRecipeLines = [];
+
+        for (let k = 0; k < column.subRecipeLines.length; k++) {
+            const wrapped = wrapAnalysisText(
+                measure,
+                column.subRecipeLines[k],
+                ANALYSIS_ANGLE_SUBRECIPE_FONT,
+                innerWidth,
+                false);
+
+            for (let n = 0; n < wrapped.length; n++) {
+                subRecipeLines.push(wrapped[n]);
+            }
+        }
+
         let graph = null;
         let graphHeight = 0;
         let bodyHeight = 0;
@@ -3954,6 +4018,9 @@ function layoutAnalysisAngleColumns(measure, rawColumns, maxWidth) {
                 graphHeight = Number(graph.height) || 0;
                 bodyHeight += graphHeight + ANALYSIS_ANGLE_GRAPH_GAP;
             }
+
+            // 子配方步骤名跟在节点链之后，无论工序是否已验证都画。
+            bodyHeight += subRecipeLines.length * ANALYSIS_ANGLE_SUBRECIPE_LINE_HEIGHT;
 
             if (!column.isComplete) {
                 const statusText = column.statusText || "该列工序尚未完全验证";
@@ -4032,6 +4099,7 @@ function layoutAnalysisAngleColumns(measure, rawColumns, maxWidth) {
             noteLines: noteLines,
             limitationTitleLines: limitationTitleLines,
             limitationLines: limitationLines,
+            subRecipeLines: subRecipeLines,
             graph: graph,
             graphHeight: graphHeight,
             height: cardHeight
@@ -4104,6 +4172,18 @@ function drawAnalysisAngleColumns(ctx, layout, left, top, cardWidth) {
             if (card.graph) {
                 drawAnalysisPathGraph(ctx, card.graph, innerLeft, cursorY);
                 cursorY += card.graphHeight + ANALYSIS_ANGLE_GRAPH_GAP;
+            }
+
+            if (card.subRecipeLines.length > 0) {
+                ctx.font = ANALYSIS_ANGLE_SUBRECIPE_FONT;
+                ctx.fillStyle = ANALYSIS_ANGLE_SUBRECIPE_COLOR;
+                ctx.textAlign = "left";
+                ctx.textBaseline = "top";
+
+                for (let j = 0; j < card.subRecipeLines.length; j++) {
+                    ctx.fillText(card.subRecipeLines[j], innerLeft, cursorY);
+                    cursorY += ANALYSIS_ANGLE_SUBRECIPE_LINE_HEIGHT;
+                }
             }
 
             if (!card.isComplete) {
