@@ -1041,6 +1041,198 @@ internal static class AngleWorkOrderTests
 
     #endregion
 
+    #region 角工序：满高托柱（n = 4 的 S）
+
+    /// <summary>
+    /// n = 4 的 S 形态（目标格靠同层侧向粘连停在目标层）：<c>.T.c</c>、<c>..T.c</c>、
+    /// <c>.T..c</c>。
+    ///
+    /// 前态 = 目标列 + 满高托柱 + 东侧辅助柱；托柱覆盖 cap 的每一层、与目标列
+    /// 同层相邻。真实 Cut/Collapse 后目标列逐格等于目标，且碎晶后每一目标格
+    /// 同层左右至少有一列实体。
+    /// </summary>
+    public static void PillarHolderKeepsSideSupportedAngles()
+    {
+        foreach ((string text, int cap) in new[]
+                 {
+                     (".T.c", 4),
+                     ("..T.c", 5),
+                     (".T..c", 5)
+                 })
+        {
+            ShapeDocument target = FromColumns(4, cap, (0, text));
+
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+
+            Assert.Equal(AngleBuildKind.NeedsCrystalBreak, order.Kind);
+            Assert.True(
+                order.IsComplete,
+                order.Note ?? $"{text} 的满高托柱工序应验证通过");
+            Assert.True(order.Note is null, order.Note ?? "通过时不应有未覆盖说明");
+            Assert.Equal(AngleConstruction.FillBreak, order.Construction);
+
+            // 步骤链必须完整：PreState → Cut → Collapse → Target。
+            AssertStepKinds(
+                order,
+                AngleWorkStepKind.PreState,
+                AngleWorkStepKind.Cut,
+                AngleWorkStepKind.Collapse,
+                AngleWorkStepKind.Target);
+
+            ShapeDocument preState = Step(order, AngleWorkStepKind.PreState).Shape!;
+
+            // 前态不填目标列的缺口：目标列本身就是碎晶后的形态。
+            Assert.Equal(
+                text,
+                ShapeSignature.ColumnText(preState, 0),
+                "满高托柱的前态应保留目标列原样");
+
+            Assert.True(ShapeOps.IsStable(preState), "满高托柱的前态应稳定");
+
+            // 托柱放在环上相邻的西侧列，且覆盖 cap 的全部层。
+            int holderColumn = order.AuxiliaryColumns[0];
+
+            Assert.Equal(
+                3,
+                holderColumn,
+                "第 1 列的托柱应放在环上相邻的第 4 列");
+
+            for (int layer = 0; layer < cap; layer++)
+            {
+                Assert.Equal(
+                    CellType.Shape,
+                    preState[layer, holderColumn].Type,
+                    $"托柱第 {layer + 1} 层必须是实体（覆盖全高）");
+            }
+
+            // 前态本身可制作：生产管线对「目标列 + 满高托柱 + 桥柱」返回 Producible。
+            Assert.Equal(
+                PipelineOutcome.Producible,
+                ProductionPipeline.Solve(preState, cap).Outcome,
+                "满高托柱的前态应能被生产管线判定为 Producible");
+
+            // 真实回放：旋转 → Cut → 转回，逐格核对目标列。
+            ShapeDocument rotated = ShapeOps.Rotate(preState, order.Rotation);
+
+            CutResult cut = ShapePhysics.Cut(rotated);
+
+            Assert.True(cut.Success, cut.Error ?? "切割失败");
+
+            ShapeDocument replayed =
+                ShapeOps.Rotate(cut.West!, -order.Rotation);
+
+            AssertColumnCells(replayed, 0, text);
+
+            Assert.Equal(
+                text,
+                ShapeSignature.ColumnText(replayed, 0),
+                $"{text} 的真实 Cut 回放应逐格等于目标列");
+
+            // 碎晶之后、下落之前：每一目标格仍在目标层，且同层左右至少一列是实体。
+            for (int layer = 0; layer < cap; layer++)
+            {
+                if (target[layer, 0].Type == CellType.Empty)
+                {
+                    continue;
+                }
+
+                Assert.True(
+                    ShapeOps.SameCell(target[layer, 0], replayed[layer, 0]),
+                    $"{text} 第 {layer + 1} 层的目标格应在碎晶后仍停在目标层");
+
+                bool left =
+                    replayed[layer, 3].Type is CellType.Shape or CellType.Crystal;
+
+                bool right =
+                    replayed[layer, 1].Type is CellType.Shape or CellType.Crystal;
+
+                Assert.True(
+                    left || right,
+                    $"{text} 第 {layer + 1} 层的目标格碎晶后左右至少要有一列实体");
+            }
+
+            // Collapse 步快照等于真实 Cut 出来的西半边。
+            Assert.True(
+                ShapeOps.Same(
+                    replayed,
+                    Step(order, AngleWorkStepKind.Collapse).Shape),
+                "Collapse 步应等于真实 Cut 出来的西半边");
+
+            // 辅助列不应留下晶体：托柱是普通格，桥柱被半破丢弃。
+            foreach (int aux in order.AuxiliaryColumns)
+            {
+                Assert.Equal(
+                    0,
+                    CountCrystals(
+                        Step(order, AngleWorkStepKind.Cut).Shape!,
+                        aux),
+                    $"辅助列 {aux} 不应留下晶体");
+            }
+
+            // 末步清除辅助列，得到目标角。
+            Assert.True(
+                ShapeOps.Same(
+                    target,
+                    Step(order, AngleWorkStepKind.Target).Shape),
+                "末步应得到目标角");
+        }
+    }
+
+    /// <summary>
+    /// 满高托柱只处理 n = 4 的 S：合法但不在 S 的 <c>cT.T.c</c> 必须诚实返回
+    /// 「未覆盖」，Note 不能写成「不可制作」。
+    ///
+    /// 本生成器只报告自己的覆盖范围；「不可制作」只由角合法性判定，
+    /// 所以所有未通过的 Note 都以「未覆盖：」开头。
+    /// </summary>
+    public static void PillarHolderDoesNotClaimNonSCriterion()
+    {
+        ShapeDocument target = FromColumns(4, 6, (0, "cT.T.c"));
+
+        Assert.True(
+            ShapeSignature.IsLegalColumn(target, 0),
+            "cT.T.c 应是合法列");
+
+        Assert.False(
+            PillarSCriterion.IsPillarColumn(target, 0),
+            "cT.T.c 不应属于 n = 4 的 S");
+
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, 6);
+
+        Assert.False(order.IsComplete, "不在 S 的合法列不能被硬说成已完成");
+        Assert.True(order.Note is not null, "未完成时必须给出 Note");
+
+        Assert.True(
+            order.Note!.StartsWith(
+                AngleWorkOrderBuilder.UncoveredPrefix,
+                StringComparison.Ordinal),
+            "Note 必须以「未覆盖：」开头：" + order.Note);
+
+        Assert.False(
+            order.Note.Contains("不可制作", StringComparison.Ordinal),
+            "未覆盖的 Note 不能暗示不可制作：" + order.Note);
+
+        Assert.True(
+            order.Limitations.Contains(
+                AngleWorkOrderBuilder.UncoveredDisclaimer),
+            "限制说明应明确「未覆盖不代表不可制作」");
+
+        Assert.Equal(AngleWorkStepKind.Note, order.Steps[^1].Kind);
+
+        Assert.True(
+            order.Steps[^1].Title.StartsWith("未覆盖", StringComparison.Ordinal),
+            "末步标题应标成未覆盖：" + order.Steps[^1].Title);
+
+        Assert.False(
+            order.Steps.Any(step =>
+                step.Kind is AngleWorkStepKind.Cut or
+                AngleWorkStepKind.Collapse or
+                AngleWorkStepKind.Target),
+            "验证失败后不能伪造后续步骤");
+    }
+
+    #endregion
+
     #region 回放工具
 
     /// <summary>

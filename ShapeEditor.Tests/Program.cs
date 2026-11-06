@@ -146,6 +146,8 @@ internal static class Program
             ("角工序:多层缺口诚实报未实现", AngleWorkOrderTests.ConstructionGDoesNotFakeMultiLayerGap),
             ("角工序:前态不稳定时保留前缀", AngleWorkOrderTests.UnstablePrestateKeepsVerifiedPrefix),
             ("角工序:cap 高于目标高度", AngleWorkOrderTests.ConstructionHandlesCapAboveTargetHeight),
+            ("角工序:满高托柱支撑侧向目标格", AngleWorkOrderTests.PillarHolderKeepsSideSupportedAngles),
+            ("角工序:满高托柱不越权判定非 S", AngleWorkOrderTests.PillarHolderDoesNotClaimNonSCriterion),
 
             // 交接规格 §5 的 9 组验收语料。
             ("语料1:角判据计数 4..12688", ProductionPathAcceptanceTests.AngleCriterionCounts),

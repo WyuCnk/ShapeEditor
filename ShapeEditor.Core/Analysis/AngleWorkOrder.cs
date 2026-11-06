@@ -65,8 +65,10 @@ public enum AngleConstruction
 /// 一个角的工序单。
 ///
 /// <para>
-/// <see cref="Note"/> 为 null 表示工序<b>已逐步验证通过</b>；非 null 表示未实现/未通过，
-/// 文字里写明卡在哪一步。<see cref="Limitations"/> 始终给出 UI 需要展示的限制说明。
+/// <see cref="Note"/> 为 null 表示工序<b>已逐步验证通过</b>；非 null 表示
+/// <b>未覆盖</b>（还没实现，或还没验证通过），文字以「未覆盖：」开头，写明卡在哪一步。
+/// 本生成器不会把失败写成「不可制作」——唯一的不可制作判据是「存在不合法角」，
+/// 那不属于角工序生成器的职责。<see cref="Limitations"/> 始终给出 UI 需要展示的限制说明。
 /// </para>
 /// <para>
 /// <see cref="Rotation"/> 是切割前需要顺转的象限数（顺时针为正，与
@@ -106,6 +108,18 @@ public sealed record AngleWorkOrder(
 /// 跨刀口晶体，<see cref="ShapePhysics.Collapse"/> 后目标列自然成形。
 /// </para>
 /// <para>
+/// 填充+暴破里还有一条「<b>满高托柱</b>」路径，专门处理 n = 4 的 S 形态
+/// （最低晶体以下至少两空，例如 <c>.T.c</c>）：目标列本身就是碎晶后的形态，
+/// 目标格停在目标层靠的是<b>同层侧向粘连</b>而不是下方支撑。前态直接取
+/// 「目标列 + 西侧满高托柱（覆盖到 cap）+ 东侧辅助桥柱」；半破沿 n/2 刀口
+/// 切掉东半边后，托柱仍与目标列同层相邻，所以每一格都不会下落。
+/// </para>
+/// <para>
+/// 注意：这类形态<b>不能</b>先把缺口填成紧列（<c>.T.c → cTcc</c>）再碎晶。
+/// 紧列里缺口正上方的临时晶体与目标保留晶体竖直相邻、同属一个晶体簇，
+/// 一刀切下去会把保留晶体一起打碎（实测只能得到 <c>.T..</c>）。
+/// </para>
+/// <para>
 /// 新方案做不了时，才退回原来的构造（按形态）：
 /// </para>
 /// <list type="bullet">
@@ -130,6 +144,19 @@ public sealed record AngleWorkOrder(
 /// </summary>
 public static class AngleWorkOrderBuilder
 {
+    /// <summary>
+    /// 未覆盖说明的统一前缀。未完成的工序单绝不使用「不可制作」字样：
+    /// 是否可制作只由角合法性决定，生成器只报告自己的覆盖范围。
+    /// </summary>
+    public const string UncoveredPrefix = "未覆盖：";
+
+    /// <summary>
+    /// 未覆盖的含义说明：避免 UI 把它误读成「不可制作」。
+    /// 唯一能否定的判据是「存在不合法角」，那由分析层单独给出。
+    /// </summary>
+    public const string UncoveredDisclaimer =
+        "未覆盖只说明角工序生成器还没覆盖这个形态，不代表不可制作。";
+
     /// <summary>
     /// 生成角工序：碎晶角优先尝试填充+暴破，失败后退回原有构造。
     /// </summary>
@@ -193,7 +220,7 @@ public static class AngleWorkOrderBuilder
         return AppendFailure(
             fallbackOrder,
             "首选填充+暴破也未通过：" +
-            (fillBreakOrder.Note ?? "未知原因"));
+            StripUncoveredPrefix(fillBreakOrder.Note ?? "未知原因"));
     }
 
     /// <summary>
@@ -420,7 +447,8 @@ public static class AngleWorkOrderBuilder
 
                 return AppendFailure(
                     gOrder,
-                    "构造 H（一次顶针）也未通过：" + (hOrder.Note ?? "不适用"));
+                    "构造 H（一次顶针）也未通过：" +
+                    StripUncoveredPrefix(hOrder.Note ?? "不适用"));
             }
 
             return AppendFailure(
@@ -503,6 +531,24 @@ public static class AngleWorkOrderBuilder
                 "目标列没有可碎晶的晶体塔，填充+暴破不适用。",
                 limitations,
                 construction: AngleConstruction.FillBreak);
+        }
+
+        // === 满高托柱：n = 4 的 S 形态，目标格靠同层侧向粘连停在目标层 ===
+
+        if (CanUsePillarHolder(target, column, parts, highest))
+        {
+            AngleWorkOrder holderOrder = TryBuildPillarHolder(
+                target,
+                column,
+                layers,
+                parts,
+                half,
+                kind);
+
+            if (holderOrder.IsComplete)
+            {
+                return holderOrder;
+            }
         }
 
         // === 目标列最高晶体以下的缺口段 ===
@@ -880,6 +926,286 @@ public static class AngleWorkOrderBuilder
             AuxiliaryColumns = auxiliaryColumns,
             Limitations = limitations
         };
+    }
+
+    /// <summary>
+    /// 是否可以用「满高托柱」作为碎晶前态。
+    ///
+    /// 条件是：n = 4、底层为空、最高晶体就在画布顶层（没有尾部）、
+    /// 且目标列属于定理 3 的 S（五项条件 ∧ (D ∨ F)）。
+    /// 满足时目标列本身就是碎晶后的形态，
+    /// 它的每一格只能靠同层侧向粘连停在目标层。
+    /// </summary>
+    private static bool CanUsePillarHolder(
+        ShapeDocument target,
+        int column,
+        int parts,
+        int highest)
+    {
+        return parts == 4 &&
+               highest == target.LayerCount - 1 &&
+               target[0, column].Type == CellType.Empty &&
+               PillarSCriterion.IsPillarColumn(target, column);
+    }
+
+    /// <summary>
+    /// 「满高托柱」：前态 = 目标列 + 西侧满高普通柱（覆盖到 cap）+ 东侧辅助桥柱。
+    ///
+    /// <para>
+    /// 托柱从地面连续覆盖到 cap，和目标列同层相邻，所以碎晶/半破之后目标列的
+    /// 每一格都和托柱粘在同一个粘连组里，靠<b>侧向粘连</b>停在目标层，
+    /// 不会因为下方是空位而下落。半破沿 n/2 刀口只丢弃东半边的辅助桥柱，
+    /// 目标列与托柱留在西半边；目标列逐格与目标核对。
+    /// </para>
+    /// <para>
+    /// 必须满足「碎晶后目标列每一目标格同层左右至少一列是实体」；
+    /// 这里在 Cut 之后、Collapse 之前逐格检查，检查不过就退回其它构造。
+    /// </para>
+    /// </summary>
+    private static AngleWorkOrder TryBuildPillarHolder(
+        ShapeDocument target,
+        int column,
+        int layers,
+        int parts,
+        int half,
+        AngleBuildKind kind)
+    {
+        var limitations = BaseLimitations(
+            "满高托柱的验证直接使用 ShapePhysics.Cut/Collapse：" +
+            "前态是「目标列 + 西侧满高托柱 + 东侧辅助桥柱」，半破沿 n/2 刀口" +
+            "丢弃东半边，目标列与托柱留在西半边。");
+
+        limitations.Add(
+            "该形态属于 n = 4 的 S（最低晶体以下至少两空）：目标列本身就是" +
+            "碎晶后的形态，目标格停在目标层靠的是同层侧向粘连，不是下方支撑。" +
+            "不能先把缺口填成紧列：临时晶体与保留晶体竖直同簇，" +
+            "切割会把保留晶体一起打碎。");
+
+        var preState = new ShapeDocument(layers, parts);
+
+        for (int layer = 0;
+             layer < layers && layer < target.LayerCount;
+             layer++)
+        {
+            preState[layer, column] = target[layer, column].Clone();
+        }
+
+        int holderColumn = Wrap(column - 1, parts);
+        int eColumn = Wrap(column + 1, parts);
+
+        // 托柱：满高普通柱，覆盖 cap 的每一层（不是只覆盖到目标高度）。
+        FillPillar(preState, holderColumn);
+
+        // 桥柱：东侧辅助件，半破后整体丢弃。
+        FillPillar(preState, eColumn);
+
+        int p = half - 1;
+        int rotation = Wrap(p - column, parts);
+
+        var auxiliaryColumns = new[] { holderColumn, eColumn };
+
+        var steps = new List<AngleWorkStep>
+        {
+            new(
+                "碎晶前的角（目标列 + 满高托柱，带东侧辅助柱）",
+                preState,
+                AngleWorkStepKind.PreState)
+        };
+
+        if (!ShapeOps.IsStable(preState))
+        {
+            return Incomplete(
+                column,
+                kind,
+                "满高托柱的前态不稳定（一次下落后会变形），无法继续验证。",
+                limitations,
+                steps,
+                AngleConstruction.FillBreak,
+                rotation,
+                auxiliaryColumns);
+        }
+
+        var rotated = ShapeOps.Rotate(preState, rotation);
+
+        ShapeDocument rawWest = CutWestBeforeCollapse(rotated, half);
+
+        CutResult realCut = ShapePhysics.Cut(rotated);
+
+        if (!realCut.Success ||
+            realCut.West is null ||
+            realCut.East is null)
+        {
+            return Incomplete(
+                column,
+                kind,
+                "满高托柱的 ShapePhysics.Cut 失败：" +
+                (realCut.Error ?? "未知原因"),
+                limitations,
+                steps,
+                AngleConstruction.FillBreak,
+                rotation,
+                auxiliaryColumns);
+        }
+
+        ShapeDocument rawCollapsed =
+            ShapePhysics.Collapse(rawWest).Document!;
+
+        if (!ShapeOps.Same(rawCollapsed, realCut.West))
+        {
+            return Incomplete(
+                column,
+                kind,
+                "满高托柱的结构性半破与 ShapePhysics.Cut 的结果对不上。",
+                limitations,
+                steps,
+                AngleConstruction.FillBreak,
+                rotation,
+                auxiliaryColumns);
+        }
+
+        ShapeDocument rawBack = ShapeOps.Rotate(rawWest, -rotation);
+
+        // 碎晶后、下落前：目标列每一目标格必须仍在目标层，
+        // 且同层左右至少一列是可粘连的实体（托柱与目标列同层相邻，
+        // 这是目标格不下落的唯一依据）。
+        if (!HasLateralSupport(
+                rawBack,
+                target,
+                column,
+                layers,
+                out string? supportDifference))
+        {
+            return Incomplete(
+                column,
+                kind,
+                "满高托柱碎晶后的前态没有托住目标格：" + supportDifference,
+                limitations,
+                steps,
+                AngleConstruction.FillBreak,
+                rotation,
+                auxiliaryColumns,
+                new AngleWorkStep(
+                    "满高托柱碎晶结果（未通过验证，仅供参考）",
+                    rawBack,
+                    AngleWorkStepKind.Note));
+        }
+
+        ShapeDocument collapsedBack =
+            ShapeOps.Rotate(rawCollapsed, -rotation);
+
+        if (!MatchesTargetColumn(
+                collapsedBack,
+                target,
+                column,
+                layers,
+                out string? difference))
+        {
+            return Incomplete(
+                column,
+                kind,
+                "满高托柱下落结果与目标列不符：" + difference,
+                limitations,
+                steps,
+                AngleConstruction.FillBreak,
+                rotation,
+                auxiliaryColumns,
+                new AngleWorkStep(
+                    "满高托柱结果（未通过验证，仅供参考）",
+                    collapsedBack,
+                    AngleWorkStepKind.Note));
+        }
+
+        steps.Add(new AngleWorkStep(
+            rotation == 0
+                ? "切割：沿 n/2 刀口半破，保留目标列与满高托柱，丢弃东侧辅助柱"
+                : $"切割：先顺转 {rotation} 个象限，再沿 n/2 刀口半破，" +
+                  "保留目标列与满高托柱，丢弃东侧辅助柱",
+            rawBack,
+            AngleWorkStepKind.Cut));
+
+        steps.Add(new AngleWorkStep(
+            "下落：目标列每一格都由同层托柱侧向托住，不会下落",
+            collapsedBack,
+            AngleWorkStepKind.Collapse));
+
+        steps.Add(new AngleWorkStep(
+            "清除辅助象限，得到目标角",
+            target,
+            AngleWorkStepKind.Target));
+
+        return new AngleWorkOrder(
+            column,
+            kind,
+            steps,
+            null)
+        {
+            IsComplete = true,
+            Construction = AngleConstruction.FillBreak,
+            Rotation = rotation,
+            AuxiliaryColumns = auxiliaryColumns,
+            Limitations = limitations
+        };
+    }
+
+    /// <summary>
+    /// 碎晶后、下落前的侧向支撑检查：目标列的每一目标格必须仍在目标层，
+    /// 且同层左右至少有一列是可粘连的实体（普通格或晶体；顶针不粘连）。
+    /// </summary>
+    private static bool HasLateralSupport(
+        ShapeDocument afterCut,
+        ShapeDocument target,
+        int column,
+        int layers,
+        out string? difference)
+    {
+        int parts = afterCut.PartCount;
+
+        for (int layer = 0; layer < layers; layer++)
+        {
+            ShapeCell expected = layer < target.LayerCount
+                ? target[layer, column]
+                : ShapeCell.Empty();
+
+            if (expected.Type == CellType.Empty)
+            {
+                continue;
+            }
+
+            ShapeCell got = afterCut[layer, column];
+
+            if (!ShapeOps.SameCell(expected, got))
+            {
+                difference =
+                    $"第 {layer + 1} 层期望 {Describe(expected)}，" +
+                    $"实际 {Describe(got)}；碎晶后目标列 = " +
+                    ShapeSignature.ColumnText(afterCut, column);
+
+                return false;
+            }
+
+            ShapeCell left = afterCut[layer, Wrap(column - 1, parts)];
+            ShapeCell right = afterCut[layer, Wrap(column + 1, parts)];
+
+            bool leftAttaches =
+                left.Type is CellType.Shape or CellType.Crystal;
+
+            bool rightAttaches =
+                right.Type is CellType.Shape or CellType.Crystal;
+
+            if (!leftAttaches && !rightAttaches)
+            {
+                difference =
+                    $"第 {layer + 1} 层的目标格碎晶后同层左右都没有实体" +
+                    "（会失去侧向支撑）；碎晶后目标列 = " +
+                    ShapeSignature.ColumnText(afterCut, column);
+
+                return false;
+            }
+        }
+
+        difference = null;
+
+        return true;
     }
 
     #endregion
@@ -2278,7 +2604,10 @@ public static class AngleWorkOrderBuilder
     {
         var steps = new List<AngleWorkStep>(order.Steps);
 
-        steps.Add(new AngleWorkStep(extra, null, AngleWorkStepKind.Note));
+        steps.Add(new AngleWorkStep(
+            "未覆盖（尚未实现）：" + extra,
+            null,
+            AngleWorkStepKind.Note));
 
         var limitations = new List<string>(order.Limitations);
 
@@ -2287,9 +2616,19 @@ public static class AngleWorkOrderBuilder
             limitations.Add(extra);
         }
 
-        string note = order.Note is null
+        /*
+         * Note 始终只有一个「未覆盖：」前缀：
+         * 既有的失败说明可能已经带前缀，这里先剥掉再统一加一次。
+         */
+        string previous = order.Note is null
+            ? string.Empty
+            : StripUncoveredPrefix(order.Note);
+
+        string body = previous.Length == 0
             ? extra
-            : order.Note + "；" + extra;
+            : previous + "；" + extra;
+
+        string note = UncoveredPrefix + body;
 
         return new AngleWorkOrder(
             order.Column,
@@ -2303,6 +2642,14 @@ public static class AngleWorkOrderBuilder
             AuxiliaryColumns = order.AuxiliaryColumns,
             Limitations = limitations
         };
+    }
+
+    private static string StripUncoveredPrefix(
+        string note)
+    {
+        return note.StartsWith(UncoveredPrefix, StringComparison.Ordinal)
+            ? note[UncoveredPrefix.Length..]
+            : note;
     }
 
     private static bool SameLayers(
@@ -2421,7 +2768,7 @@ public static class AngleWorkOrderBuilder
         }
 
         resultSteps.Add(new AngleWorkStep(
-            "未实现：" + reason,
+            "未覆盖（尚未实现）：" + reason,
             null,
             AngleWorkStepKind.Note));
 
@@ -2434,11 +2781,16 @@ public static class AngleWorkOrderBuilder
             resultLimitations.Add(reason);
         }
 
+        if (!resultLimitations.Contains(UncoveredDisclaimer))
+        {
+            resultLimitations.Add(UncoveredDisclaimer);
+        }
+
         return new AngleWorkOrder(
             column,
             kind,
             resultSteps,
-            reason)
+            UncoveredPrefix + reason)
         {
             IsComplete = false,
             Construction = construction,
