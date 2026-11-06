@@ -1336,6 +1336,32 @@ internal static class AngleWorkOrderTests
                 order.Note is null,
                 order.Note ?? $"{text} 通过时不应有未覆盖说明");
 
+            /*
+             * 路线核对（TODO.md §7.2 / §7.4）：四个角走「塔 + 一次 Pin + 构造 C」，
+             * `.TT.c` 走「两刀定向碎晶 + 构造 C」，都不再以碎晶造洞为主力。
+             */
+            (AngleAlgorithm Algorithm,
+             AngleConstruction Construction,
+             int Pins,
+             int Cuts) route = text switch
+            {
+                ".T.c" => (AngleAlgorithm.Algorithm6, AngleConstruction.C, 1, 0),
+                "T.T.c" => (AngleAlgorithm.Algorithm6, AngleConstruction.C, 1, 0),
+                "P.T.c" => (AngleAlgorithm.Algorithm5, AngleConstruction.C, 1, 0),
+                ".TT.c" => (AngleAlgorithm.Algorithm2, AngleConstruction.D, 0, 2),
+                ".T..c" => (AngleAlgorithm.Algorithm6, AngleConstruction.C, 1, 0),
+                _ => throw new InvalidOperationException("未登记的回归角：" + text)
+            };
+
+            Assert.Equal(route.Algorithm, order.Algorithm);
+            Assert.Equal(route.Construction, order.Construction);
+            Assert.Equal(
+                route.Pins,
+                order.Steps.Count(step => step.Kind == AngleWorkStepKind.Pin));
+            Assert.Equal(
+                route.Cuts,
+                order.Steps.Count(step => step.Kind == AngleWorkStepKind.Cut));
+
             // 最终列逐格等于目标（类型、形状码、颜色都一致）。
             AngleWorkStep targetStep = Step(order, AngleWorkStepKind.Target);
 
@@ -1359,7 +1385,12 @@ internal static class AngleWorkOrderTests
                 $"{text} 的最后一条操作步应逐格等于目标");
 
             // §7.1 必要条件：前态不能就是目标本身，且必须真的有临时材料。
-            ShapeDocument preState = Step(order, AngleWorkStepKind.PreState).Shape!;
+            // 两刀配方有两条 PreState（第二刀前重新装桥柱），这里取第一条。
+            ShapeDocument preState = order.Steps
+                .First(step =>
+                    step.Kind == AngleWorkStepKind.PreState &&
+                    step.Shape is not null)
+                .Shape!;
             string preColumn = ShapeSignature.ColumnText(preState, 0);
 
             Assert.NotEqual(
@@ -1372,8 +1403,11 @@ internal static class AngleWorkOrderTests
             Assert.True(ShapeOps.IsStable(preState), $"{text} 的前态应稳定");
 
             // 步骤链用真实物理回放。
-            if (order.Construction == AngleConstruction.C)
+            if (route.Construction == AngleConstruction.C)
             {
+                Assert.True(
+                    order.Steps.Any(step => step.Kind == AngleWorkStepKind.Pin),
+                    $"{text} 走「抬升/临时晶体 + Pin」路线，步骤链必须有 Pin 步");
                 Assert.True(
                     ShapeOps.Same(
                         ShapePhysics.Pin(preState).Document,
@@ -1385,6 +1419,14 @@ internal static class AngleWorkOrderTests
                         Step(order, AngleWorkStepKind.Support).Shape!,
                         0),
                     $"{text} 的构造 C 交接后目标列应等于目标");
+            }
+            else if (route.Construction == AngleConstruction.D)
+            {
+                // §7.4：两刀定向碎晶，不是单刀填充+暴破，也不混入 Pin。
+                Assert.False(
+                    order.Steps.Any(step => step.Kind == AngleWorkStepKind.Pin),
+                    $"{text} 的构造 D 配方不应混入 Pin 步");
+                ReplayTwoCutCascade(order, target, 0);
             }
             else
             {
@@ -1419,6 +1461,140 @@ internal static class AngleWorkOrderTests
             stopwatch.Elapsed.TotalMilliseconds < 30.0,
             $".TT.c 单次 Build 耗时 {stopwatch.Elapsed.TotalMilliseconds:F2} ms，" +
             "应在 30 ms 以内");
+    }
+
+    /// <summary>
+    /// TODO.md §7.2 用户给出的两座正解塔（5 层 × 4 象限）：
+    /// 原样解析后 X 稳定、可交换，且 <c>顶针(X)</c> 的目标列逐格等于目标。
+    ///
+    /// <para>
+    /// 另外核对生成器真的按同一路线走：<c>T.T.c</c> 用算法 6 的底块提升塔
+    /// （前态角列 <c>.TTc.</c>，逐列结构就是用户给的塔），<c>P.T.c</c> 用
+    /// 算法 5 的底针埋晶塔（前态角列 <c>ccTc.</c>）；两者都有 Pin 步与构造 C。
+    /// </para>
+    /// </summary>
+    public static void UserGivenTowersPinToTarget()
+    {
+        var towers = new (string Name, string Code, string Expected)[]
+        {
+            (
+                "T.T.c",
+                "--CucrP-:CucrcrP-:CuCucrP-:cr--crCu:----cr--",
+                "T.T.c"),
+            (
+                "P.T.c",
+                "crcrcrP-:crCucrP-:CuCucrP-:cr--crCu:----cr--",
+                "P.T.c")
+        };
+
+        foreach ((string name, string code, string expected) in towers)
+        {
+            ShapeDocument tower = Parse(code, 5, 4);
+
+            Assert.Equal(5, tower.LayerCount);
+            Assert.Equal(4, tower.PartCount);
+
+            Assert.True(ShapeOps.IsStable(tower), $"{name} 的塔 X 应稳定");
+            Assert.True(Swappable.Test(tower), $"{name} 的塔 X 应可交换");
+
+            PhysicsResult pin = ShapePhysics.Pin(tower);
+
+            Assert.True(pin.Success, pin.Error ?? "顶针失败");
+
+            Assert.Equal(
+                expected,
+                ShapeSignature.ColumnText(pin.Document!, 0),
+                $"{name} 的 顶针(X) 第 1 列应逐格等于目标");
+
+            // 顶针不改变晶体颜色：用塔自己角列的最高晶体作为期望颜色。
+            int towerCrystalLayer = -1;
+
+            for (int layer = 0; layer < tower.LayerCount; layer++)
+            {
+                if (tower[layer, 0].Type == CellType.Crystal)
+                {
+                    towerCrystalLayer = layer;
+                }
+            }
+
+            Assert.True(towerCrystalLayer >= 0, $"{name} 的塔角列应有晶体");
+
+            char crystalColor =
+                tower[towerCrystalLayer, 0].ColorCode ?? 'u';
+
+            // 逐格核对类型、普通格的形状/颜色，以及晶体的颜色。
+            for (int layer = 0; layer < expected.Length; layer++)
+            {
+                ShapeCell cell = pin.Document![layer, 0];
+
+                switch (expected[layer])
+                {
+                    case '.':
+                        Assert.Equal(CellType.Empty, cell.Type);
+                        break;
+
+                    case 'T':
+                        Assert.Equal(CellType.Shape, cell.Type);
+                        Assert.Equal('C', cell.ShapeCode);
+                        Assert.Equal('u', cell.ColorCode);
+                        break;
+
+                    case 'P':
+                        Assert.Equal(CellType.Pin, cell.Type);
+                        break;
+
+                    case 'c':
+                        Assert.Equal(CellType.Crystal, cell.Type);
+                        Assert.Equal(
+                            crystalColor,
+                            cell.ColorCode,
+                            $"{name} 顶针后的晶体应保留原颜色");
+                        break;
+                }
+            }
+        }
+
+        // `T.T.c` 的塔就是用户给的那一座：逐列结构一致。
+        ShapeDocument generatedTt = Step(
+                AngleWorkOrderBuilder.Build(
+                    FromColumns(4, 5, (0, "T.T.c")),
+                    0,
+                    5),
+                AngleWorkStepKind.PreState)
+            .Shape!;
+
+        ShapeDocument userTt = Parse(
+            "--CucrP-:CucrcrP-:CuCucrP-:cr--crCu:----cr--",
+            5,
+            4);
+
+        for (int part = 0; part < 4; part++)
+        {
+            Assert.Equal(
+                ShapeSignature.ColumnText(userTt, part),
+                ShapeSignature.ColumnText(generatedTt, part),
+                $"T.T.c 的造塔前态第 {part + 1} 象限应与用户给出的塔一致");
+        }
+
+        // 两条路线都要有 Pin 步与构造 C。
+        foreach (string text in new[] { "T.T.c", "P.T.c" })
+        {
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(
+                FromColumns(4, 5, (0, text)),
+                0,
+                5);
+
+            AssertStepKinds(
+                order,
+                AngleWorkStepKind.PreState,
+                AngleWorkStepKind.Pin,
+                AngleWorkStepKind.Support,
+                AngleWorkStepKind.Target);
+
+            Assert.True(
+                order.Steps.Any(step => step.Kind == AngleWorkStepKind.Pin),
+                $"{text} 的塔式路线必须有 Pin 步");
+        }
     }
 
     #endregion
@@ -1834,6 +2010,88 @@ internal static class AngleWorkOrderTests
             CountCrystals(target, column),
             CountCrystals(cutStep, column),
             "目标列的晶体塔在切割后必须完好");
+    }
+
+    /// <summary>
+    /// 两刀定向碎晶（§7.4）的逐刀回放：每一刀的 PreState 都用真实
+    /// <see cref="ShapePhysics.Cut"/> 重算，Cut 步快照必须等于西半边；
+    /// 第二刀后的目标列逐格等于目标，最后构造 C 换柱也保持目标列。
+    /// </summary>
+    private static void ReplayTwoCutCascade(
+        AngleWorkOrder order,
+        ShapeDocument target,
+        int column)
+    {
+        AngleWorkStep? preState = null;
+
+        int cutIndex = 0;
+
+        for (int index = 0; index < order.Steps.Count; index++)
+        {
+            AngleWorkStep step = order.Steps[index];
+
+            if (step.Kind == AngleWorkStepKind.PreState &&
+                step.Shape is not null)
+            {
+                preState = step;
+                continue;
+            }
+
+            if (step.Kind != AngleWorkStepKind.Cut ||
+                step.Shape is null)
+            {
+                continue;
+            }
+
+            Assert.True(
+                preState is not null,
+                "每一刀前面都必须有一条前态");
+
+            ShapeDocument rotated = ShapeOps.Rotate(
+                preState!.Shape!,
+                order.Rotation);
+
+            CutResult cut = ShapePhysics.Cut(rotated);
+
+            Assert.True(cut.Success, cut.Error ?? "切割失败");
+
+            ShapeDocument replayed = ShapeOps.Rotate(
+                cut.West!,
+                -order.Rotation);
+
+            Assert.True(
+                ShapeOps.Same(replayed, step.Shape),
+                $"第 {cutIndex + 1} 刀应等于真实 Cut 出来的西半边");
+
+            Assert.True(
+                ShapeOps.IsStable(preState.Shape!),
+                $"第 {cutIndex + 1} 刀的前态应稳定");
+
+            cutIndex++;
+        }
+
+        Assert.Equal(2, cutIndex);
+
+        AngleWorkStep lastCut = order.Steps.Last(
+            step => step.Kind == AngleWorkStepKind.Cut);
+
+        Assert.Equal(
+            ShapeSignature.ColumnText(target, column),
+            ShapeSignature.ColumnText(lastCut.Shape!, column),
+            "第二刀后的目标列应逐格等于目标");
+
+        Assert.Equal(
+            ShapeSignature.ColumnText(target, column),
+            ShapeSignature.ColumnText(
+                Step(order, AngleWorkStepKind.Support).Shape!,
+                column),
+            "构造 C 换柱后目标列仍应逐格等于目标");
+
+        Assert.True(
+            ShapeOps.Same(
+                target,
+                Step(order, AngleWorkStepKind.Target).Shape),
+            "末步应得到目标角");
     }
 
     private static int CountCrystals(

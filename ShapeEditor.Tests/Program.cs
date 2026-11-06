@@ -154,6 +154,7 @@ internal static class Program
             ("角工序:算法 6 造塔出 .T.c", AngleWorkOrderTests.Algorithm6BuildsDotTcFromTower),
             ("角工序:算法 6 侧向支撑角", AngleWorkOrderTests.Algorithm6BuildsSideSupportedAngles),
             ("角工序:§7 五个回归角", AngleWorkOrderTests.RegressionCornersAreConstructible),
+            ("角工序:§7.2 用户正解塔顶针出目标", AngleWorkOrderTests.UserGivenTowersPinToTarget),
             ("角工序:满高托柱兜底 D 不成立分支", AngleWorkOrderTests.PillarHolderRemainsFallbackForNonDBranches),
             ("角工序:算法 1/2/3/4 分档", AngleWorkOrderTests.AlgorithmTiersSelectPaperBranch),
             ("角工序:算法 5 底格是针", AngleWorkOrderTests.Algorithm5BuildsBottomPinAngle),
