@@ -248,7 +248,13 @@ internal static class AngleWorkOrderTests
         // 放在第 4 列（索引 3），顺便验证切割前的旋转。
         ShapeDocument target = FromColumns(4, 6, (3, "cT.ccc"));
 
-        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 3, 6);
+        // cT.ccc 在五项条件下不合法（晶体之间只有一个普通格），
+        // 这里只是用合成列验证构造 G 的 Cut/Collapse 回放语义。
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(
+            target,
+            3,
+            6,
+            enforceFiveConditions: false);
 
         Assert.Equal(AngleBuildKind.NeedsCrystalBreak, order.Kind);
         Assert.True(order.IsComplete, order.Note ?? "G 应验证通过");
@@ -454,7 +460,12 @@ internal static class AngleWorkOrderTests
         // 晶体塔又不足三连晶，多轮 G 也不满足。
         ShapeDocument target = FromColumns(4, 6, (0, "cT..ccc"));
 
-        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, 6);
+        // 合成列（五项条件不过）：只验证「做不出来就诚实报未覆盖」。
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(
+            target,
+            0,
+            6,
+            enforceFiveConditions: false);
 
         Assert.Equal(AngleBuildKind.NeedsCrystalBreak, order.Kind);
         Assert.False(order.IsComplete, "无法完成的角不应被标成已完成");
@@ -485,7 +496,12 @@ internal static class AngleWorkOrderTests
     {
         ShapeDocument target = FromColumns(4, 8, (0, "cT..ccc"));
 
-        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, 8);
+        // 合成列（五项条件不过）：只验证多轮构造 G 的逐轮回放。
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(
+            target,
+            0,
+            8,
+            enforceFiveConditions: false);
 
         Assert.True(
             order.IsComplete,
@@ -552,16 +568,17 @@ internal static class AngleWorkOrderTests
     /// <summary>
     /// 构造 H：四象限多层缺口（底层是空的）用<b>一次 Pin</b>完成整段下降。
     ///
-    /// 填充+暴破会误伤保留晶体时退回构造 H。环上依次是 N | A | B | E：
-    /// B 的晶体按顶针后层号对齐（前态 z 层晶体 ⇒ 顶针后 z+1 层），
-    /// E 是满高纯晶体柱，N 在 s−1 层放针。
+    /// D 成立（最低晶体下 ≥2 空）的形态由算法 6 接管（见算法 6 的测试），
+    /// 所以这里用「D 成立但算法 6 造不出塔」的形态，让兜底链退回构造 H。
+    /// 环上依次是 N | A | B | E：B 的晶体按顶针后层号对齐
+    /// （前态 z 层晶体 ⇒ 顶针后 z+1 层），E 是满高纯晶体柱，N 在 s−1 层放针。
     /// </summary>
     public static void ConstructionHSinglePinBatchDrop()
     {
         foreach ((string text, string expectedPrestate, int cap) in new[]
                  {
-                     (".T..c.", "..Tc..", 6),
-                     (".T..c...", "..Tc....", 8)
+                     (".T..cT", "..TcT.", 6),
+                     (".T..cTT", "..TcTT.", 7)
                  })
         {
             ShapeDocument target = FromColumns(4, cap, (0, text));
@@ -753,7 +770,12 @@ internal static class AngleWorkOrderTests
     {
         ShapeDocument target = FromColumns(4, 8, (0, "c.Tc...."));
 
-        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, 8);
+        // 合成列（五项条件不过）：这里只验证兜底链保留已验证前缀的行为。
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(
+            target,
+            0,
+            8,
+            enforceFiveConditions: false);
 
         Assert.False(order.IsComplete, "会误伤保留晶体的填充+暴破不应标成完成");
         Assert.True(order.Note is not null);
@@ -790,7 +812,12 @@ internal static class AngleWorkOrderTests
     {
         ShapeDocument target = FromColumns(6, 6, (0, ".PT.c."));
 
-        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, 6);
+        // 合成列（五项条件不过）：只验证「前态不稳定时保留已验证前缀」。
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(
+            target,
+            0,
+            6,
+            enforceFiveConditions: false);
 
         Assert.False(order.IsComplete, "前态不稳定的订单不应标成完成");
         Assert.True(order.Note is not null, "必须给出未实现说明");
@@ -964,9 +991,11 @@ internal static class AngleWorkOrderTests
             BuildConstruction("cT.T.ccc", 4, 8));
 
         // 落点/针位只允许一次顶针：退回构造 H。
+        // .T..cT 的 D 不成立（最低晶体下只有一空），因此走算法 4 的兜底链，
+        // 由构造 H 完成（不再像 .T..c. 那样被算法 6 接管）。
         Assert.Equal(
             AngleConstruction.H,
-            BuildConstruction(".T..c.", 4, 6));
+            BuildConstruction(".T..cT", 4, 6));
 
         // n ≥ 6 的受控下落：退回构造 F。
         Assert.Equal(
@@ -996,7 +1025,7 @@ internal static class AngleWorkOrderTests
 
     /// <summary>
     /// 目标只有 6/7/8 层、cap 更大时：前态与中间态要补空层，但目标列仍要逐格对上。
-    /// 覆盖首选填充+暴破与三种兜底构造（多轮 G、构造 H、构造 F）。
+    /// 覆盖填充+暴破、多轮 G、算法 6（.T..c. 的 D 成立）与构造 F。
     /// </summary>
     public static void ConstructionHandlesCapAboveTargetHeight()
     {
@@ -1004,7 +1033,7 @@ internal static class AngleWorkOrderTests
         {
             ("T..ccc", 6, 4, AngleConstruction.FillBreak),
             ("cT..ccc", 8, 4, AngleConstruction.G),
-            (".T..c.", 6, 4, AngleConstruction.H),
+            (".T..c.", 6, 4, AngleConstruction.C),
             (".T..c..", 7, 6, AngleConstruction.F)
         };
 
@@ -1014,7 +1043,12 @@ internal static class AngleWorkOrderTests
         {
             ShapeDocument target = FromColumns(parts, targetLayers, (0, text));
 
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+            // cT..ccc 是合成列（五项条件不过），保留它只验证多轮 G 的补层行为。
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(
+                target,
+                0,
+                cap,
+                enforceFiveConditions: false);
 
             Assert.True(
                 order.IsComplete,
@@ -1041,17 +1075,20 @@ internal static class AngleWorkOrderTests
 
     #endregion
 
-    #region 角工序：满高托柱（n = 4 的 S）
+    #region 角工序：算法 6（n = 4、D 成立）
 
     /// <summary>
-    /// n = 4 的 S 形态（目标格靠同层侧向粘连停在目标层）：<c>.T.c</c>、<c>..T.c</c>、
-    /// <c>.T..c</c>。
+    /// 算法 6：n = 4、D 成立（最低晶体以下至少两空）的 S 形态
+    /// <c>.T.c</c>、<c>..T.c</c>、<c>.T..c</c>。
     ///
-    /// 前态 = 目标列 + 满高托柱 + 东侧辅助柱；托柱覆盖 cap 的每一层、与目标列
-    /// 同层相邻。真实 Cut/Collapse 后目标列逐格等于目标，且碎晶后每一目标格
-    /// 同层左右至少有一列实体。
+    /// <para>
+    /// 工序单 = 造塔 X（交换链子配方，rank 0）→ 顶针（一次 Pin）→ 构造 C
+    /// （装新支撑柱、拆旧柱与辅助列）→ 目标角。造塔后整条链都用真实
+    /// <see cref="ShapePhysics"/> 回放：塔稳定、每列过五项条件、交换链可装配、
+    /// 顶针后目标列逐格等于目标、支柱交接后仍稳定。
+    /// </para>
     /// </summary>
-    public static void PillarHolderKeepsSideSupportedAngles()
+    public static void Algorithm6BuildsSideSupportedAngles()
     {
         foreach ((string text, int cap) in new[]
                  {
@@ -1065,125 +1102,188 @@ internal static class AngleWorkOrderTests
             AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
 
             Assert.Equal(AngleBuildKind.NeedsCrystalBreak, order.Kind);
+            Assert.Equal(AngleAlgorithm.Algorithm6, order.Algorithm);
+            Assert.Equal(AngleConstruction.C, order.Construction);
             Assert.True(
                 order.IsComplete,
-                order.Note ?? $"{text} 的满高托柱工序应验证通过");
+                order.Note ?? $"{text} 的算法 6 工序应验证通过");
             Assert.True(order.Note is null, order.Note ?? "通过时不应有未覆盖说明");
-            Assert.Equal(AngleConstruction.FillBreak, order.Construction);
 
-            // 步骤链必须完整：PreState → Cut → Collapse → Target。
+            // 步骤链：造塔 → 顶针 → 构造 C → 目标角。
             AssertStepKinds(
                 order,
                 AngleWorkStepKind.PreState,
-                AngleWorkStepKind.Cut,
-                AngleWorkStepKind.Collapse,
+                AngleWorkStepKind.Pin,
+                AngleWorkStepKind.Support,
                 AngleWorkStepKind.Target);
 
-            ShapeDocument preState = Step(order, AngleWorkStepKind.PreState).Shape!;
+            // rank 只统计角自己的顶针，子配方必须是 rank 0 的交换链。
+            Assert.Equal(1, order.Rank);
+            Assert.Equal(1, order.Steps.Count(step => step.Kind == AngleWorkStepKind.Pin));
 
-            // 前态不填目标列的缺口：目标列本身就是碎晶后的形态。
+            ShapeDocument tower = order.Steps[0].Shape!;
+            ShapeDocument pinned = order.Steps[1].Shape!;
+            ShapeDocument handover = order.Steps[2].Shape!;
+
+            // 造塔 X 本身：稳定、每列过五项条件、能用交换链装出来。
+            Assert.True(ShapeOps.IsStable(tower), $"{text} 的塔 X 应稳定");
+            Assert.True(
+                ShapeSignature.AllColumnsLegal(tower, out _),
+                $"{text} 的塔 X 每列都应过五项条件");
+            Assert.True(
+                ExchangeChain.TryBuild(tower, out Recipe? rebuilt),
+                $"{text} 的塔 X 应能用交换链装配");
+
+            Assert.True(order.SubRecipe is not null, "算法 6 必须带造塔子配方");
+            Assert.Equal(RecipeKind.Exchange, order.SubRecipe!.Kind);
+            Assert.Equal(0, order.SubRecipe.Rank);
+            Assert.True(
+                order.SubRecipe.Steps.Any(step => step.Title.Contains("交换")),
+                "造塔子配方必须包含交换节点");
+            Assert.True(
+                Replay.Verify(order.SubRecipe, tower, out IReadOnlyList<string> errors),
+                "造塔子配方应能端到端回放：" + string.Join(",", errors));
+            Assert.True(
+                ShapeOps.Same(order.SubRecipe.Shape, tower),
+                "子配方产物必须等于前态（塔 X）");
+
+            // 顶针步必须等于真实 ShapePhysics.Pin 的结果。
+            Assert.True(
+                ShapeOps.Same(ShapePhysics.Pin(tower).Document, pinned),
+                "Pin 步快照应等于真实顶针结果");
+
+            // 顶针后与构造 C 后，目标列都逐格等于目标。
             Assert.Equal(
                 text,
-                ShapeSignature.ColumnText(preState, 0),
-                "满高托柱的前态应保留目标列原样");
-
-            Assert.True(ShapeOps.IsStable(preState), "满高托柱的前态应稳定");
-
-            // 托柱放在环上相邻的西侧列，且覆盖 cap 的全部层。
-            int holderColumn = order.AuxiliaryColumns[0];
-
-            Assert.Equal(
-                3,
-                holderColumn,
-                "第 1 列的托柱应放在环上相邻的第 4 列");
-
-            for (int layer = 0; layer < cap; layer++)
-            {
-                Assert.Equal(
-                    CellType.Shape,
-                    preState[layer, holderColumn].Type,
-                    $"托柱第 {layer + 1} 层必须是实体（覆盖全高）");
-            }
-
-            // 前态本身可制作：生产管线对「目标列 + 满高托柱 + 桥柱」返回 Producible。
-            Assert.Equal(
-                PipelineOutcome.Producible,
-                ProductionPipeline.Solve(preState, cap).Outcome,
-                "满高托柱的前态应能被生产管线判定为 Producible");
-
-            // 真实回放：旋转 → Cut → 转回，逐格核对目标列。
-            ShapeDocument rotated = ShapeOps.Rotate(preState, order.Rotation);
-
-            CutResult cut = ShapePhysics.Cut(rotated);
-
-            Assert.True(cut.Success, cut.Error ?? "切割失败");
-
-            ShapeDocument replayed =
-                ShapeOps.Rotate(cut.West!, -order.Rotation);
-
-            AssertColumnCells(replayed, 0, text);
-
+                ShapeSignature.ColumnText(pinned, 0),
+                $"{text} 顶针后的目标列应逐格等于目标");
             Assert.Equal(
                 text,
-                ShapeSignature.ColumnText(replayed, 0),
-                $"{text} 的真实 Cut 回放应逐格等于目标列");
+                ShapeSignature.ColumnText(handover, 0),
+                $"{text} 构造 C 交接后的目标列应逐格等于目标");
 
-            // 碎晶之后、下落之前：每一目标格仍在目标层，且同层左右至少一列是实体。
-            for (int layer = 0; layer < cap; layer++)
+            Assert.True(
+                ShapeOps.IsStable(handover),
+                $"{text} 构造 C 交接后的图形应稳定");
+
+            // 构造 C 只留下目标列与新支撑柱，旧柱/辅助列都已拆掉。
+            int supportColumn = order.AuxiliaryColumns[0];
+
+            Assert.Equal(3, supportColumn, "第 1 列的新支撑柱应落在第 4 象限");
+            Assert.True(
+                ShapeSignature.ColumnText(handover, supportColumn) ==
+                new string('T', cap),
+                "新支撑柱应是满高普通柱");
+
+            for (int other = 0; other < 4; other++)
             {
-                if (target[layer, 0].Type == CellType.Empty)
+                if (other == 0 || other == supportColumn)
                 {
                     continue;
                 }
 
-                Assert.True(
-                    ShapeOps.SameCell(target[layer, 0], replayed[layer, 0]),
-                    $"{text} 第 {layer + 1} 层的目标格应在碎晶后仍停在目标层");
-
-                bool left =
-                    replayed[layer, 3].Type is CellType.Shape or CellType.Crystal;
-
-                bool right =
-                    replayed[layer, 1].Type is CellType.Shape or CellType.Crystal;
-
-                Assert.True(
-                    left || right,
-                    $"{text} 第 {layer + 1} 层的目标格碎晶后左右至少要有一列实体");
+                for (int layer = 0; layer < cap; layer++)
+                {
+                    Assert.Equal(
+                        CellType.Empty,
+                        handover[layer, other].Type,
+                        $"拆掉辅助列后第 {other + 1} 象限第 {layer + 1} 层应为空");
+                }
             }
 
-            // Collapse 步快照等于真实 Cut 出来的西半边。
-            Assert.True(
-                ShapeOps.Same(
-                    replayed,
-                    Step(order, AngleWorkStepKind.Collapse).Shape),
-                "Collapse 步应等于真实 Cut 出来的西半边");
-
-            // 辅助列不应留下晶体：托柱是普通格，桥柱被半破丢弃。
-            foreach (int aux in order.AuxiliaryColumns)
-            {
-                Assert.Equal(
-                    0,
-                    CountCrystals(
-                        Step(order, AngleWorkStepKind.Cut).Shape!,
-                        aux),
-                    $"辅助列 {aux} 不应留下晶体");
-            }
-
-            // 末步清除辅助列，得到目标角。
+            // 末步清除辅助柱，得到目标角。
             Assert.True(
                 ShapeOps.Same(
                     target,
                     Step(order, AngleWorkStepKind.Target).Shape),
                 "末步应得到目标角");
+
+            // 目标列没有丢失任何一格（颜色/形状码也逐格一致）。
+            AssertColumnCells(handover, 0, text);
         }
     }
 
     /// <summary>
-    /// 满高托柱只处理 n = 4 的 S：合法但不在 S 的 <c>cT.T.c</c> 必须诚实返回
-    /// 「未覆盖」，Note 不能写成「不可制作」。
+    /// 满高托柱仍是 D 不成立分支（算法 4）的兜底构造：
+    /// <c>.TcTc</c> 的 D 不成立、却属于 S，由满高托柱完成。
+    /// </summary>
+    public static void PillarHolderRemainsFallbackForNonDBranches()
+    {
+        const string text = ".TcTc";
+        const int cap = 5;
+
+        ShapeDocument target = FromColumns(4, cap, (0, text));
+
+        Assert.False(
+            PillarSCriterion.BottomResourceD(text),
+            ".TcTc 的 D 不应成立");
+        Assert.True(
+            PillarSCriterion.IsPillarColumn(target, 0),
+            ".TcTc 应属于 n = 4 的 S");
+
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+
+        Assert.True(order.IsComplete, order.Note ?? "满高托柱兜底应验证通过");
+        Assert.Equal(AngleAlgorithm.Algorithm4, order.Algorithm);
+        Assert.Equal(AngleConstruction.FillBreak, order.Construction);
+
+        AssertStepKinds(
+            order,
+            AngleWorkStepKind.PreState,
+            AngleWorkStepKind.Cut,
+            AngleWorkStepKind.Collapse,
+            AngleWorkStepKind.Target);
+
+        ShapeDocument preState = Step(order, AngleWorkStepKind.PreState).Shape!;
+
+        Assert.Equal(
+            text,
+            ShapeSignature.ColumnText(preState, 0),
+            "满高托柱的前态应保留目标列原样");
+        Assert.True(ShapeOps.IsStable(preState), "满高托柱的前态应稳定");
+
+        int holderColumn = order.AuxiliaryColumns[0];
+
+        Assert.Equal(3, holderColumn, "第 1 列的托柱应放在环上相邻的第 4 列");
+
+        for (int layer = 0; layer < cap; layer++)
+        {
+            Assert.Equal(
+                CellType.Shape,
+                preState[layer, holderColumn].Type,
+                $"托柱第 {layer + 1} 层必须是实体（覆盖全高）");
+        }
+
+        Assert.Equal(
+            PipelineOutcome.Producible,
+            ProductionPipeline.Solve(preState, cap).Outcome,
+            "满高托柱的前态应能被生产管线判定为 Producible");
+
+        ShapeDocument replayed = ShapeOps.Rotate(
+            ShapePhysics.Cut(ShapeOps.Rotate(preState, order.Rotation)).West!,
+            -order.Rotation);
+
+        Assert.Equal(
+            text,
+            ShapeSignature.ColumnText(replayed, 0),
+            "真实 Cut 回放应逐格等于目标列");
+
+        Assert.True(
+            ShapeOps.Same(
+                target,
+                Step(order, AngleWorkStepKind.Target).Shape),
+            "末步应得到目标角");
+    }
+
+    #endregion
+
+    #region 角工序：未覆盖与不可制作
+
+    /// <summary>
+    /// 合法的非 S 列 <c>cT.T.c</c> 必须诚实返回「未覆盖」，Note 不能写成「不可制作」。
     ///
-    /// 本生成器只报告自己的覆盖范围；「不可制作」只由角合法性判定，
-    /// 所以所有未通过的 Note 都以「未覆盖：」开头。
+    /// 本生成器只报告自己的覆盖范围；「不可制作」只由五项条件判定，
+    /// 所以所有合法但没覆盖的 Note 都以「未覆盖：」开头。
     /// </summary>
     public static void PillarHolderDoesNotClaimNonSCriterion()
     {
@@ -1229,6 +1329,316 @@ internal static class AngleWorkOrderTests
                 AngleWorkStepKind.Collapse or
                 AngleWorkStepKind.Target),
             "验证失败后不能伪造后续步骤");
+    }
+
+    /// <summary>
+    /// 五项条件不过的角：默认 Build 必须报「不可制作」，而不是「未覆盖」。
+    ///
+    /// <c>cT.ccc</c> 只在两枚晶体之间放了一枚普通格（条件五要求两枚），
+    /// <c>cT..ccc</c> 同理。旧语料里它们能被构造机器回放出来，只是因为
+    /// 生成器当时不看合法性；真实角不合法就不存在可制作的前态。
+    /// </summary>
+    public static void IllegalAngleIsNotProducible()
+    {
+        foreach ((string text, int parts, int layers) in new[]
+                 {
+                     ("cT.ccc", 4, 6),
+                     ("cT..ccc", 4, 8)
+                 })
+        {
+            ShapeDocument target = FromColumns(parts, layers, (0, text));
+
+            ColumnCheck check = ShapeSignature.CheckColumn(target, 0);
+
+            Assert.False(check.IsLegal, $"{text} 应在五项条件下不合法");
+            Assert.True(check.Failures.Count > 0, "不合法必须给出失败的条件");
+
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers);
+
+            Assert.False(order.IsComplete, $"{text} 不合法，不能标成可制作");
+            Assert.True(order.Note is not null, "不可制作必须给出 Note");
+
+            Assert.True(
+                order.Note!.StartsWith(
+                    AngleWorkOrderBuilder.NotProduciblePrefix,
+                    StringComparison.Ordinal),
+                "Note 必须以「不可制作：」开头：" + order.Note);
+
+            Assert.False(
+                order.Note.Contains("未覆盖", StringComparison.Ordinal),
+                "不合法角不能写成未覆盖：" + order.Note);
+
+            Assert.Equal(AngleAlgorithm.None, order.Algorithm);
+            Assert.Equal(AngleConstruction.None, order.Construction);
+            Assert.Equal(0, order.Rank);
+            Assert.Equal(1, order.Steps.Count);
+            Assert.Equal(AngleWorkStepKind.Note, order.Steps[0].Kind);
+
+            Assert.True(
+                order.Steps[0].Title.StartsWith("不可制作", StringComparison.Ordinal),
+                "步骤标题应标成不可制作：" + order.Steps[0].Title);
+
+            Assert.False(
+                order.Steps.Any(step =>
+                    step.Kind is AngleWorkStepKind.Cut or
+                    AngleWorkStepKind.Collapse or
+                    AngleWorkStepKind.Pin or
+                    AngleWorkStepKind.Support or
+                    AngleWorkStepKind.Target),
+                "不可制作时不能伪造任何操作步骤");
+        }
+    }
+
+    /// <summary>
+    /// 算法 6 的标杆案例 <c>.T.c</c>（TODO.md §3.1.1）：
+    /// 造塔 X（交换链子配方）→ 顶针 → 构造 C → 目标角，rank 只算这一次顶针。
+    /// </summary>
+    public static void Algorithm6BuildsDotTcFromTower()
+    {
+        const int cap = 4;
+
+        ShapeDocument target = FromColumns(4, cap, (0, ".T.c"));
+
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+
+        Assert.Equal(AngleBuildKind.NeedsCrystalBreak, order.Kind);
+        Assert.Equal(AngleAlgorithm.Algorithm6, order.Algorithm);
+        Assert.Equal(AngleConstruction.C, order.Construction);
+        Assert.True(order.IsComplete, order.Note ?? ".T.c 应可制作");
+        Assert.True(order.Note is null, order.Note ?? "通过时不应有未覆盖说明");
+
+        // 步骤链：造塔（子配方）→ 顶针 → 构造 C → 目标角。
+        AssertStepKinds(
+            order,
+            AngleWorkStepKind.PreState,
+            AngleWorkStepKind.Pin,
+            AngleWorkStepKind.Support,
+            AngleWorkStepKind.Target);
+
+        Assert.Equal(1, order.Rank);
+        Assert.Equal(1, order.Steps.Count(step => step.Kind == AngleWorkStepKind.Pin));
+
+        ShapeDocument tower = order.Steps[0].Shape!;
+
+        /*
+         * 塔 X 的逐列结构就是 §3.1.1 用户给的那一座（4 层 × 4 象限）。
+         * 晶体颜色属于语料（测试用 r，用户样例用 g），这里只比较结构。
+         */
+        ShapeDocument specTower =
+            Parse("--cgcgCu:CuCucgP-:cr--cgCu:----cg--", 4, 4);
+
+        for (int part = 0; part < 4; part++)
+        {
+            Assert.Equal(
+                ShapeSignature.ColumnText(specTower, part),
+                ShapeSignature.ColumnText(tower, part),
+                $"造塔 X 第 {part + 1} 象限的逐层结构应与 §3.1.1 的塔一致");
+        }
+
+        // 角列的晶体颜色必须沿用目标列（顶针保留颜色；塔里晶体已下移一层）。
+        Assert.Equal(
+            'r',
+            tower[2, 0].ColorCode,
+            "造塔 X 的角列晶体颜色应与目标列一致");
+
+        Assert.True(ShapeOps.IsStable(tower), "塔 X 应稳定");
+        Assert.True(
+            ShapeSignature.AllColumnsLegal(tower, out _),
+            "塔 X 每列都应过五项条件");
+
+        // 造塔子配方嵌在工序单里：rank 0 的交换链，四片 + 两次交换可展开。
+        Assert.True(order.SubRecipe is not null, "算法 6 必须带造塔子配方");
+        Assert.Equal(RecipeKind.Exchange, order.SubRecipe!.Kind);
+        Assert.Equal(0, order.SubRecipe.Rank);
+        Assert.True(
+            ShapeOps.Same(order.SubRecipe.Shape, tower),
+            "子配方产物必须等于前态（塔 X）");
+
+        Assert.True(
+            order.SubRecipe.Exchange is not null,
+            "子配方应带交换明细（四片 + 两次交换）");
+
+        Assert.True(
+            order.SubRecipe.Steps.Count(step => step.Title.Contains("交换")) >= 3,
+            "子配方步骤链应含两次半边交换 + 末次交换");
+
+        Assert.True(
+            order.SubRecipe.Steps.Any(step => step.Title.Contains("零件 1（含柱）")) &&
+            order.SubRecipe.Steps.Any(step => step.Title.Contains("零件 2（含柱）")),
+            "子配方应能展开成四个带柱半半边（左 1/2、右 1/2）");
+
+        Assert.True(
+            Replay.Verify(order.SubRecipe, tower, out IReadOnlyList<string> subErrors),
+            "造塔子配方应能端到端回放：" + string.Join(",", subErrors));
+
+        // 角工序只统计自己的顶针：子配方 rank 0 + 角顶针 1 = 1。
+        Assert.Equal(0, order.SubRecipe.Rank);
+        Assert.Equal(1, order.Rank);
+
+        // 顶针步必须等于真实 ShapePhysics.Pin 的结果。
+        Assert.True(
+            ShapeOps.Same(
+                ShapePhysics.Pin(tower).Document,
+                order.Steps[1].Shape),
+            "Pin 步快照应等于真实 ShapePhysics.Pin");
+
+        // 最终列逐格等于 .T.c（顶针后与构造 C 后都要成立）。
+        AssertColumnCells(order.Steps[1].Shape!, 0, ".T.c");
+        AssertColumnCells(order.Steps[2].Shape!, 0, ".T.c");
+
+        Assert.Equal(
+            ".T.c",
+            ShapeSignature.ColumnText(order.Steps[1].Shape!, 0),
+            "顶针后目标列应逐格等于 .T.c");
+
+        Assert.Equal(
+            ".T.c",
+            ShapeSignature.ColumnText(order.Steps[2].Shape!, 0),
+            "构造 C 后目标列应逐格等于 .T.c");
+
+        // 构造 C：装新支撑柱、拆旧柱与辅助列。
+        ShapeDocument handover = order.Steps[2].Shape!;
+
+        Assert.True(ShapeOps.IsStable(handover), "构造 C 交接后的图形应稳定");
+
+        int supportColumn = order.AuxiliaryColumns[0];
+
+        Assert.Equal(3, supportColumn, "新支撑柱应落在第 4 象限");
+        Assert.True(
+            ShapeSignature.ColumnText(handover, supportColumn) == "TTTT",
+            "新支撑柱应是满高普通柱");
+
+        foreach (int other in new[] { 1, 2 })
+        {
+            for (int layer = 0; layer < cap; layer++)
+            {
+                Assert.Equal(
+                    CellType.Empty,
+                    handover[layer, other].Type,
+                    $"拆掉辅助列后第 {other + 1} 象限第 {layer + 1} 层应为空");
+            }
+        }
+
+        // 末步得到目标角。
+        Assert.True(
+            ShapeOps.Same(
+                target,
+                Step(order, AngleWorkStepKind.Target).Shape),
+            "末步应得到目标角");
+    }
+
+    /// <summary>
+    /// 算法 5：n = 4、底格是针 ⇒ 构造 H 一次性批量恢复。
+    /// <c>PTT.c</c> 底格是针、缺口在晶体塔下，正好由构造 H 完成。
+    /// </summary>
+    public static void Algorithm5BuildsBottomPinAngle()
+    {
+        const int cap = 5;
+
+        ShapeDocument target = FromColumns(4, cap, (0, "PTT.c"));
+
+        Assert.Equal(CellType.Pin, target[0, 0].Type);
+
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+
+        Assert.Equal(AngleBuildKind.NeedsCrystalBreak, order.Kind);
+        Assert.Equal(AngleAlgorithm.Algorithm5, order.Algorithm);
+        Assert.Equal(AngleConstruction.H, order.Construction);
+        Assert.True(order.IsComplete, order.Note ?? "PTT.c 的构造 H 应验证通过");
+        Assert.True(order.Note is null, order.Note ?? "通过时不应有未覆盖说明");
+
+        AssertStepKinds(
+            order,
+            AngleWorkStepKind.PreState,
+            AngleWorkStepKind.Pin,
+            AngleWorkStepKind.Note,
+            AngleWorkStepKind.Target);
+
+        Assert.Equal(1, order.Rank);
+        Assert.Equal(1, order.Steps.Count(step => step.Kind == AngleWorkStepKind.Pin));
+
+        ShapeDocument preState = Step(order, AngleWorkStepKind.PreState).Shape!;
+
+        Assert.True(ShapeOps.IsStable(preState), "构造 H 的前态应稳定");
+
+        // 真实 Pin 回放。
+        Assert.True(
+            ShapeOps.Same(
+                ShapePhysics.Pin(preState).Document,
+                Step(order, AngleWorkStepKind.Pin).Shape),
+            "Pin 步快照应等于真实 ShapePhysics.Pin");
+
+        Assert.Equal(
+            "PTT.c",
+            ShapeSignature.ColumnText(
+                Step(order, AngleWorkStepKind.Pin).Shape!,
+                0),
+            "一次顶针后的目标列应逐格等于目标");
+
+        Assert.True(
+            ShapeOps.Same(
+                target,
+                Step(order, AngleWorkStepKind.Target).Shape),
+            "末步应得到目标角");
+    }
+
+    /// <summary>
+    /// §6 的 n ≥ 6 分档：算法 1（提升）→ 算法 2（正规核心）→ 算法 3（构造 F 送回），
+    /// 以及 n = 4 其余的算法 4（递归提升 + 构造 G 环下落）。
+    /// </summary>
+    public static void AlgorithmTiersSelectPaperBranch()
+    {
+        // 算法 1（提升）：缺口下方有普通格，先抬到缺口顶端再碎晶。
+        AngleWorkOrder lift = AngleWorkOrderBuilder.Build(
+            FromColumns(6, 6, (0, "T..ccc")),
+            0,
+            6);
+
+        Assert.Equal(AngleAlgorithm.Algorithm1, lift.Algorithm);
+        Assert.Equal(AngleConstruction.FillBreak, lift.Construction);
+        Assert.True(lift.IsComplete, lift.Note ?? "算法 1 应验证通过");
+        Assert.Equal(
+            "ccTccc",
+            ShapeSignature.ColumnText(
+                Step(lift, AngleWorkStepKind.PreState).Shape!,
+                0),
+            "算法 1 的前态应把 T 抬到缺口顶端");
+
+        // 算法 2（正规核心）：缺口只能直接填成紧核心（上下都挨着普通格）。
+        AngleWorkOrder core = AngleWorkOrderBuilder.Build(
+            FromColumns(6, 8, (0, "cT..Tccc")),
+            0,
+            8);
+
+        Assert.Equal(AngleAlgorithm.Algorithm2, core.Algorithm);
+        Assert.Equal(AngleConstruction.FillBreak, core.Construction);
+        Assert.True(core.IsComplete, core.Note ?? "算法 2 应验证通过");
+        Assert.Equal(
+            "cTccTccc",
+            ShapeSignature.ColumnText(
+                Step(core, AngleWorkStepKind.PreState).Shape!,
+                0),
+            "算法 2 的前态应把缺口直接填成紧核心");
+
+        // 算法 3（构造 F 送回）：一次受控下落到 d 层。
+        AngleWorkOrder f = AngleWorkOrderBuilder.Build(
+            FromColumns(6, 7, (0, ".T..c..")),
+            0,
+            7);
+
+        Assert.Equal(AngleAlgorithm.Algorithm3, f.Algorithm);
+        Assert.Equal(AngleConstruction.F, f.Construction);
+        Assert.True(f.IsComplete, f.Note ?? "算法 3 应验证通过");
+
+        // 算法 4（n = 4、D 不成立）：递归提升 + 构造 G 环下落。
+        AngleWorkOrder g = AngleWorkOrderBuilder.Build(
+            FromColumns(4, 8, (0, "cT.T.ccc")),
+            0,
+            8);
+
+        Assert.Equal(AngleAlgorithm.Algorithm4, g.Algorithm);
+        Assert.Equal(AngleConstruction.G, g.Construction);
+        Assert.True(g.IsComplete, g.Note ?? "算法 4 应验证通过");
     }
 
     #endregion

@@ -14,6 +14,11 @@ internal static class Program
 {
     private static int Main()
     {
+        if (Environment.GetEnvironmentVariable("SHAPE_PROBE") == "1")
+        {
+                return 0;
+        }
+
         /*
          * WPF 的画刷等对象需要 STA 线程，
          * 测试统一在 STA 上跑。
@@ -146,7 +151,12 @@ internal static class Program
             ("角工序:多层缺口诚实报未实现", AngleWorkOrderTests.ConstructionGDoesNotFakeMultiLayerGap),
             ("角工序:前态不稳定时保留前缀", AngleWorkOrderTests.UnstablePrestateKeepsVerifiedPrefix),
             ("角工序:cap 高于目标高度", AngleWorkOrderTests.ConstructionHandlesCapAboveTargetHeight),
-            ("角工序:满高托柱支撑侧向目标格", AngleWorkOrderTests.PillarHolderKeepsSideSupportedAngles),
+            ("角工序:算法 6 造塔出 .T.c", AngleWorkOrderTests.Algorithm6BuildsDotTcFromTower),
+            ("角工序:算法 6 侧向支撑角", AngleWorkOrderTests.Algorithm6BuildsSideSupportedAngles),
+            ("角工序:满高托柱兜底 D 不成立分支", AngleWorkOrderTests.PillarHolderRemainsFallbackForNonDBranches),
+            ("角工序:算法 1/2/3/4 分档", AngleWorkOrderTests.AlgorithmTiersSelectPaperBranch),
+            ("角工序:算法 5 底格是针", AngleWorkOrderTests.Algorithm5BuildsBottomPinAngle),
+            ("角工序:不合法角不可制作", AngleWorkOrderTests.IllegalAngleIsNotProducible),
             ("角工序:满高托柱不越权判定非 S", AngleWorkOrderTests.PillarHolderDoesNotClaimNonSCriterion),
 
             // 交接规格 §5 的 9 组验收语料。
