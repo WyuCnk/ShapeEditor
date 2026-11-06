@@ -207,6 +207,76 @@ public static class ShapePhysics
 
     #endregion
 
+    #region 结晶
+
+    /// <summary>
+    /// 结晶：把所有空位与顶针替换成指定颜色的晶体，其他格保持不变
+    /// （普通形状、已有晶体及其颜色都不动）。
+    ///
+    /// <para>
+    /// <b>使用前提（规格 §5.6）</b>：这个原语是<b>全局</b>的——它会填满整张图里的
+    /// 每一个空位和顶针。实际制作时只应在
+    /// 「此前的层已经填满、当前层只缺目标格」的地方使用它，也就是先做出
+    /// 「除目标象限外全满」的单层件、再对它结晶，然后把这一层堆叠上去。
+    /// 若直接对一张还有图下间隙、晶下间隙或辅助顶针的图形结晶，
+    /// 那些本该保留的空位/顶针会一起变成晶体。
+    /// </para>
+    ///
+    /// <para>
+    /// <paramref name="mode"/> 仅为与 <see cref="Collapse"/>、<see cref="Stack"/>、
+    /// <see cref="Pin"/>、<see cref="Cut"/> 保持一致的调用形式；结晶本身不执行下落。
+    /// </para>
+    /// </summary>
+    public static PhysicsResult Crystallize(
+        ShapeDocument document,
+        char color,
+        CollapseMode mode = CollapseMode.IncludeCycles)
+    {
+        if (document is null)
+        {
+            return PhysicsResult.Fail("图形为空。");
+        }
+
+        if (!ShapeRules.IsValidPartCount(document.PartCount))
+        {
+            return PhysicsResult.Fail("象限数必须为偶数。");
+        }
+
+        if (!ShapeColor.IsValid(color))
+        {
+            return PhysicsResult.Fail($"颜色代码无效：{color}。");
+        }
+
+        int layers = document.LayerCount;
+        int parts = document.PartCount;
+
+        var result = new ShapeDocument(layers, parts);
+
+        for (int layer = 0;
+             layer < layers;
+             layer++)
+        {
+            for (int part = 0;
+                 part < parts;
+                 part++)
+            {
+                ShapeCell cell = document[layer, part];
+
+                result[layer, part] =
+                    cell.Type is CellType.Empty or CellType.Pin
+                        ? ShapeCell.Crystal(color)
+                        : cell.Clone();
+            }
+        }
+
+        // mode 不参与结晶；保留参数只为统一物理原语的签名。
+        _ = mode;
+
+        return PhysicsResult.Ok(result);
+    }
+
+    #endregion
+
     #region 切割
 
     /// <summary>
