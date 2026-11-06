@@ -1,3 +1,4 @@
+using ShapeEditor.Core.Analysis.Production;
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Physics;
 
@@ -6,9 +7,9 @@ namespace ShapeEditor.Core.Analysis;
 /// <summary>
 /// 一条制作路径。
 ///
-/// <see cref="Steps"/> 是向后兼容的线性工序（WPF / MAUI 仍在使用），
-/// <see cref="Graph"/> 是按层组织的节点图：交换的两个输出（所需结果与废料）
-/// 都作为节点出现，Web 端据此画分层箭头图。
+/// <see cref="Steps"/> 是线性工序（WPF / MAUI 仍在使用），
+/// <see cref="Graph"/> 是按层组织的节点图：交换的两个输出（所需结果与废料）、
+/// 顶针与堆叠都作为节点出现，三端据此画分层箭头图。
 /// </summary>
 public sealed record ProductionPath(
     int Axis,
@@ -28,32 +29,40 @@ public sealed record ProductionPath(
 
 /// <summary>
 /// 制作路径解析结果。
+///
+/// <see cref="Outcome"/> 区分「不可制作」与「未覆盖」：
+/// 前者只用于存在不合法角，后者表示求解器没找到路径但也没有否定。
 /// </summary>
 public sealed record ProductionPathResult(
     bool IsProducible,
     ProductionPath? Path,
-    string? Error);
+    string? Error)
+{
+    /// <summary>求解结论；旧调用方可以只看 <see cref="IsProducible"/>。</summary>
+    public PipelineOutcome? Outcome { get; init; }
+}
 
 /// <summary>
-/// 制作路径解析（交换阶段，规格 §5）。
+/// 制作路径解析：内部完全由 <see cref="ProductionPipeline"/> 驱动。
 ///
-/// 工序：四个带柱子的半半边 → 两次同侧交换得到两个半边 → 末端交换得到目标图形 → 顶针与堆叠。
+/// <code>
+/// Parse(target)
+///   → ProductionPipeline.Solve(target, cap = target.LayerCount, rank ≤ 3)
+///   → 把 Recipe 树摊平成节点链：
+///       交换叶子 = 四个带柱半半边 / 预旋转 / 两次交换 / 转回 / 末次交换 + 废料
+///       顶针     = 内层节点链 + 顶针节点
+///       堆叠     = 内层节点链 + 可制作块 + 堆叠节点
+///   → ProductionPath { Steps, Graph, 方向 }
+/// </code>
 ///
-/// 关键规则：
-/// 1. 四片各只有一根柱子（<see cref="PillarHalfHalves"/>，规格 §1）；
-/// 2. P1/P2 顺转 half−ls、P3/P4 逆转 rs 后再交换（规格 §2）；
-/// 3. Cut 固定切在 n/2，交叉拼接 out1 = 东+西、out2 = 西+东（规格 §3）；
-/// 4. 前两次交换后要转回来，末端交换不再旋转；
-/// 5. 末端两个输出中任意一个与目标旋转等价即成功（规格 §4）。
+/// 结论分级：不合法角 ⇒ 不可制作；其余失败 ⇒ 未覆盖。
+/// 旧骨架里的「固定轴 0、逐格精确比对、手工预旋转」已整段删除。
 ///
-/// <see cref="ProductionPath.Steps"/> 按实际计算顺序展开：制作片、预旋转、
-/// 交换、交换后转回、半边结果、末端交换，直到顶针与堆叠。
-/// 每步的 <see cref="ProductionStep.Shape"/> 是该步产出的图形，UI 可直接画预览。
-///
-/// <see cref="ProductionPath.Graph"/> 把同一条工序整理成 5 层节点图：
-/// 1 = 四个带柱子的半半边，2 = 预旋转结果，3 = 两两交换（两个半边 + 两个废料），
-/// 4 = 交换后转回的两个半边，5 = 末端交换的目标图形 + 废料。
-/// 交换的另一路输出不再丢弃，而是带图形的「废料」节点。
+/// <para>
+/// 规格 §5 的穷举数字是在 <see cref="CollapseMode.IncludeCycles"/> 下得到的，
+/// 所以 pipeline 内部固定使用 IncludeCycles；<c>mode</c> 目前只用于方向合法性表格
+/// （<see cref="HalfStabilityAnalyzer"/>）。循环支撑结构不在本次构造范围内。
+/// </para>
 /// </summary>
 public static class ProductionPathParser
 {
@@ -61,457 +70,767 @@ public static class ProductionPathParser
         ShapeDocument target,
         CollapseMode mode = CollapseMode.IncludeCycles)
     {
+        if (target is null)
+        {
+            return new ProductionPathResult(
+                false,
+                null,
+                "图形为空。")
+            {
+                Outcome = PipelineOutcome.NotProducible
+            };
+        }
+
         int parts = target.PartCount;
 
         if (parts % 2 != 0)
         {
-            return new ProductionPathResult(false, null, "象限数必须为偶数。");
+            return new ProductionPathResult(
+                false,
+                null,
+                "象限数必须为偶数。")
+            {
+                Outcome = PipelineOutcome.NotProducible
+            };
         }
 
         int half = parts / 2;
 
         if (half < 2)
         {
-            return new ProductionPathResult(false, null, "象限数太少，无法解析制作路径。");
-        }
-
-        // 硬否决：目标存在不合法角即不可制作。
-        ShapeAnalysisResult angles = ShapeAngleAnalyzer.Analyze(target, mode);
-
-        if (!angles.IsFullyLegal)
-        {
-            return new ProductionPathResult(false, null, "目标图形存在不合法角，无法制作。");
-        }
-
-        // 轴可被最终的旋转等价吸收，固定为 0，只需遍历左右切点。
-        const int axis = 0;
-
-        // 稳定性在旋转下不变；一次解析内的重复半半边/半边只塌陷一次。
-        var cache = new StabilityCache(mode);
-
-        for (int leftSplit = 1; leftSplit < half; leftSplit++)
-        {
-            for (int rightSplit = 1; rightSplit < half; rightSplit++)
+            /*
+             * n = 2 的孤立列拼装（规格 §5.2）还没有接进 pipeline：
+             * 这里必须报「未覆盖」，不能写成「不可制作」。
+             */
+            return new ProductionPathResult(
+                false,
+                null,
+                "n = 2 的孤立列拼装尚未覆盖（未覆盖，不是不可制作）。")
             {
-                (ShapeDocument p1Raw, ShapeDocument p2Raw, ShapeDocument p3Raw, ShapeDocument p4Raw) =
-                    BuildPillarHalfHalves(target, axis, leftSplit, rightSplit);
+                Outcome = PipelineOutcome.Uncovered
+            };
+        }
 
-                // Cut 会各自 Collapse 一次，四片必须稳定；
-                // 任一片不稳定就直接跳过该方向，不进入交换阶段。
-                // 稳定性与旋转无关，因此这里判定未旋转的片（起始列见 BuildPillarHalfHalves）。
-                if (!IsStable(p1Raw, cache, axis) ||
-                    !IsStable(p2Raw, cache, axis + leftSplit) ||
-                    !IsStable(p3Raw, cache, axis + half) ||
-                    !IsStable(p4Raw, cache, axis + half + rightSplit))
-                {
-                    continue;
-                }
+        PipelineResult solved = ProductionPipeline.Solve(
+            target,
+            target.LayerCount,
+            ProductionPipeline.DefaultMaxRank);
 
-                // 通过稳定性判定后，再做规格 §2 的预旋转。
-                int leftRotation = half - leftSplit;
+        if (solved.Outcome == PipelineOutcome.NotProducible)
+        {
+            return new ProductionPathResult(
+                false,
+                null,
+                JoinNotes(solved.Notes))
+            {
+                Outcome = PipelineOutcome.NotProducible
+            };
+        }
 
-                ShapeDocument p1 = PillarHalfHalves.RotateRight(p1Raw, leftRotation);
-                ShapeDocument p2 = PillarHalfHalves.RotateRight(p2Raw, leftRotation);
-                ShapeDocument p3 = PillarHalfHalves.RotateRight(p3Raw, -rightSplit);
-                ShapeDocument p4 = PillarHalfHalves.RotateRight(p4Raw, -rightSplit);
+        if (solved.Outcome != PipelineOutcome.Producible ||
+            solved.Recipe is null)
+        {
+            return new ProductionPathResult(
+                false,
+                null,
+                "未覆盖（没有证明不可制作）：" +
+                JoinNotes(solved.Notes))
+            {
+                Outcome = PipelineOutcome.Uncovered
+            };
+        }
 
-                // 同侧配对交换，再按 §2 转回。交换的另一路输出保留为废料节点。
-                (ShapeDocument? leftRaw, ShapeDocument? leftHalf, ShapeDocument? leftWaste) =
-                    ExchangeAndRotate(p1, p2, -leftRotation, mode);
+        Recipe recipe = solved.Recipe;
 
-                if (leftRaw is null ||
-                    leftHalf is null ||
-                    leftWaste is null ||
-                    !IsStable(leftHalf, cache, 0))
-                {
-                    continue;
-                }
+        Recipe? exchange = FindExchange(recipe);
 
-                (ShapeDocument? rightRaw, ShapeDocument? rightHalf, ShapeDocument? rightWaste) =
-                    ExchangeAndRotate(p3, p4, rightSplit, mode);
+        if (exchange?.Exchange is null)
+        {
+            return new ProductionPathResult(
+                false,
+                null,
+                "未覆盖（路径里没有可展示的交换链）。")
+            {
+                Outcome = PipelineOutcome.Uncovered
+            };
+        }
 
-                if (rightRaw is null ||
-                    rightHalf is null ||
-                    rightWaste is null ||
-                    !IsStable(rightHalf, cache, half))
-                {
-                    continue;
-                }
+        ExchangeDetails details = exchange.Exchange;
 
-                // 末端交换：两个输出中任意一个与目标旋转等价即成功，另一个是废料。
-                var final = ShapeExchange.Exchange(leftHalf, rightHalf, mode);
+        int directionParts = exchange.Shape.PartCount;
+        int directionHalf = directionParts / 2;
 
-                if (final.Error is not null)
-                {
-                    continue;
-                }
+        string direction = PillarHalfHalves.FormatDirection(
+            details.Axis,
+            directionHalf,
+            details.LeftSplit,
+            details.RightSplit);
 
-                ShapeDocument? product = null;
+        bool directionLegal = HalfStabilityAnalyzer
+            .Analyze(exchange.Shape, mode)
+            .LegalDirections
+            .Contains(direction);
 
-                ShapeDocument? finalWaste = null;
+        List<ProductionStep> steps = BuildSteps(recipe, isRoot: true);
 
-                if (final.First is not null &&
-                    IsRotationEquivalent(final.First, target))
-                {
-                    product = final.First;
-                    finalWaste = final.Second;
-                }
-                else if (final.Second is not null &&
-                         IsRotationEquivalent(final.Second, target))
-                {
-                    product = final.Second;
-                    finalWaste = final.First;
-                }
+        ProductionGraph graph = BuildGraph(recipe, isRoot: true);
 
-                if (product is null)
-                {
-                    continue;
-                }
+        return new ProductionPathResult(
+            true,
+            new ProductionPath(
+                details.Axis,
+                details.LeftSplit,
+                details.RightSplit,
+                direction,
+                directionLegal,
+                steps,
+                graph),
+            null)
+        {
+            Outcome = PipelineOutcome.Producible
+        };
+    }
 
-                string direction = PillarHalfHalves.FormatDirection(
-                    axis,
-                    half,
-                    leftSplit,
-                    rightSplit);
+    private static string JoinNotes(
+        IReadOnlyList<string> notes)
+    {
+        return notes.Count == 0
+            ? "制作路径求解失败。"
+            : string.Join(" ", notes);
+    }
 
-                // 方向合法性沿用半边分析的结论（两个半边 + 四个带柱半半边都稳定）。
-                HalfStabilityResult halfResult = HalfStabilityAnalyzer.Analyze(target, mode);
+    /// <summary>找到路径树里唯一的交换叶子。</summary>
+    private static Recipe? FindExchange(
+        Recipe recipe)
+    {
+        if (recipe.Kind == RecipeKind.Exchange)
+        {
+            return recipe;
+        }
 
-                List<ProductionStep> steps = BuildSteps(
-                    parts,
-                    leftRotation,
-                    rightSplit,
-                    p1Raw,
-                    p1,
-                    p2Raw,
-                    p2,
-                    leftRaw,
-                    leftHalf,
-                    p3Raw,
-                    p3,
-                    p4Raw,
-                    p4,
-                    rightRaw,
-                    rightHalf,
-                    product);
+        foreach (Recipe input in recipe.Inputs)
+        {
+            Recipe? found = FindExchange(input);
 
-                ProductionGraph graph = BuildGraph(
-                    parts,
-                    leftRotation,
-                    rightSplit,
-                    p1Raw,
-                    p1,
-                    p2Raw,
-                    p2,
-                    leftRaw,
-                    leftHalf,
-                    leftWaste,
-                    p3Raw,
-                    p3,
-                    p4Raw,
-                    p4,
-                    rightRaw,
-                    rightHalf,
-                    rightWaste,
-                    product,
-                    finalWaste);
-
-                return new ProductionPathResult(
-                    true,
-                    new ProductionPath(
-                        axis,
-                        leftSplit,
-                        rightSplit,
-                        direction,
-                        halfResult.LegalDirections.Contains(direction),
-                        steps,
-                        graph),
-                    null);
+            if (found is not null)
+            {
+                return found;
             }
         }
 
-        return new ProductionPathResult(false, null, "没有找到可行的制作路径。");
+        return null;
+    }
+
+    #region 线性工序
+
+    /// <summary>
+    /// 把 Recipe 树按「先子后父」摊平成线性工序。
+    /// </summary>
+    private static List<ProductionStep> BuildSteps(
+        Recipe recipe,
+        bool isRoot)
+    {
+        var steps = new List<ProductionStep>();
+
+        AppendSteps(recipe, isRoot, steps);
+
+        return steps;
+    }
+
+    private static void AppendSteps(
+        Recipe recipe,
+        bool isRoot,
+        List<ProductionStep> steps)
+    {
+        switch (recipe.Kind)
+        {
+            case RecipeKind.Exchange:
+                if (recipe.Exchange is not null)
+                {
+                    AppendExchangeSteps(
+                        recipe.Exchange,
+                        isRoot,
+                        steps);
+                }
+                else
+                {
+                    steps.Add(new ProductionStep(
+                        isRoot ? "交换得到目标图形" : "交换得到中间图形",
+                        recipe.Shape,
+                        isRoot
+                            ? ProductionStepKind.Target
+                            : ProductionStepKind.Exchange,
+                        RotationDirection.None,
+                        0));
+                }
+
+                break;
+
+            case RecipeKind.Pin:
+                if (recipe.Inputs.Count == 1)
+                {
+                    AppendSteps(recipe.Inputs[0], false, steps);
+                }
+
+                steps.Add(new ProductionStep(
+                    "顶针",
+                    recipe.Shape,
+                    ProductionStepKind.Pin,
+                    RotationDirection.None,
+                    0));
+
+                break;
+
+            case RecipeKind.Stack:
+                if (recipe.Inputs.Count == 1)
+                {
+                    AppendSteps(recipe.Inputs[0], false, steps);
+                }
+
+                if (recipe.Block is not null)
+                {
+                    steps.Add(new ProductionStep(
+                        recipe.BlockRecipe is not null
+                            ? "可制作块（hybrid）"
+                            : "堆叠块",
+                        recipe.Block,
+                        ProductionStepKind.Block,
+                        RotationDirection.None,
+                        0));
+                }
+
+                steps.Add(new ProductionStep(
+                    "堆叠",
+                    recipe.Shape,
+                    ProductionStepKind.Stack,
+                    RotationDirection.None,
+                    0));
+
+                break;
+        }
+
+        // 非交换的根节点补一个显式的目标标记，线性列表也能看到终点。
+        if (isRoot &&
+            recipe.Kind != RecipeKind.Exchange)
+        {
+            steps.Add(new ProductionStep(
+                "完成目标图形",
+                recipe.Shape,
+                ProductionStepKind.Target,
+                RotationDirection.None,
+                0));
+        }
     }
 
     /// <summary>
-    /// 按实际计算顺序展开步骤。
-    ///
-    /// 每一步都带上产出图形，界面据此画节点卡片；旋转步骤同时记录
-    /// 方向与数量（已规范成较短方向），交换后转回也作为独立旋转步骤出现。
+    /// 交换叶子的 15 步构造：制作四片、预旋转、两次交换、转回、末次交换。
+    /// 与旧实现的步骤标题保持一致，避免 UI 文案漂移。
     /// </summary>
-    private static List<ProductionStep> BuildSteps(
-        int parts,
-        int leftRotation,
-        int rightRotation,
-        ShapeDocument p1Raw,
-        ShapeDocument p1,
-        ShapeDocument p2Raw,
-        ShapeDocument p2,
-        ShapeDocument leftRaw,
-        ShapeDocument leftHalf,
-        ShapeDocument p3Raw,
-        ShapeDocument p3,
-        ShapeDocument p4Raw,
-        ShapeDocument p4,
-        ShapeDocument rightRaw,
-        ShapeDocument rightHalf,
-        ShapeDocument product)
+    private static void AppendExchangeSteps(
+        ExchangeDetails details,
+        bool isRoot,
+        List<ProductionStep> steps)
     {
+        int parts = details.Product.PartCount;
+        int half = parts / 2;
+
+        int leftRotation = half - details.LeftSplit;
+        int rightSplit = details.RightSplit;
+
         (RotationDirection leftDirection, int leftCount, string leftTitle) =
             PillarHalfHalves.DescribeRotation(parts, leftRotation);
 
         (RotationDirection rightDirection, int rightCount, string rightTitle) =
-            PillarHalfHalves.DescribeRotation(parts, -rightRotation);
+            PillarHalfHalves.DescribeRotation(parts, -rightSplit);
 
         (RotationDirection leftBackDirection, int leftBackCount, string leftBackTitle) =
             PillarHalfHalves.DescribeRotation(parts, -leftRotation);
 
         (RotationDirection rightBackDirection, int rightBackCount, string rightBackTitle) =
-            PillarHalfHalves.DescribeRotation(parts, rightRotation);
+            PillarHalfHalves.DescribeRotation(parts, rightSplit);
 
-        return new List<ProductionStep>
-        {
-            new("制作带柱子的半半边 P1", p1Raw, ProductionStepKind.PillarPiece, RotationDirection.None, 0),
-            new(leftTitle, p1, ProductionStepKind.Rotate, leftDirection, leftCount),
-            new("制作带柱子的半半边 P2", p2Raw, ProductionStepKind.PillarPiece, RotationDirection.None, 0),
-            new(leftTitle, p2, ProductionStepKind.Rotate, leftDirection, leftCount),
-            new("交换", leftRaw, ProductionStepKind.Exchange, RotationDirection.None, 0),
-            new(leftBackTitle, leftHalf, ProductionStepKind.Rotate, leftBackDirection, leftBackCount),
-            new("交换得到左半边", leftHalf, ProductionStepKind.Exchange, RotationDirection.None, 0),
+        steps.Add(new ProductionStep(
+            "制作带柱子的半半边 P1",
+            details.P1.Raw,
+            ProductionStepKind.PillarPiece,
+            RotationDirection.None,
+            0));
 
-            new("制作带柱子的半半边 P3", p3Raw, ProductionStepKind.PillarPiece, RotationDirection.None, 0),
-            new(rightTitle, p3, ProductionStepKind.Rotate, rightDirection, rightCount),
-            new("制作带柱子的半半边 P4", p4Raw, ProductionStepKind.PillarPiece, RotationDirection.None, 0),
-            new(rightTitle, p4, ProductionStepKind.Rotate, rightDirection, rightCount),
-            new("交换", rightRaw, ProductionStepKind.Exchange, RotationDirection.None, 0),
-            new(rightBackTitle, rightHalf, ProductionStepKind.Rotate, rightBackDirection, rightBackCount),
-            new("交换得到右半边", rightHalf, ProductionStepKind.Exchange, RotationDirection.None, 0),
+        steps.Add(new ProductionStep(
+            leftTitle,
+            details.P1.Rotated,
+            ProductionStepKind.Rotate,
+            leftDirection,
+            leftCount));
 
-            new("交换得到目标图形", product, ProductionStepKind.Target, RotationDirection.None, 0),
-            new("顶针与堆叠（待接入）", null, ProductionStepKind.Pending, RotationDirection.None, 0)
-        };
+        steps.Add(new ProductionStep(
+            "制作带柱子的半半边 P2",
+            details.P2.Raw,
+            ProductionStepKind.PillarPiece,
+            RotationDirection.None,
+            0));
+
+        steps.Add(new ProductionStep(
+            leftTitle,
+            details.P2.Rotated,
+            ProductionStepKind.Rotate,
+            leftDirection,
+            leftCount));
+
+        steps.Add(new ProductionStep(
+            "交换",
+            details.Left.Raw,
+            ProductionStepKind.Exchange,
+            RotationDirection.None,
+            0));
+
+        steps.Add(new ProductionStep(
+            leftBackTitle,
+            details.Left.Result,
+            ProductionStepKind.Rotate,
+            leftBackDirection,
+            leftBackCount));
+
+        steps.Add(new ProductionStep(
+            "交换得到左半边",
+            details.Left.Result,
+            ProductionStepKind.Exchange,
+            RotationDirection.None,
+            0));
+
+        steps.Add(new ProductionStep(
+            "制作带柱子的半半边 P3",
+            details.P3.Raw,
+            ProductionStepKind.PillarPiece,
+            RotationDirection.None,
+            0));
+
+        steps.Add(new ProductionStep(
+            rightTitle,
+            details.P3.Rotated,
+            ProductionStepKind.Rotate,
+            rightDirection,
+            rightCount));
+
+        steps.Add(new ProductionStep(
+            "制作带柱子的半半边 P4",
+            details.P4.Raw,
+            ProductionStepKind.PillarPiece,
+            RotationDirection.None,
+            0));
+
+        steps.Add(new ProductionStep(
+            rightTitle,
+            details.P4.Rotated,
+            ProductionStepKind.Rotate,
+            rightDirection,
+            rightCount));
+
+        steps.Add(new ProductionStep(
+            "交换",
+            details.Right.Raw,
+            ProductionStepKind.Exchange,
+            RotationDirection.None,
+            0));
+
+        steps.Add(new ProductionStep(
+            rightBackTitle,
+            details.Right.Result,
+            ProductionStepKind.Rotate,
+            rightBackDirection,
+            rightBackCount));
+
+        steps.Add(new ProductionStep(
+            "交换得到右半边",
+            details.Right.Result,
+            ProductionStepKind.Exchange,
+            RotationDirection.None,
+            0));
+
+        steps.Add(new ProductionStep(
+            isRoot ? "交换得到目标图形" : "交换得到中间图形",
+            details.Product,
+            isRoot
+                ? ProductionStepKind.Target
+                : ProductionStepKind.Exchange,
+            RotationDirection.None,
+            0));
     }
 
-    /// <summary>
-    /// 把同一次计算整理成 5 层节点图。
-    ///
-    /// 行内顺序即 Web 端的横向排布顺序：
-    /// 第 3 行按「废料、左交换、右交换、废料」排列，让 P1/P2、P3/P4
-    /// 分别向中间的两个交换节点汇聚，废料落在两侧。
-    ///
-    /// 连接规则：
-    /// P1–P4 → 各自的旋转结果；P1/P2 → 左交换，P3/P4 → 右交换；
-    /// 左/右交换 → 转回后的半边，同时各引出一条废料边；
-    /// 两个转回后半边 → 目标图形，目标图形再引出末端废料。
-    /// </summary>
+    #endregion
+
+    #region 节点图
+
     private static ProductionGraph BuildGraph(
-        int parts,
-        int leftRotation,
-        int rightRotation,
-        ShapeDocument p1Raw,
-        ShapeDocument p1,
-        ShapeDocument p2Raw,
-        ShapeDocument p2,
-        ShapeDocument leftRaw,
-        ShapeDocument leftHalf,
-        ShapeDocument leftWaste,
-        ShapeDocument p3Raw,
-        ShapeDocument p3,
-        ShapeDocument p4Raw,
-        ShapeDocument p4,
-        ShapeDocument rightRaw,
-        ShapeDocument rightHalf,
-        ShapeDocument rightWaste,
-        ShapeDocument product,
-        ShapeDocument? finalWaste)
+        Recipe recipe,
+        bool isRoot)
     {
-        (_, _, string leftTitle) =
-            PillarHalfHalves.DescribeRotation(parts, leftRotation);
+        var nodes = new List<ProductionNode>();
+        var edges = new List<ProductionEdge>();
 
-        (_, _, string rightTitle) =
-            PillarHalfHalves.DescribeRotation(parts, -rightRotation);
-
-        (_, _, string leftBackTitle) =
-            PillarHalfHalves.DescribeRotation(parts, -leftRotation);
-
-        (_, _, string rightBackTitle) =
-            PillarHalfHalves.DescribeRotation(parts, rightRotation);
-
-        var nodes = new List<ProductionNode>(16)
-        {
-            // 第 1 行：四个带柱子的半半边（未旋转）。
-            new("pillar-p1", "制作带柱子的半半边 P1", ProductionNodeKind.PillarPiece, 1, p1Raw),
-            new("pillar-p2", "制作带柱子的半半边 P2", ProductionNodeKind.PillarPiece, 1, p2Raw),
-            new("pillar-p3", "制作带柱子的半半边 P3", ProductionNodeKind.PillarPiece, 1, p3Raw),
-            new("pillar-p4", "制作带柱子的半半边 P4", ProductionNodeKind.PillarPiece, 1, p4Raw),
-
-            // 第 2 行：预旋转结果。
-            new("rotated-p1", leftTitle, ProductionNodeKind.Rotate, 2, p1),
-            new("rotated-p2", leftTitle, ProductionNodeKind.Rotate, 2, p2),
-            new("rotated-p3", rightTitle, ProductionNodeKind.Rotate, 2, p3),
-            new("rotated-p4", rightTitle, ProductionNodeKind.Rotate, 2, p4),
-
-            // 第 3 行：两次同侧交换。交换节点展示所需半边（转回前），
-            // 另一路输出作为废料节点，同样带图形。
-            new("waste-left", "废料", ProductionNodeKind.Waste, 3, leftWaste),
-            new("exchange-left", "交换得到左半边", ProductionNodeKind.Exchange, 3, leftRaw),
-            new("exchange-right", "交换得到右半边", ProductionNodeKind.Exchange, 3, rightRaw),
-            new("waste-right", "废料", ProductionNodeKind.Waste, 3, rightWaste),
-
-            // 第 4 行：交换后转回的两个半边。
-            new("rotated-left", leftBackTitle, ProductionNodeKind.Rotate, 4, leftHalf),
-            new("rotated-right", rightBackTitle, ProductionNodeKind.Rotate, 4, rightHalf),
-
-            // 第 5 行：末端交换的目标图形与废料。
-            new("target", "交换得到目标图形", ProductionNodeKind.Target, 5, product),
-            new("waste-final", "废料", ProductionNodeKind.Waste, 5, finalWaste)
-        };
-
-        var edges = new List<ProductionEdge>(15)
-        {
-            // 第 1 → 2 行：竖线。
-            new("pillar-p1", "rotated-p1"),
-            new("pillar-p2", "rotated-p2"),
-            new("pillar-p3", "rotated-p3"),
-            new("pillar-p4", "rotated-p4"),
-
-            // 第 2 → 3 行：P1/P2 汇入左交换，P3/P4 汇入右交换。
-            new("rotated-p1", "exchange-left"),
-            new("rotated-p2", "exchange-left"),
-            new("rotated-p3", "exchange-right"),
-            new("rotated-p4", "exchange-right"),
-
-            // 交换节点输出所需半边与废料。
-            new("exchange-left", "rotated-left"),
-            new("exchange-left", "waste-left"),
-            new("exchange-right", "rotated-right"),
-            new("exchange-right", "waste-right"),
-
-            // 第 4 → 5 行：两个转回后的半边汇入末端交换。
-            new("rotated-left", "target"),
-            new("rotated-right", "target"),
-
-            // 末端交换的废料。
-            new("target", "waste-final")
-        };
+        AppendGraph(
+            recipe,
+            1,
+            string.Empty,
+            isRoot,
+            nodes,
+            edges);
 
         return new ProductionGraph(nodes, edges);
     }
 
     /// <summary>
-    /// 按规格 §1 构造四个带柱子的半半边（未做 §2 的预旋转）。
-    ///
-    /// 返回的片保持构造时的列位置，起始列分别为：
-    /// P1 = 轴、P2 = 轴 + 左切点、P3 = 轴 + half、P4 = 轴 + half + 右切点。
-    /// 稳定性与旋转无关，缓存键用这些起始列做旋转归一化；
-    /// 通过判定后再由调用方按 §2 预旋转。
+    /// 递归追加节点链，返回（终点节点 Id，下一可用行号）。
+    /// 纯交换路径的 Id 与旧实现完全一致（pillar-p1、exchange-left、target…）。
     /// </summary>
-    private static (ShapeDocument P1, ShapeDocument P2, ShapeDocument P3, ShapeDocument P4)
-        BuildPillarHalfHalves(
-            ShapeDocument target,
-            int axis,
-            int leftSplit,
-            int rightSplit)
+    private static (string TerminalId, int NextRow) AppendGraph(
+        Recipe recipe,
+        int row,
+        string prefix,
+        bool isRoot,
+        List<ProductionNode> nodes,
+        List<ProductionEdge> edges)
     {
-        ShapeDocument p1 = PillarHalfHalves.BuildPiece(
-            target, axis, leftSplit, rightSplit, PillarHalfHalves.First);
-
-        ShapeDocument p2 = PillarHalfHalves.BuildPiece(
-            target, axis, leftSplit, rightSplit, PillarHalfHalves.Second);
-
-        ShapeDocument p3 = PillarHalfHalves.BuildPiece(
-            target, axis, leftSplit, rightSplit, PillarHalfHalves.Third);
-
-        ShapeDocument p4 = PillarHalfHalves.BuildPiece(
-            target, axis, leftSplit, rightSplit, PillarHalfHalves.Fourth);
-
-        return (p1, p2, p3, p4);
-    }
-
-    /// <summary>
-    /// 同侧两片交换后再转回。
-    ///
-    /// 返回交换的原始输出（out2 = Merge(A 西, B 东)）、转回后的半边，
-    /// 以及交换的另一路输出（out1）——它作为「废料」节点出现在图里。
-    /// </summary>
-    private static (ShapeDocument? Raw, ShapeDocument? Rotated, ShapeDocument? Waste) ExchangeAndRotate(
-        ShapeDocument first,
-        ShapeDocument second,
-        int rotation,
-        CollapseMode mode)
-    {
-        var result = ShapeExchange.Exchange(first, second, mode);
-
-        // ShapeExchange 的 Second 即规格里的 out2 = Merge(A 西, B 东)。
-        if (result.Error is not null || result.Second is null)
+        switch (recipe.Kind)
         {
-            return (null, null, null);
-        }
+            case RecipeKind.Exchange:
+                return AppendExchangeGraph(
+                    recipe,
+                    row,
+                    prefix,
+                    isRoot,
+                    nodes,
+                    edges);
 
-        ShapeDocument raw = result.Second;
-
-        return (raw, PillarHalfHalves.RotateRight(raw, rotation), result.First);
-    }
-
-    /// <summary>交换输出是否与目标旋转等价。</summary>
-    private static bool IsRotationEquivalent(
-        ShapeDocument candidate,
-        ShapeDocument target)
-    {
-        if (candidate.LayerCount != target.LayerCount ||
-            candidate.PartCount != target.PartCount)
-        {
-            return false;
-        }
-
-        int parts = candidate.PartCount;
-
-        for (int rotation = 0; rotation < parts; rotation++)
-        {
-            bool same = true;
-
-            for (int layer = 0; layer < candidate.LayerCount && same; layer++)
+            case RecipeKind.Pin:
             {
-                for (int part = 0; part < parts; part++)
+                var (innerId, nextRow) = AppendGraph(
+                    recipe.Inputs[0],
+                    row,
+                    prefix + "in-",
+                    false,
+                    nodes,
+                    edges);
+
+                string pinId = prefix + "pin";
+
+                nodes.Add(new ProductionNode(
+                    pinId,
+                    "顶针",
+                    ProductionNodeKind.Pin,
+                    nextRow,
+                    recipe.Shape));
+
+                edges.Add(new ProductionEdge(innerId, pinId));
+
+                if (isRoot)
                 {
-                    // RotateRight(candidate, rotation) 的第 part 列取自原第 part−rotation 列。
-                    int source = ((part - rotation) % parts + parts) % parts;
+                    string targetId = prefix + "target";
 
-                    if (!CellEquals(candidate[layer, source], target[layer, part]))
-                    {
-                        same = false;
-                        break;
-                    }
+                    nodes.Add(new ProductionNode(
+                        targetId,
+                        "目标图形",
+                        ProductionNodeKind.Target,
+                        nextRow + 1,
+                        recipe.Shape));
+
+                    edges.Add(new ProductionEdge(pinId, targetId));
+
+                    return (targetId, nextRow + 2);
                 }
+
+                return (pinId, nextRow + 1);
             }
 
-            if (same)
+            case RecipeKind.Stack:
             {
-                return true;
+                var (innerId, innerNext) = AppendGraph(
+                    recipe.Inputs[0],
+                    row,
+                    prefix + "in-",
+                    false,
+                    nodes,
+                    edges);
+
+                string blockId;
+
+                if (recipe.BlockRecipe is not null)
+                {
+                    var (blockTerminal, blockNext) = AppendGraph(
+                        recipe.BlockRecipe,
+                        row,
+                        prefix + "blk-",
+                        false,
+                        nodes,
+                        edges);
+
+                    blockId = blockTerminal;
+
+                    innerNext = Math.Max(innerNext, blockNext);
+                }
+                else
+                {
+                    blockId = prefix + "block";
+
+                    nodes.Add(new ProductionNode(
+                        blockId,
+                        "堆叠块",
+                        ProductionNodeKind.Block,
+                        innerNext,
+                        recipe.Block));
+
+                    innerNext++;
+                }
+
+                string stackId = prefix + "stack";
+
+                nodes.Add(new ProductionNode(
+                    stackId,
+                    "堆叠",
+                    ProductionNodeKind.Stack,
+                    innerNext,
+                    recipe.Shape));
+
+                edges.Add(new ProductionEdge(innerId, stackId));
+                edges.Add(new ProductionEdge(blockId, stackId));
+
+                if (isRoot)
+                {
+                    string targetId = prefix + "target";
+
+                    nodes.Add(new ProductionNode(
+                        targetId,
+                        "目标图形",
+                        ProductionNodeKind.Target,
+                        innerNext + 1,
+                        recipe.Shape));
+
+                    edges.Add(new ProductionEdge(stackId, targetId));
+
+                    return (targetId, innerNext + 2);
+                }
+
+                return (stackId, innerNext + 1);
+            }
+
+            default:
+            {
+                string id = prefix + "unknown";
+
+                nodes.Add(new ProductionNode(
+                    id,
+                    "未知工序",
+                    ProductionNodeKind.Pending,
+                    row,
+                    recipe.Shape));
+
+                return (id, row + 1);
             }
         }
-
-        return false;
     }
 
-    private static bool CellEquals(
-        ShapeCell left,
-        ShapeCell right)
+    private static (string TerminalId, int NextRow) AppendExchangeGraph(
+        Recipe recipe,
+        int row,
+        string prefix,
+        bool isRoot,
+        List<ProductionNode> nodes,
+        List<ProductionEdge> edges)
     {
-        return left.Type == right.Type &&
-               left.ShapeCode == right.ShapeCode &&
-               left.ColorCode == right.ColorCode;
+        if (recipe.Exchange is null)
+        {
+            string id = prefix + "exchange";
+
+            nodes.Add(new ProductionNode(
+                id,
+                isRoot ? "交换得到目标图形" : "交换得到中间图形",
+                isRoot
+                    ? ProductionNodeKind.Target
+                    : ProductionNodeKind.Exchange,
+                row,
+                recipe.Shape));
+
+            return (id, row + 1);
+        }
+
+        ExchangeDetails details = recipe.Exchange;
+
+        int parts = details.Product.PartCount;
+        int half = parts / 2;
+
+        int leftRotation = half - details.LeftSplit;
+        int rightSplit = details.RightSplit;
+
+        (_, _, string leftTitle) =
+            PillarHalfHalves.DescribeRotation(parts, leftRotation);
+
+        (_, _, string rightTitle) =
+            PillarHalfHalves.DescribeRotation(parts, -rightSplit);
+
+        (_, _, string leftBackTitle) =
+            PillarHalfHalves.DescribeRotation(parts, -leftRotation);
+
+        (_, _, string rightBackTitle) =
+            PillarHalfHalves.DescribeRotation(parts, rightSplit);
+
+        string p1 = prefix + "pillar-p1";
+        string p2 = prefix + "pillar-p2";
+        string p3 = prefix + "pillar-p3";
+        string p4 = prefix + "pillar-p4";
+        string rp1 = prefix + "rotated-p1";
+        string rp2 = prefix + "rotated-p2";
+        string rp3 = prefix + "rotated-p3";
+        string rp4 = prefix + "rotated-p4";
+        string wasteLeft = prefix + "waste-left";
+        string exchangeLeft = prefix + "exchange-left";
+        string exchangeRight = prefix + "exchange-right";
+        string wasteRight = prefix + "waste-right";
+        string rotatedLeft = prefix + "rotated-left";
+        string rotatedRight = prefix + "rotated-right";
+        string target = prefix + "target";
+        string wasteFinal = prefix + "waste-final";
+
+        // 第 1 行：四个带柱子的半半边（未旋转）。
+        nodes.Add(new ProductionNode(
+            p1,
+            "制作带柱子的半半边 P1",
+            ProductionNodeKind.PillarPiece,
+            row,
+            details.P1.Raw));
+
+        nodes.Add(new ProductionNode(
+            p2,
+            "制作带柱子的半半边 P2",
+            ProductionNodeKind.PillarPiece,
+            row,
+            details.P2.Raw));
+
+        nodes.Add(new ProductionNode(
+            p3,
+            "制作带柱子的半半边 P3",
+            ProductionNodeKind.PillarPiece,
+            row,
+            details.P3.Raw));
+
+        nodes.Add(new ProductionNode(
+            p4,
+            "制作带柱子的半半边 P4",
+            ProductionNodeKind.PillarPiece,
+            row,
+            details.P4.Raw));
+
+        // 第 2 行：预旋转结果。
+        nodes.Add(new ProductionNode(
+            rp1,
+            leftTitle,
+            ProductionNodeKind.Rotate,
+            row + 1,
+            details.P1.Rotated));
+
+        nodes.Add(new ProductionNode(
+            rp2,
+            leftTitle,
+            ProductionNodeKind.Rotate,
+            row + 1,
+            details.P2.Rotated));
+
+        nodes.Add(new ProductionNode(
+            rp3,
+            rightTitle,
+            ProductionNodeKind.Rotate,
+            row + 1,
+            details.P3.Rotated));
+
+        nodes.Add(new ProductionNode(
+            rp4,
+            rightTitle,
+            ProductionNodeKind.Rotate,
+            row + 1,
+            details.P4.Rotated));
+
+        // 第 3 行：两次同侧交换（所需输出 + 废料）。
+        nodes.Add(new ProductionNode(
+            wasteLeft,
+            "废料",
+            ProductionNodeKind.Waste,
+            row + 2,
+            details.Left.Waste));
+
+        nodes.Add(new ProductionNode(
+            exchangeLeft,
+            "交换得到左半边",
+            ProductionNodeKind.Exchange,
+            row + 2,
+            details.Left.Raw));
+
+        nodes.Add(new ProductionNode(
+            exchangeRight,
+            "交换得到右半边",
+            ProductionNodeKind.Exchange,
+            row + 2,
+            details.Right.Raw));
+
+        nodes.Add(new ProductionNode(
+            wasteRight,
+            "废料",
+            ProductionNodeKind.Waste,
+            row + 2,
+            details.Right.Waste));
+
+        // 第 4 行：交换后转回的两个半边。
+        nodes.Add(new ProductionNode(
+            rotatedLeft,
+            leftBackTitle,
+            ProductionNodeKind.Rotate,
+            row + 3,
+            details.Left.Result));
+
+        nodes.Add(new ProductionNode(
+            rotatedRight,
+            rightBackTitle,
+            ProductionNodeKind.Rotate,
+            row + 3,
+            details.Right.Result));
+
+        // 第 5 行：末次交换的产物与废料。
+        nodes.Add(new ProductionNode(
+            target,
+            isRoot ? "交换得到目标图形" : "交换得到中间图形",
+            isRoot
+                ? ProductionNodeKind.Target
+                : ProductionNodeKind.Exchange,
+            row + 4,
+            details.Product));
+
+        nodes.Add(new ProductionNode(
+            wasteFinal,
+            "废料",
+            ProductionNodeKind.Waste,
+            row + 4,
+            details.Waste));
+
+        edges.Add(new ProductionEdge(p1, rp1));
+        edges.Add(new ProductionEdge(p2, rp2));
+        edges.Add(new ProductionEdge(p3, rp3));
+        edges.Add(new ProductionEdge(p4, rp4));
+
+        edges.Add(new ProductionEdge(rp1, exchangeLeft));
+        edges.Add(new ProductionEdge(rp2, exchangeLeft));
+        edges.Add(new ProductionEdge(rp3, exchangeRight));
+        edges.Add(new ProductionEdge(rp4, exchangeRight));
+
+        edges.Add(new ProductionEdge(exchangeLeft, rotatedLeft));
+        edges.Add(new ProductionEdge(exchangeLeft, wasteLeft));
+        edges.Add(new ProductionEdge(exchangeRight, rotatedRight));
+        edges.Add(new ProductionEdge(exchangeRight, wasteRight));
+
+        edges.Add(new ProductionEdge(rotatedLeft, target));
+        edges.Add(new ProductionEdge(rotatedRight, target));
+
+        edges.Add(new ProductionEdge(target, wasteFinal));
+
+        return (target, row + 5);
     }
 
-    /// <summary>
-    /// 稳定性判定，走本次解析共享的缓存。
-    /// <paramref name="contentStart"/> 是该片的起始列，用于旋转归一化缓存键。
-    /// </summary>
-    private static bool IsStable(
-        ShapeDocument shape,
-        StabilityCache cache,
-        int contentStart)
-    {
-        return cache.IsStable(shape, contentStart);
-    }
+    #endregion
 }

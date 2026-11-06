@@ -1,5 +1,8 @@
 # 制作路径：交换的旋转与柱子规则（规格草案）
 
+> **⚠️ 本文件已并入 [`production-path-spec.md`](production-path-spec.md)**：交换链部分对应那份文档的 §4。
+> 这里保留作推导过程的历史记录；两者冲突时以 `production-path-spec.md` 为准。
+
 > 状态：**交换阶段已定稿**，顶针/堆叠阶段待定。
 > 依据：`docs/production-path-exchange-prompt.md` 的两个样例 + 6 象限已确认样例
 > （`docs/analysis-production-path.md`）+ 开发者的两条口头约定。

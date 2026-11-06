@@ -20,7 +20,7 @@ public sealed class ProductionPathGraphNode
 
     public ProductionNodeKind Kind { get; init; }
 
-    /// <summary>层号：1–5，与 Core 的 <see cref="ProductionNode.Row"/> 一致。</summary>
+    /// <summary>层号：从 1 开始，纯交换路径为 1–5，顶针/堆叠会继续追加。</summary>
     public int Row { get; init; }
 
     public double X { get; set; }
@@ -72,7 +72,7 @@ public sealed record ProductionPathGraphEdge(
 /// <summary>
 /// 制作路径节点图的排布结果。
 ///
-/// 按 <see cref="ProductionNode.Row"/> 分层（1–5），每层内节点按 Core 给出的
+/// 按 <see cref="ProductionNode.Row"/> 分层（从 1 开始，不一定连续），每层内节点按 Core 给出的
 /// 顺序从左到右紧排；层与层之间固定留 80px，整张图按所有层里最宽的一层确定
 /// 宽度，较窄的层水平居中。第 5 行的目标图形单独居中，废料排在它右侧。
 /// </summary>

@@ -23,7 +23,7 @@ public sealed class ProductionPathNodeBox
     /// <summary>Core 给出的节点（标题、类型、层号、图形）。</summary>
     public ProductionNode Node { get; }
 
-    /// <summary>层号 1–5，与 <see cref="ProductionNode.Row"/> 一致。</summary>
+    /// <summary>层号：从 1 开始，纯交换路径为 1–5，顶针/堆叠会继续追加。</summary>
     public int Row => Node.Row;
 
     public double X { get; set; }
@@ -42,7 +42,7 @@ public sealed class ProductionPathNodeBox
     /// <summary>交换的另一路输出，画成淡显的废料。</summary>
     public bool IsWaste => Node.Kind == ProductionNodeKind.Waste;
 
-    /// <summary>顶针与堆叠（尚未接入）。</summary>
+    /// <summary>旧骨架的占位节点（新路径不再产生）。</summary>
     public bool IsPending => Node.Kind == ProductionNodeKind.Pending;
 }
 
@@ -59,9 +59,9 @@ public sealed record ProductionPathEdge(
 /// <summary>
 /// 制作路径的分层节点图排布。
 ///
-/// 按 <see cref="ProductionNode.Row"/> 分层（1–5），每层内节点按 Core 给出的
+/// 按 <see cref="ProductionNode.Row"/> 分层（从 1 开始，不一定连续），每层内节点按 Core 给出的
 /// 顺序从左到右紧排，层与层之间固定留 80；整张图按最宽的一层确定宽度，
-/// 较窄的层水平居中。第 5 行的目标图形单独居中，废料排在它右侧。
+/// 较窄的层水平居中。含目标图形的层把目标单独居中，废料排在它右侧。
 ///
 /// 这里只算几何，不建控件：整张图由一个 <see cref="ProductionPathGraphDrawable"/>
 /// 一次画完，节点再多也不会创建大量 GraphicsView。

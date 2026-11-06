@@ -22,16 +22,26 @@ public enum ProductionNodeKind
     /// <summary>交换的副产物（废料）。</summary>
     Waste,
 
-    /// <summary>顶针与堆叠（尚未接入）。</summary>
-    Pending
+    /// <summary>旧骨架的占位值，保留以兼容现有调用；新路径不再产生。</summary>
+    Pending,
+
+    /// <summary>顶针：把内层产物整体上移一层。</summary>
+    Pin,
+
+    /// <summary>堆叠：在内层产物上压一块 hybrid。</summary>
+    Stack,
+
+    /// <summary>可独立制作的 hybrid 块。</summary>
+    Block
 }
 
 /// <summary>
 /// 制作路径节点图里的一个节点。
 ///
-/// <see cref="Row"/> 是从 1 开始的分层号：
-/// 1 = 带柱子的半半边，2 = 预旋转结果，3 = 两边交换（含废料），
-/// 4 = 交换后转回的两个半边，5 = 末端交换的目标图形与废料。
+/// <see cref="Row"/> 是从 1 开始的分层号，不一定连续：
+/// 纯交换路径仍是 1–5（1 = 带柱子的半半边，2 = 预旋转结果，3 = 两边交换（含废料），
+/// 4 = 交换后转回的两个半边，5 = 末端交换的目标图形与废料）；
+/// 顶针 / 堆叠会继续追加 6、7、…… 层。
 /// <see cref="Shape"/> 是该节点展示的图形，废料节点同样带图形。
 /// </summary>
 public sealed record ProductionNode(

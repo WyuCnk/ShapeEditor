@@ -19,8 +19,17 @@ public enum ProductionStepKind
     /// <summary>交换得到目标图形。</summary>
     Target,
 
-    /// <summary>顶针与堆叠（尚未接入）。</summary>
-    Pending
+    /// <summary>顶针与堆叠（旧骨架的占位值，保留以兼容现有调用）。</summary>
+    Pending,
+
+    /// <summary>顶针。</summary>
+    Pin,
+
+    /// <summary>堆叠。</summary>
+    Stack,
+
+    /// <summary>堆叠用的可制作块。</summary>
+    Block
 }
 
 /// <summary>

@@ -123,27 +123,75 @@ internal static class Program
             ("物理:切割保持象限数", PhysicsTests.CutKeepsPartCount),
             ("物理:切割破碎跨线晶体", PhysicsTests.CutBreaksSpanningCrystal),
             ("物理:奇数象限被拒", PhysicsTests.OddPartCountIsRejected),
-            ("物理:象限数取偶", PhysicsTests.NormalizePartCountRoundsUpToEven)
+            ("物理:象限数取偶", PhysicsTests.NormalizePartCountRoundsUpToEven),
+
+            // 交接规格 §5 的 9 组验收语料。
+            ("语料1:角判据计数 4..12688", ProductionPathAcceptanceTests.AngleCriterionCounts),
+            ("语料2:论文举例列与 n=4 的 S 判定", ProductionPathAcceptanceTests.PaperExampleColumns),
+            ("语料3:n=6 2 层 {.,T,c} 全枚举", ProductionPathAcceptanceTests.TwoLayerEnumeration),
+            ("语料4:n=6 3 层 {.,T} 全枚举", ProductionPathAcceptanceTests.ThreeLayerBinaryEnumeration),
+            ("语料5:n=6 3 层 {.,T,c} 固定种子抽样", ProductionPathAcceptanceTests.ThreeLayerRandomSample),
+            ("语料6:claw 中间事实", ProductionPathAcceptanceTests.ClawIntermediateFacts),
+            ("语料6:claw 完整路径（xfail）", ProductionPathAcceptanceTests.ClawShouldBeProducible),
+            ("语料7:二择 stability table", ProductionPathAcceptanceTests.TwoChoiceStabilityTable),
+            ("语料7:二择 完整路径（xfail）", ProductionPathAcceptanceTests.TwoChoiceShouldBeProducible),
+            ("语料8:n=6 交换链逐格复现", ProductionPathAcceptanceTests.SixQuadrantExchangeChain),
+            ("语料9:n=8 交换链逐格复现", ProductionPathAcceptanceTests.EightQuadrantExchangeChain),
+            ("解析器:节点链含堆叠/目标", ProductionPathAcceptanceTests.ParserEmitsOperationChain),
+            ("解析器:结论分级", ProductionPathAcceptanceTests.ParserClassifiesOutcomes)
+        };
+
+        /*
+         * 规格 §5 第 6、7 组明确标注为 xfail：
+         * TowerFill 只做直接填充、HybridStrips 只拆单顶针，完整路径尚未覆盖。
+         * 这里把它们标成预期失败；将来实现抬升/回溯后，测试会打印 XPASS。
+         */
+        var expectedFailures = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "语料6:claw 完整路径（xfail）",
+            "语料7:二择 完整路径（xfail）"
         };
 
         int failed = 0;
+
+        int expectedFailCount = 0;
 
         Stopwatch stopwatch = Stopwatch.StartNew();
 
         foreach ((string name, Action run) in tests)
         {
+            bool expectedFailure = expectedFailures.Contains(name);
+
             try
             {
                 run();
 
-                Console.WriteLine($"  PASS  {name}");
+                if (expectedFailure)
+                {
+                    Console.WriteLine($"  XPASS {name}");
+                    Console.WriteLine("        预期失败但通过了，请移除 xfail 标记");
+                }
+                else
+                {
+                    Console.WriteLine($"  PASS  {name}");
+                }
             }
             catch (Exception exception)
             {
-                failed++;
+                if (expectedFailure)
+                {
+                    expectedFailCount++;
 
-                Console.WriteLine($"  FAIL  {name}");
-                Console.WriteLine($"        {exception.Message}");
+                    Console.WriteLine($"  XFAIL {name}");
+                    Console.WriteLine($"        {exception.Message}");
+                }
+                else
+                {
+                    failed++;
+
+                    Console.WriteLine($"  FAIL  {name}");
+                    Console.WriteLine($"        {exception.Message}");
+                }
             }
         }
 
@@ -151,7 +199,11 @@ internal static class Program
 
         Console.WriteLine();
         Console.WriteLine(
-            $"{tests.Length - failed}/{tests.Length} 通过，用时 {stopwatch.ElapsedMilliseconds} ms");
+            $"{tests.Length - failed}/{tests.Length} 通过" +
+            (expectedFailCount > 0
+                ? $"（其中 {expectedFailCount} 项是规格标注的 XFAIL）"
+                : string.Empty) +
+            $"，用时 {stopwatch.ElapsedMilliseconds} ms");
 
         return failed == 0 ? 0 : 1;
     }

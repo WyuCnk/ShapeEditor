@@ -521,7 +521,9 @@ internal static class AnalysisTests
     }
 
     /// <summary>
-    /// 规格 §6.3：n = 2 时 half = 1，没有合法切点，不可制作。
+    /// n = 2 时 half = 1，交换链没有合法切点。
+    /// 旧骨架直接判失败；新解析器按规格 §5.2 把它归为「未覆盖」，
+    /// 而不是「不可制作」（见 ProductionPathAcceptanceTests.ParserClassifiesOutcomes）。
     /// </summary>
     public static void ProductionPathTwoQuadrantsIsImpossible()
     {
