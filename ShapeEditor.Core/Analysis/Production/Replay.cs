@@ -39,6 +39,13 @@ public static class Replay
         {
             case RecipeKind.Exchange:
             {
+                // n = 2 没有交换切点，按定理 5 单独回放孤立列拼装。
+                if (recipe.Shape.PartCount == 2)
+                {
+                    VerifyTwoQuadrants(recipe.Shape, errors);
+                    break;
+                }
+
                 if (!ExchangeChain.TryBuild(
                         recipe.Shape,
                         out Recipe? rebuilt) ||
@@ -103,6 +110,41 @@ public static class Replay
             default:
                 errors.Add("未知的工序类型。");
                 break;
+        }
+    }
+
+    /// <summary>
+    /// n = 2 的孤立列拼装回放（定理 5）：
+    /// 两列都必须通过定理 4（孤立列判据），
+    /// 两个单列半边送入交换后必须恰好得到目标。
+    /// </summary>
+    private static void VerifyTwoQuadrants(
+        ShapeDocument shape,
+        List<string> errors)
+    {
+        if (!IsolatedColumn.IsIsolatedColumn(shape, 0) ||
+            !IsolatedColumn.IsIsolatedColumn(shape, 1))
+        {
+            errors.Add("n=2 有一列不满足定理 4（孤立列判据）。");
+            return;
+        }
+
+        ShapeDocument leftHalf = ShapeOps.Project(shape, 0, 1);
+        ShapeDocument rightHalf = ShapeOps.Project(shape, 1, 1);
+
+        if (!ShapeOps.IsStable(leftHalf) ||
+            !ShapeOps.IsStable(rightHalf))
+        {
+            errors.Add("n=2 的孤立列半边不稳定。");
+            return;
+        }
+
+        (ShapeDocument? _, ShapeDocument? output, _) =
+            ShapeExchange.Exchange(leftHalf, rightHalf);
+
+        if (!ShapeOps.Same(output, shape))
+        {
+            errors.Add("n=2 交换回放失败。");
         }
     }
 

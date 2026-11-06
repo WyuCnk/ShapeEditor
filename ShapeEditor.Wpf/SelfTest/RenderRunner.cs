@@ -620,7 +620,8 @@ public static class RenderRunner
                  initialGraph.Edges.Count == productionPath.Path.Edges.Count);
 
             /*
-             * 4 象限样例：16 节点 / 15 条边，按层分布 4/4/4/2/2，
+             * 4 象限样例：接入顶针/堆叠后为 19 节点 / 18 条边，
+             * 按层分布 4/4/4/2/2/1/1/1（新增 Block / Stack 行），
              * 3 个废料节点（含末端废料）与 3 条废料箭头。
              */
             string rowDistribution = initialGraph is null
@@ -634,9 +635,9 @@ public static class RenderRunner
 
             bool graphLayoutReady =
                 initialGraph is not null &&
-                initialPathNodeCount == 16 &&
-                initialPathEdgeCount == 15 &&
-                rowDistribution == "4/4/4/2/2" &&
+                initialPathNodeCount == 19 &&
+                initialPathEdgeCount == 18 &&
+                rowDistribution == "4/4/4/2/2/1/1/1" &&
                 initialGraph.Nodes.Count(node => node.IsWaste) == 3 &&
                 initialGraph.Edges.Count(edge => edge.IsWaste) == 3 &&
                 initialGraph.Nodes.All(node => node.Preview is not null);

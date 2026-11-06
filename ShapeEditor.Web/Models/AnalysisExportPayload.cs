@@ -43,6 +43,12 @@ public sealed class AnalysisExportSection
     public List<string> Lines { get; set; } = new();
 
     /// <summary>
+    /// 板块的补充说明，由 JS 用更小的字号画在正文行之后。
+    /// 目前用于制作路径的「未覆盖」提示（这并不代表不可制作）。
+    /// </summary>
+    public List<string> Notes { get; set; } = new();
+
+    /// <summary>
     /// 板块的表格数据，为 null 时该板块按 <see cref="Lines"/> 画成纯文本。
     /// 同时存在文本行与表格时，先画文本行（作为说明），再画表格。
     /// </summary>
@@ -106,6 +112,12 @@ public sealed class AnalysisExportGraphNode
     public bool IsWaste { get; set; }
 
     public bool IsPending { get; set; }
+
+    /// <summary>节点类型：pin / stack / block；其余节点为空。</summary>
+    public string Kind { get; set; } = "";
+
+    /// <summary>右上角类型小标签：顶P / 堆 / 块；其余节点为空。</summary>
+    public string KindTag { get; set; } = "";
 }
 
 /// <summary>

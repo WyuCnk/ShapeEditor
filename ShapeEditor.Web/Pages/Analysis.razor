@@ -2,6 +2,7 @@
 
 @using System.Globalization
 @using ShapeEditor.Core.Analysis
+@using ShapeEditor.Core.Analysis.Production
 @using ShapeEditor.Core.Physics
 @using ShapeEditor.Core.Models
 @using ShapeEditor.Core.Services
@@ -299,12 +300,16 @@
                                     @if (_showPathExchange)
                                     {
                                         <p class="analysis-summary">
-                                            @(_path is null
-                                                ? "无法解析。"
-                                                : (_path.IsProducible
-                                                    ? $"可制作：方向 {_path.Path!.Direction}（{(_path.Path.DirectionLegal ? "合法方向" : "不合法方向")}）。"
-                                                    : $"不可制作：{_path.Error}"))
+                                            @PathSummaryText
                                         </p>
+
+                                        @* 未覆盖不是不可制作：用小字明确提示，避免被当成 bug。 *@
+                                        @if (PathOutcomeNote is not null)
+                                        {
+                                            <p class="analysis-note">
+                                                @PathOutcomeNote
+                                            </p>
+                                        }
 
                                         @if (_path is not null && _path.Path is not null)
                                         {
@@ -334,9 +339,15 @@
 
                                                         @foreach (ProductionPathGraphNode node in _pathGraph.Nodes)
                                                         {
-                                                            <div class="graph-node path-node @(node.IsResult ? "result" : "") @(node.IsWaste ? "waste" : "") @(node.IsPending ? "pending" : "")"
+                                                            <div class="graph-node path-node @(node.IsResult ? "result" : "") @(node.IsWaste ? "waste" : "") @(node.IsPending ? "pending" : "") @node.KindClass"
                                                                  data-node-id="@node.Id"
                                                                  style="left:@Px(node.X)px;top:@Px(node.Y)px;width:@Px(node.Width)px;height:@Px(node.Height)px">
+
+                                                                @* 顶针 / 堆叠 / 块：右上角类型小标签。 *@
+                                                                @if (node.HasKindTag)
+                                                                {
+                                                                    <span class="path-node-kind">@node.KindTag</span>
+                                                                }
 
                                                                 <div class="path-node-head" title="@node.Title">
                                                                     @node.Title
@@ -358,9 +369,11 @@
                                                 </div>
 
                                                 <p class="analysis-note">
-                                                    节点按 5 层从上到下排列，同层节点从左到右紧排，层间固定留 80px 画箭头；
+                                                    节点按层从上到下排列，同层节点从左到右紧排，层间固定留 80px 画箭头；
+                                                    行数由制作路径决定（顶针 / 堆叠 / 块会追加新层）。
                                                     预览保持 30px 单元格原始尺寸，图形较宽或较高时容器可横纵滚动。
-                                                    废料节点淡显、虚线边框，指向废料的箭头为灰色虚线。
+                                                    废料节点淡显、虚线边框，指向废料的箭头为灰色虚线；
+                                                    顶针、堆叠、块分别用青绿 / 橙 / 绿边框与「顶P」「堆」「块」小标签区分。
                                                 </p>
                                             }
                                         }
@@ -428,6 +441,40 @@
 
     private readonly ShortCodeExporter Exporter = new();
 
+    /// <summary>
+    /// 制作路径的主结论，按三态显示：
+    /// 可制作给方向；不可制作说明存在不合法角；未覆盖说明超出算法覆盖范围。
+    /// </summary>
+    private string PathSummaryText
+    {
+        get
+        {
+            if (_path is null)
+            {
+                return "无法解析。";
+            }
+
+            if (_path.IsProducible && _path.Path is not null)
+            {
+                return $"可制作：方向 {_path.Path.Direction}" +
+                       $"（{(_path.Path.DirectionLegal ? "合法方向" : "不合法方向")}）。";
+            }
+
+            if (_path.Outcome == PipelineOutcome.Uncovered)
+            {
+                return "暂不支持解析：该图形的制作路径超出当前算法覆盖范围。";
+            }
+
+            return "不可制作：存在不合法角。";
+        }
+    }
+
+    /// <summary>未覆盖时的小字说明；其余状态为 null，不渲染。</summary>
+    private string? PathOutcomeNote =>
+        _path?.Outcome == PipelineOutcome.Uncovered
+            ? "这并不代表不可制作。"
+            : null;
+
     private List<string> BuildPathLines()
     {
         var lines = new List<string>();
@@ -441,7 +488,12 @@
 
         if (!_path.IsProducible || _path.Path is null)
         {
-            lines.Add("不可制作：" + _path.Error);
+            lines.Add(PathSummaryText);
+
+            if (PathOutcomeNote is not null)
+            {
+                lines.Add(PathOutcomeNote);
+            }
 
             return lines;
         }
@@ -650,7 +702,7 @@
 
     /// <summary>
     /// 制作路径的交换工序板块。可制作时导出成与页面相同的节点图（按实际尺寸整张输出，
-    /// 预览不缩放、不分片）；不可制作时退回文本原因。
+    /// 预览不缩放、不分片）；不可制作 / 未覆盖时退回对应文本。
     /// </summary>
     private AnalysisExportSection BuildPathSection()
     {
@@ -662,6 +714,14 @@
         if (_path is null || _path.Path is null || _pathGraph is null)
         {
             section.Lines = BuildPathLines();
+
+            // 未覆盖的小字说明单独交给 JS 用小字号绘制。
+            if (PathOutcomeNote is not null)
+            {
+                section.Lines.Remove(PathOutcomeNote);
+
+                section.Notes.Add(PathOutcomeNote);
+            }
 
             return section;
         }
@@ -692,7 +752,9 @@
                     : ShapeCanvasState.Create(node.Shape),
                 IsResult = node.IsResult,
                 IsWaste = node.IsWaste,
-                IsPending = node.IsPending
+                IsPending = node.IsPending,
+                Kind = node.KindName,
+                KindTag = node.KindTag
             });
         }
 

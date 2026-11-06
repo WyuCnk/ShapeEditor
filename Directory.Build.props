@@ -12,7 +12,7 @@
 	  注意版本号必须是三段（major.minor.patch）。
 	-->
 	<PropertyGroup>
-		<ProductVersion>1.4.1</ProductVersion>
+		<ProductVersion>1.5.0</ProductVersion>
 
 		<Version>$(ProductVersion)</Version>
 

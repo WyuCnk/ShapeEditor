@@ -35,6 +35,21 @@ public sealed class ProductionPathGraphDrawable : IDrawable
 
     private static readonly Color PendingStroke = Color.FromArgb("#D9D4E8");
 
+    /// <summary>顶针工序：青绿色边框与标签。</summary>
+    private static readonly Color PinAccent = Color.FromArgb("#0E7C86");
+
+    private static readonly Color PinBackground = Color.FromArgb("#F2FBFB");
+
+    /// <summary>堆叠工序：橙色边框与标签。</summary>
+    private static readonly Color StackAccent = Color.FromArgb("#B26A00");
+
+    private static readonly Color StackBackground = Color.FromArgb("#FFF8EE");
+
+    /// <summary>hybrid 块：绿色边框与标签。</summary>
+    private static readonly Color BlockAccent = Color.FromArgb("#2E7D32");
+
+    private static readonly Color BlockBackground = Color.FromArgb("#F3FBF4");
+
     private static readonly Color Accent = Color.FromArgb("#512BD4");
 
     private static readonly Color WasteLine = Color.FromArgb("#9A9AA5");
@@ -64,6 +79,17 @@ public sealed class ProductionPathGraphDrawable : IDrawable
     private const float ArrowHalfWidth = 5f;
 
     private const float NodeCornerRadius = 10f;
+
+    /// <summary>右上角类型标签的尺寸与字号（顶P / 堆 / 块）。</summary>
+    private const float KindTagWidth = 22f;
+
+    private const float KindTagHeight = 14f;
+
+    private const float KindTagTop = 6f;
+
+    private const float KindTagRight = 6f;
+
+    private const float KindTagFontSize = 9f;
 
     private readonly ProductionPathGraphLayout _layout;
 
@@ -134,7 +160,13 @@ public sealed class ProductionPathGraphDrawable : IDrawable
                 ? PendingBackground
                 : node.IsTarget
                     ? TargetBackground
-                    : NodeBackground;
+                    : node.IsPin
+                        ? PinBackground
+                        : node.IsStack
+                            ? StackBackground
+                            : node.IsBlock
+                                ? BlockBackground
+                                : NodeBackground;
 
         Color stroke = node.IsWaste
             ? WasteStroke
@@ -142,7 +174,13 @@ public sealed class ProductionPathGraphDrawable : IDrawable
                 ? PendingStroke
                 : node.IsTarget
                     ? TargetStroke
-                    : NodeStroke;
+                    : node.IsPin
+                        ? PinAccent
+                        : node.IsStack
+                            ? StackAccent
+                            : node.IsBlock
+                                ? BlockAccent
+                                : NodeStroke;
 
         canvas.SaveState();
 
@@ -156,6 +194,11 @@ public sealed class ProductionPathGraphDrawable : IDrawable
             NodeCornerRadius);
 
         DrawTitle(canvas, node);
+
+        if (node.HasKindTag)
+        {
+            DrawKindTag(canvas, node);
+        }
 
         if (node.Node.Shape is ShapeDocument shape)
         {
@@ -215,7 +258,10 @@ public sealed class ProductionPathGraphDrawable : IDrawable
         // 边框最后画：压住预览的格线，让圆角与虚线保持完整。
         canvas.StrokeColor = stroke;
 
-        canvas.StrokeSize = 1;
+        // 顶针 / 堆叠 / 块用更醒目的 2px 边框；其余保持 1px。
+        canvas.StrokeSize = node.IsPin || node.IsStack || node.IsBlock
+            ? 2
+            : 1;
 
         if (node.IsWaste || node.IsPending)
         {
@@ -240,7 +286,10 @@ public sealed class ProductionPathGraphDrawable : IDrawable
     {
         string title = node.Node.Title;
 
-        float maxWidth = (float)node.Width - TitlePadding * 2;
+        // 右上角有类型标签时给标题让出空间，避免压住「顶P / 堆 / 块」。
+        float maxWidth = (float)node.Width -
+                         TitlePadding * 2 -
+                         (node.HasKindTag ? KindTagWidth + 4 : 0);
 
         if (string.IsNullOrWhiteSpace(title) || maxWidth <= 0)
         {
@@ -273,6 +322,55 @@ public sealed class ProductionPathGraphDrawable : IDrawable
 
             y += TitleLineHeight;
         }
+    }
+
+    /// <summary>
+    /// 画节点右上角的类型小标签（顶P / 堆 / 块）。
+    /// 与 WPF / Web 一致：顶针青绿、堆叠橙、块绿。
+    /// </summary>
+    private static void DrawKindTag(
+        ICanvas canvas,
+        ProductionPathNodeBox node)
+    {
+        Rect bounds = node.Bounds;
+
+        Color accent = node.IsPin
+            ? PinAccent
+            : node.IsStack
+                ? StackAccent
+                : BlockAccent;
+
+        float x = (float)(bounds.Right - KindTagRight - KindTagWidth);
+
+        float y = (float)(bounds.Y + KindTagTop);
+
+        canvas.SaveState();
+
+        canvas.FillColor = accent;
+
+        canvas.FillRoundedRectangle(
+            x,
+            y,
+            KindTagWidth,
+            KindTagHeight,
+            6);
+
+        canvas.Font = GraphicsFont.DefaultBold;
+
+        canvas.FontSize = KindTagFontSize;
+
+        canvas.FontColor = Colors.White;
+
+        canvas.DrawString(
+            node.KindTag,
+            x,
+            y,
+            KindTagWidth,
+            KindTagHeight,
+            HorizontalAlignment.Center,
+            VerticalAlignment.Center);
+
+        canvas.RestoreState();
     }
 
     /// <summary>

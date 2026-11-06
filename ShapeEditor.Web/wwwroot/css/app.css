@@ -2463,6 +2463,59 @@ button {
     background: #fcfcfd;
 }
 
+/*
+ * 制作路径的特殊工序节点：顶针 / 堆叠 / 块。
+ * 除边框与底色外，右上角再放一个很小的类型标签，保证一眼能区分。
+ */
+.path-node.kind-pin {
+    border-color: #0e7c86;
+    border-width: 2px;
+    background: #f2fbfb;
+}
+
+.path-node.kind-stack {
+    border-color: #b26a00;
+    border-width: 2px;
+    background: #fff8ee;
+}
+
+.path-node.kind-block {
+    border-color: #2e7d32;
+    border-width: 2px;
+    background: #f3fbf4;
+}
+
+/* 类型标签绝对定位在卡片右上角，不参与节点内的纵向布局 */
+.path-node-kind {
+    position: absolute;
+    top: 5px;
+    right: 6px;
+    padding: 1px 4px;
+    border-radius: 6px;
+    background: #0e7c86;
+    color: #ffffff;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 12px;
+    letter-spacing: 0.5px;
+    pointer-events: none;
+}
+
+.path-node.kind-stack .path-node-kind {
+    background: #b26a00;
+}
+
+.path-node.kind-block .path-node-kind {
+    background: #2e7d32;
+}
+
+/* 给右上角标签让出空间，标题最多两行，不会压到标签 */
+.path-node.kind-pin .path-node-head,
+.path-node.kind-stack .path-node-head,
+.path-node.kind-block .path-node-head {
+    padding-right: 26px;
+}
+
 /* 固定 30px 单元格，由 JS 按 DPR 设置画布后备尺寸 */
 .path-preview-canvas {
     display: block;

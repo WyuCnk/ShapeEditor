@@ -383,6 +383,11 @@
                                         <Label x:Name="PathSummaryLabel"
                                                Style="{StaticResource BodyText}" />
 
+                                        <!-- 未覆盖时的小字说明：这并不代表不可制作 -->
+                                        <Label x:Name="PathOutcomeNoteLabel"
+                                               Style="{StaticResource MutedText}"
+                                               IsVisible="False" />
+
                                         <!-- 节点图容器：横纵都可滚动 -->
                                         <Border x:Name="PathGraphBox"
                                                 BackgroundColor="#FBFAFF"
@@ -403,7 +408,7 @@
                                         </Border>
 
                                         <Label x:Name="PathGraphNote"
-                                               Text="节点按 5 层从上到下排列，同层节点从左到右紧排，层间固定留 80 画箭头；预览保持 30 像素单元格原始尺寸，图形较宽或较高时容器可横纵滚动。废料节点淡显、虚线边框，指向废料的箭头为灰色虚线。"
+                                               Text="节点按层从上到下排列，同层节点从左到右紧排，层间固定留 80 画箭头；行数由制作路径决定（顶针 / 堆叠 / 块会追加新层）。预览保持 30 像素单元格原始尺寸，图形较宽或较高时容器可横纵滚动。废料节点淡显、虚线边框，指向废料的箭头为灰色虚线；顶针、堆叠、块分别用青绿 / 橙 / 绿边框与「顶P」「堆」「块」小标签区分。"
                                                Style="{StaticResource MutedText}" />
                                     </VerticalStackLayout>
                                 </VerticalStackLayout>

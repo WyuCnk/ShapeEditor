@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using ShapeEditor.Core.Analysis;
+using ShapeEditor.Core.Analysis.Production;
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Services;
 
@@ -521,22 +522,26 @@ internal static class AnalysisTests
     }
 
     /// <summary>
-    /// n = 2 时 half = 1，交换链没有合法切点。
-    /// 旧骨架直接判失败；新解析器按规格 §5.2 把它归为「未覆盖」，
-    /// 而不是「不可制作」（见 ProductionPathAcceptanceTests.ParserClassifiesOutcomes）。
+    /// n = 2 的可分判据（定理 5）：两列都必须通过孤立列判据（定理 4）。
+    /// 规格 §7 的反例：底层 <c>T.</c>、顶层 <c>TT</c>，右列 <c>.T</c> 会失去左列支撑下落，
+    /// 因此不可分；两列本身都通过五项条件，所以只能报「未覆盖」，不能报「不可制作」。
     /// </summary>
     public static void ProductionPathTwoQuadrantsIsImpossible()
     {
-        var document = new ShapeDocument(1, 2);
+        var document = new ShapeDocument(2, 2);
 
-        document[0, 0] = ShapeCell.Crystal('r');
-        document[0, 1] = ShapeCell.Crystal('g');
+        document[0, 0] = ShapeCell.Shape('C', 'u');
+        document[1, 0] = ShapeCell.Shape('C', 'u');
+
+        document[0, 1] = ShapeCell.Empty();
+        document[1, 1] = ShapeCell.Shape('C', 'u');
 
         ProductionPathResult result = ProductionPathParser.Parse(document);
 
-        Assert.False(result.IsProducible, "n = 2 不应可制作");
+        Assert.False(result.IsProducible, "n = 2 的反例不应可制作");
         Assert.True(result.Path is null);
         Assert.True(result.Error is not null);
+        Assert.Equal(PipelineOutcome.Uncovered, result.Outcome);
     }
 
     /// <summary>

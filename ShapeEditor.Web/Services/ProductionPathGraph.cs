@@ -37,6 +37,45 @@ public sealed class ProductionPathGraphNode
     public bool IsWaste => Kind == ProductionNodeKind.Waste;
 
     public bool IsPending => Kind == ProductionNodeKind.Pending;
+
+    /// <summary>顶针工序：青绿色边框 + 右上角「顶P」标签。</summary>
+    public bool IsPin => Kind == ProductionNodeKind.Pin;
+
+    /// <summary>堆叠工序：橙色边框 + 右上角「堆」标签。</summary>
+    public bool IsStack => Kind == ProductionNodeKind.Stack;
+
+    /// <summary>可独立制作的 hybrid 块：绿色边框 + 右上角「块」标签。</summary>
+    public bool IsBlock => Kind == ProductionNodeKind.Block;
+
+    /// <summary>是否有类型小标签；只有顶针 / 堆叠 / 块需要。</summary>
+    public bool HasKindTag => KindTag.Length > 0;
+
+    /// <summary>类型小标签文本，其余节点为空。</summary>
+    public string KindTag => Kind switch
+    {
+        ProductionNodeKind.Pin => "顶P",
+        ProductionNodeKind.Stack => "堆",
+        ProductionNodeKind.Block => "块",
+        _ => ""
+    };
+
+    /// <summary>节点类型对应的样式类名，其余节点为空。</summary>
+    public string KindClass => Kind switch
+    {
+        ProductionNodeKind.Pin => "kind-pin",
+        ProductionNodeKind.Stack => "kind-stack",
+        ProductionNodeKind.Block => "kind-block",
+        _ => ""
+    };
+
+    /// <summary>节点类型标识，供导出图选择边框色：pin / stack / block。</summary>
+    public string KindName => Kind switch
+    {
+        ProductionNodeKind.Pin => "pin",
+        ProductionNodeKind.Stack => "stack",
+        ProductionNodeKind.Block => "block",
+        _ => ""
+    };
 }
 
 /// <summary>
@@ -57,8 +96,9 @@ public sealed record ProductionPathGraphEdge(
 /// 制作路径节点图的排布结果。
 ///
 /// 按 <see cref="ProductionNode.Row"/> 分层（从 1 开始，不一定连续），每层内节点按 Core 给出的
-/// 顺序从左到右紧排；层与层之间固定留 80px，整张图按所有层里最宽的一层确定
-/// 宽度，较窄的层水平居中。第 5 行的目标图形单独居中，废料排在它右侧。
+/// 顺序从左到右紧排；层与层之间固定留 80px，行数由 Core 决定（顶针 / 堆叠 / 块会追加新层），
+/// 整张图按所有层里最宽的一层确定宽度，较窄的层水平居中。
+/// 含目标图形的层把目标放在中线上，废料排在它右侧。
 /// </summary>
 public sealed class ProductionPathGraph
 {
@@ -127,12 +167,19 @@ public sealed class ProductionPathGraph
             return null;
         }
 
-        // 每层先按实际宽度紧排，最宽的一层决定整张图的宽度。
-        var rowWidths = rows
+        /*
+         * 每层先按实际宽度紧排，最宽的一层决定整张图的宽度。
+         * 含目标图形的层会把目标单独居中、左右节点向外展开，
+         * 展开后的实际宽度可能比紧排更宽，所以这里再按目标层补一次宽度，
+         * 避免目标层越出画布。行数由 Core 决定，这里不假设固定 5 层。
+         */
+        double contentWidth = rows
             .Select(RowWidth)
-            .ToList();
+            .Max();
 
-        double contentWidth = rowWidths.Max();
+        contentWidth = Math.Max(
+            contentWidth,
+            rows.Select(TargetRowWidth).DefaultIfEmpty(0).Max());
 
         double contentHeight = rows
             .Select(RowHeight)
@@ -199,6 +246,51 @@ public sealed class ProductionPathGraph
         return width;
     }
 
+    /// <summary>
+    /// 含目标图形的层的实际宽度。
+    ///
+    /// 目标居中后左右两侧的节点向外展开，整层宽度取左右两翼中较长的一翼，
+    /// 不居中（没有目标）的层仍按紧排宽度。
+    /// </summary>
+    private static double TargetRowWidth(
+        IReadOnlyList<ProductionPathGraphNode> row)
+    {
+        int targetIndex = -1;
+
+        for (int index = 0; index < row.Count; index++)
+        {
+            if (row[index].Kind == ProductionNodeKind.Target)
+            {
+                targetIndex = index;
+
+                break;
+            }
+        }
+
+        if (targetIndex < 0)
+        {
+            return RowWidth(row);
+        }
+
+        ProductionPathGraphNode target = row[targetIndex];
+
+        double leftExtent = target.Width / 2;
+
+        for (int index = 0; index < targetIndex; index++)
+        {
+            leftExtent += ColumnGap + row[index].Width;
+        }
+
+        double rightExtent = target.Width / 2;
+
+        for (int index = targetIndex + 1; index < row.Count; index++)
+        {
+            rightExtent += ColumnGap + row[index].Width;
+        }
+
+        return Math.Max(leftExtent, rightExtent) * 2;
+    }
+
     private static double RowHeight(
         IReadOnlyList<ProductionPathGraphNode> row)
     {
@@ -215,7 +307,7 @@ public sealed class ProductionPathGraph
     /// <summary>
     /// 放置一层节点。
     ///
-    /// 普通层水平居中；第 5 行若含目标图形，则把目标图形放在整张图的中线上，
+    /// 普通层水平居中；含目标图形的层把目标放在整张图的中线上，
     /// 废料依次排在它右侧，让两条来自旋转后半边的箭头对称地汇入目标。
     /// </summary>
     private static void PlaceRow(

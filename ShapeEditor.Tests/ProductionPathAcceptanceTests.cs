@@ -736,7 +736,7 @@ internal static class ProductionPathAcceptanceTests
     }
 
     /// <summary>
-    /// 结论分级：不合法角 ⇒ 不可制作；n = 2 尚未覆盖 ⇒ 未覆盖。
+    /// 结论分级：不合法角 ⇒ 不可制作；n = 2 的不可分反例 ⇒ 未覆盖。
     /// 这两种否定必须能被调用方区分开。
     /// </summary>
     public static void ParserClassifiesOutcomes()
@@ -755,10 +755,14 @@ internal static class ProductionPathAcceptanceTests
             notProducible.Error.Contains("不合法"),
             "不可制作必须给出不合法角原因");
 
-        // n = 2 的孤立列拼装还没接进 pipeline：只能是未覆盖。
-        var twoQuadrants = new ShapeDocument(1, 2);
-        twoQuadrants[0, 0] = ShapeCell.Crystal('r');
-        twoQuadrants[0, 1] = ShapeCell.Crystal('g');
+        // n = 2 的反例（规格 §7）：两列都过五项条件，但右列不满足定理 4，
+        // 只能报「未覆盖」，不能写成「不可制作」。
+        var twoQuadrants = new ShapeDocument(2, 2);
+
+        twoQuadrants[0, 0] = ShapeCell.Shape('C', 'u');
+        twoQuadrants[1, 0] = ShapeCell.Shape('C', 'u');
+        twoQuadrants[0, 1] = ShapeCell.Empty();
+        twoQuadrants[1, 1] = ShapeCell.Shape('C', 'u');
 
         ProductionPathResult uncovered = ProductionPathParser.Parse(twoQuadrants);
 
@@ -768,6 +772,384 @@ internal static class ProductionPathAcceptanceTests
             uncovered.Error is not null &&
             uncovered.Error.Contains("未覆盖"),
             "未覆盖必须明确标注");
+    }
+
+    #endregion
+
+    #region 语料 10：n = 2 的孤立列拼装（定理 4 / 定理 5 / 算法 7）
+
+    /// <summary>
+    /// n = 2 的成功案例：两列都通过孤立列判据（定理 4）⇒ 整图可分（定理 5）。
+    ///
+    /// 最小图形 <c>cc</c> 还能验证交换确实按「两列各自单独输入」拼合：
+    /// 若把 <c>cc</c> 直接当输入，跨刀口的晶体连通块会整块破碎；
+    /// 分成两个单列半边后，两枚晶体都能保留。
+    /// </summary>
+    public static void TwoQuadrantIsolatedAssembly()
+    {
+        ShapeDocument minimal = FromColumns(2, "c", "c");
+
+        Assert.True(
+            IsolatedColumn.IsIsolatedColumn(minimal, 0),
+            "左列应通过孤立列判据");
+        Assert.True(
+            IsolatedColumn.IsIsolatedColumn(minimal, 1),
+            "右列应通过孤立列判据");
+
+        PipelineResult solved = ProductionPipeline.Solve(
+            minimal,
+            minimal.LayerCount);
+
+        Assert.Equal(
+            PipelineOutcome.Producible,
+            solved.Outcome,
+            "n = 2 的 cc 应可制作");
+
+        Assert.True(solved.Recipe is not null, "可制作时必须给出 Recipe");
+
+        Assert.True(
+            Replay.Verify(
+                solved.Recipe!,
+                minimal,
+                out IReadOnlyList<string> errors),
+            "n = 2 的 Recipe 回放失败：" + string.Join(" / ", errors));
+
+        ProductionPathResult parsed = ProductionPathParser.Parse(minimal);
+
+        Assert.True(parsed.IsProducible, parsed.Error ?? "解析器应判可制作");
+        Assert.Equal(PipelineOutcome.Producible, parsed.Outcome);
+        Assert.Equal("(1)+(2)", parsed.Path!.Direction);
+        Assert.Equal(3, parsed.Path.Steps.Count);
+        Assert.Equal(3, parsed.Path.Nodes.Count);
+        Assert.Equal(2, parsed.Path.Edges.Count);
+
+        // 规格 §2.5 的通过列 PPTTcPT 也可以作为孤立列半边。
+        ShapeDocument spec = FromColumns(2, "PPTTcPT", "TT");
+
+        Assert.True(
+            IsolatedColumn.IsIsolatedColumn(spec, 0),
+            "PPTTcPT 应通过孤立列判据（规格 §2.5）");
+
+        PipelineResult specSolved = ProductionPipeline.Solve(
+            spec,
+            spec.LayerCount);
+
+        Assert.Equal(
+            PipelineOutcome.Producible,
+            specSolved.Outcome,
+            "PPTTcPT / TT 应可制作");
+
+        Assert.True(
+            Replay.Verify(
+                specSolved.Recipe!,
+                spec,
+                out IReadOnlyList<string> specErrors),
+            "PPTTcPT / TT 的 Recipe 回放失败：" +
+            string.Join(" / ", specErrors));
+    }
+
+    /// <summary>
+    /// n = 2 的失败案例（规格 §7）：底层 <c>T.</c>、顶层 <c>TT</c>。
+    ///
+    /// 两列都通过五项条件，所以不是「不可制作」；
+    /// 但右列 <c>.T</c> 不满足定理 4（没有从地面连续），只能报「未覆盖」。
+    /// </summary>
+    public static void TwoQuadrantNonIsolatedIsUncovered()
+    {
+        ShapeDocument failure = FromColumns(2, "TT", ".T");
+
+        Assert.True(
+            ShapeSignature.IsLegalColumn(failure, 0),
+            "左列应通过五项条件");
+
+        Assert.True(
+            ShapeSignature.IsLegalColumn(failure, 1),
+            "右列 .T 应通过五项条件");
+
+        Assert.True(
+            IsolatedColumn.IsIsolatedColumn(failure, 0),
+            "左列 TT 应通过孤立列判据");
+
+        Assert.False(
+            IsolatedColumn.IsIsolatedColumn(failure, 1),
+            "右列 .T 不应通过孤立列判据");
+
+        PipelineResult solved = ProductionPipeline.Solve(
+            failure,
+            failure.LayerCount);
+
+        Assert.Equal(
+            PipelineOutcome.Uncovered,
+            solved.Outcome,
+            "不满足定理 4 的 n = 2 图形应报未覆盖");
+
+        Assert.True(solved.Recipe is null, "未覆盖时不应给出 Recipe");
+
+        ProductionPathResult parsed = ProductionPathParser.Parse(failure);
+
+        Assert.False(parsed.IsProducible);
+        Assert.Equal(PipelineOutcome.Uncovered, parsed.Outcome);
+        Assert.True(
+            parsed.Error is not null &&
+            parsed.Error.Contains("未覆盖"),
+            "未覆盖必须明确标注");
+    }
+
+    #endregion
+
+    #region 语料 11：n = 4 的定理 6 / 算法 8（联合逆提升）
+
+    /// <summary>
+    /// 规格 §6.4 的具体实例：
+    /// Q 的左列 <c>cT.T.cT.Tccc</c> 不在 S，却能作为半边出现——
+    /// 把第 4 层的 <c>TT</c> 提到第 5 层，两列
+    /// <c>cT..TcT.Tccc</c>、<c>TTT.TcccccPT</c> 都在 S，共同下落一层即得 Q。
+    ///
+    /// 这里同时验证：算法 8 找到的前态确实被交换链用作零件内容。
+    /// </summary>
+    public static void FourQuadrantTheorem6JointInverseLift()
+    {
+        const string leftPreState = "cT..TcT.Tccc";
+        const string rightPreState = "TTT.TcccccPT";
+
+        Assert.True(
+            PillarSCriterion.IsPillarColumn(leftPreState),
+            "前态左列应在 S");
+        Assert.True(
+            PillarSCriterion.IsPillarColumn(rightPreState),
+            "前态右列应在 S");
+
+        ShapeDocument preState = FromColumns(
+            4,
+            leftPreState,
+            rightPreState);
+
+        ShapeDocument q = ShapePhysics.Collapse(preState).Document!;
+
+        Assert.Equal(
+            "cT.T.cT.Tccc",
+            ShapeSignature.ColumnText(q, 0),
+            "前态共同下落一层后，左列应等于规格 §6.4 的 Q");
+
+        Assert.Equal(
+            "TTTT.cccccPT",
+            ShapeSignature.ColumnText(q, 1),
+            "前态共同下落一层后，右列应等于 TTTT.cccccPT");
+
+        Assert.False(
+            PillarSCriterion.IsPillarColumn(q, 0),
+            "规格 §6.4：Q 的左列不在 S");
+
+        Assert.True(
+            PillarSCriterion.IsPillarColumn(q, 1),
+            "Q 的右列应在 S");
+
+        // 算法 8：第一候选失败（左列不在 S），第二候选联合逆提升通过。
+        Assert.True(
+            HalfObtainability.Test(
+                q,
+                0,
+                out ShapeDocument? lifted,
+                out string liftNote),
+            "Q 应半破可得：" + liftNote);
+
+        Assert.True(lifted is not null, "半边可得时必须给出前态");
+        Assert.Equal(
+            leftPreState,
+            ShapeSignature.ColumnText(lifted!, 0),
+            "前态左列应与规格 §6.4 一致");
+        Assert.Equal(
+            rightPreState,
+            ShapeSignature.ColumnText(lifted!, 1),
+            "前态右列应与规格 §6.4 一致");
+        Assert.False(
+            ShapeOps.Same(lifted, q),
+            "前态必须是提升后的图形，不能是 Q 本身");
+
+        // 空半边的第一候选：两列空列都在 S 且稳定，前态就是它自己。
+        Assert.True(
+            HalfObtainability.Test(
+                q,
+                2,
+                out ShapeDocument? emptyPreState,
+                out string emptyNote),
+            "空半边应通过第一候选：" + emptyNote);
+
+        Assert.True(
+            ShapeOps.Same(
+                emptyPreState,
+                ShapeOps.Project(q, 2, 2)),
+            "空半边的第一候选前态应等于它自己");
+
+        // 完整目标 = Q + 空右半。
+        ShapeDocument target = FromColumns(
+            4,
+            ShapeSignature.ColumnText(q, 0),
+            ShapeSignature.ColumnText(q, 1));
+
+        Assert.True(
+            Swappable.Test(
+                target,
+                out int axis,
+                out string swapNote),
+            "目标应可交换：" + swapNote);
+
+        Assert.Equal(0, axis);
+
+        Assert.True(
+            ExchangeChain.TryBuild(
+                target,
+                0,
+                1,
+                1,
+                out Recipe? chainRecipe),
+            "定理 6 的前态应能用于交换链");
+
+        ExchangeDetails details = chainRecipe!.Exchange!;
+
+        // 目标第 5 层左列是空的；前态把它提到了第 5 层，零件必须用前态内容。
+        Assert.Equal(
+            CellType.Empty,
+            target[4, 0].Type,
+            "目标第 5 层左列应为空");
+
+        Assert.Equal(
+            CellType.Shape,
+            details.P1.Raw[4, 0].Type,
+            "P1 应使用前态内容（第 5 层的 TT）");
+
+        Assert.True(
+            ShapeOps.Same(details.Product, target),
+            "交换链产物应逐格等于目标");
+
+        PipelineResult solved = ProductionPipeline.Solve(
+            target,
+            target.LayerCount);
+
+        Assert.Equal(
+            PipelineOutcome.Producible,
+            solved.Outcome,
+            "定理 6 目标应可制作");
+
+        Assert.True(
+            Replay.Verify(
+                solved.Recipe!,
+                target,
+                out IReadOnlyList<string> errors),
+            "定理 6 目标的 Recipe 回放失败：" +
+            string.Join(" / ", errors));
+
+        ProductionPathResult parsed = ProductionPathParser.Parse(target);
+
+        Assert.True(
+            parsed.IsProducible,
+            parsed.Error ?? "解析器应判定理 6 目标可制作");
+    }
+
+    /// <summary>
+    /// n = 4 的轴必须遍历：存在只在 axis = 1 才成功的图形。
+    /// 交换链的最终产物与目标旋转等价时，Recipe 必须转回目标本身，
+    /// 否则回放会报「最终产物与目标不一致」。
+    ///
+    /// 图形（底→顶）：
+    /// <code>
+    /// L2  . T T .
+    /// L1  . T . .
+    /// </code>
+    /// </summary>
+    public static void FourQuadrantAxisOneOnlyStillReplays()
+    {
+        ShapeDocument target = FromColumns(
+            4,
+            "..",
+            "TT",
+            ".T",
+            "..");
+
+        Assert.False(
+            ExchangeChain.TryBuild(target, 0, 1, 1, out _),
+            "该图形在 axis = 0 上不应成功");
+
+        Assert.True(
+            ExchangeChain.TryBuild(target, 1, 1, 1, out Recipe? recipe),
+            "该图形在 axis = 1 上应成功");
+
+        Assert.True(
+            ShapeOps.Same(recipe!.Shape, target),
+            "Recipe 的产物必须逐格等于目标（旋转要转回来）");
+
+        Assert.True(
+            Swappable.Test(target),
+            "该图形应可交换（定理 6 判据，轴必须遍历）");
+
+        PipelineResult solved = ProductionPipeline.Solve(
+            target,
+            target.LayerCount);
+
+        Assert.Equal(
+            PipelineOutcome.Producible,
+            solved.Outcome,
+            "只在 axis = 1 成功的 n = 4 图形也应可制作");
+
+        Assert.True(
+            Replay.Verify(
+                solved.Recipe!,
+                target,
+                out IReadOnlyList<string> errors),
+            "axis = 1 的 Recipe 回放失败：" +
+            string.Join(" / ", errors));
+
+        ProductionPathResult parsed = ProductionPathParser.Parse(target);
+
+        Assert.True(
+            parsed.IsProducible,
+            parsed.Error ?? "解析器应判该 n = 4 图形可制作");
+    }
+
+    /// <summary>
+    /// n = 4 的一致性回归：稳定且每列合法的图形上，
+    /// 定理 6 的 Swappable 判据与交换链成功应当完全一致。
+    ///
+    /// 规格 §5.4.1 的「可交换 ⟺ 交换链成功」在 n = 6 已穷举验证；
+    /// 这里只对 n = 4 的 2 层全空间做同一检查（6561 个图形），
+    /// 不引入任何新的硬数字，只要求 0 反例。
+    /// </summary>
+    public static void FourQuadrantSwappableMatchesChain()
+    {
+        var document = new ShapeDocument(2, 4);
+
+        long legal = 0;
+
+        long inconsistent = 0;
+
+        for (int code = 0; code < 6561; code++)
+        {
+            Fill(document, code, 3);
+
+            if (!ShapeOps.IsStable(document))
+            {
+                continue;
+            }
+
+            if (!ShapeSignature.AllColumnsLegal(document, out _))
+            {
+                continue;
+            }
+
+            legal++;
+
+            if (Swappable.Test(document) !=
+                ExchangeChain.TryBuild(document, out _))
+            {
+                inconsistent++;
+            }
+        }
+
+        Assert.True(legal > 0, "n = 4 的 2 层全枚举没有合格样本");
+        Assert.Equal(
+            0L,
+            inconsistent,
+            "n = 4 的定理 6 判据与交换链成功不一致");
     }
 
     #endregion
@@ -833,6 +1215,50 @@ internal static class ProductionPathAcceptanceTests
         Assert.True(parsed.Success, parsed.Error ?? "短代码解析失败");
 
         return parsed.Document!;
+    }
+
+    /// <summary>
+    /// 按列字符串构造图形：左端是地面（第 1 层），右端是顶层；
+    /// 少于最高列的列按空列补齐，未给出的列全空。
+    /// </summary>
+    private static ShapeDocument FromColumns(
+        int parts,
+        params string[] columns)
+    {
+        int layers = 0;
+
+        foreach (string column in columns)
+        {
+            layers = Math.Max(layers, column.Length);
+        }
+
+        Assert.True(layers > 0, "至少要给出一列");
+
+        var document = new ShapeDocument(layers, parts);
+
+        for (int part = 0;
+             part < columns.Length;
+             part++)
+        {
+            for (int layer = 0;
+                 layer < layers;
+                 layer++)
+            {
+                char code = layer < columns[part].Length
+                    ? columns[part][layer]
+                    : '.';
+
+                document[layer, part] = code switch
+                {
+                    'c' => ShapeCell.Crystal('r'),
+                    'P' => ShapeCell.Pin(),
+                    'T' => ShapeCell.Shape('C', 'u'),
+                    _ => ShapeCell.Empty()
+                };
+            }
+        }
+
+        return document;
     }
 
     #endregion

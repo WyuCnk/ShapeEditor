@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Windows.Media;
 using ShapeEditor.Core.Analysis;
+using ShapeEditor.Core.Analysis.Production;
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Physics;
 using ShapeEditor.Core.Services;
@@ -64,6 +65,9 @@ public sealed class AnalysisViewModel : ObservableObject
     private ProductionPathGraph? _pathGraph;
 
     private string _pathSummary = "";
+
+    /// <summary>制作路径结论的小字补充（目前只有「未覆盖」用）。</summary>
+    private string _pathOutcomeNote = "";
 
     private ShapeProperty _properties;
 
@@ -200,10 +204,17 @@ public sealed class AnalysisViewModel : ObservableObject
         _half.IsExchangeable;
 
     /// <summary>
-    /// 交换工序的结论文本：可制作时给出方向及方向合法性。
-    /// 门控之外的情况不显示结论，也不显示「不可制作」。
+    /// 交换工序的结论文本，按三态显示：
+    /// 可制作给方向；不可制作说明存在不合法角；未覆盖说明超出算法覆盖范围。
+    /// 门控之外（没有合法交换方向）不显示结论。
     /// </summary>
     public string PathSummary => _pathSummary;
+
+    /// <summary>未覆盖时的小字说明；其余状态为空。</summary>
+    public string PathOutcomeNote => _pathOutcomeNote;
+
+    public bool HasPathOutcomeNote =>
+        !string.IsNullOrWhiteSpace(_pathOutcomeNote);
 
     /// <summary>
     /// 交换工序的分层节点图；不可制作或没有路径时为空。
@@ -468,6 +479,8 @@ public sealed class AnalysisViewModel : ObservableObject
         OnPropertyChanged(nameof(HalfSummary));
         OnPropertyChanged(nameof(HalfCollapsedSummary));
         OnPropertyChanged(nameof(PathSummary));
+        OnPropertyChanged(nameof(PathOutcomeNote));
+        OnPropertyChanged(nameof(HasPathOutcomeNote));
         OnPropertyChanged(nameof(PathGraph));
         OnPropertyChanged(nameof(HasPathGraph));
         OnPropertyChanged(nameof(HasPathSection));
@@ -510,21 +523,41 @@ public sealed class AnalysisViewModel : ObservableObject
     {
         _pathGraph = null;
 
+        _pathSummary = "";
+
+        _pathOutcomeNote = "";
+
         _pathResult = _document is null
             ? null
             : ProductionPathParser.Parse(
                 _document,
                 _mode);
 
+        /*
+         * 门控：只有存在合法交换方向时才显示交换工序结论；
+         * 其余情况保持空白，避免在整块隐藏后仍残留「不可制作」。
+         */
         if (_pathResult is null ||
-            !_pathResult.IsProducible ||
+            _half is null ||
+            !_half.IsExchangeable)
+        {
+            return;
+        }
+
+        if (!_pathResult.IsProducible ||
             _pathResult.Path is null)
         {
-            /*
-             * 门控已保证只有存在合法交换方向时才显示制作路径；
-             * 这里不再输出「不可制作」文本。
-             */
-            _pathSummary = "";
+            if (_pathResult.Outcome == PipelineOutcome.Uncovered)
+            {
+                _pathSummary =
+                    "暂不支持解析：该图形的制作路径超出当前算法覆盖范围。";
+
+                _pathOutcomeNote = "这并不代表不可制作。";
+            }
+            else
+            {
+                _pathSummary = "不可制作：存在不合法角。";
+            }
 
             return;
         }
@@ -537,6 +570,7 @@ public sealed class AnalysisViewModel : ObservableObject
         /*
          * 分层节点图与窗口、导出共用：按 Node.Row 分层，
          * 节点尺寸与工作区一致，预览固定 30px 单元格不缩放。
+         * 行数由 Core 决定（顶针 / 堆叠 / 块会追加新层）。
          */
         _pathGraph = ProductionPathGraph.Create(path);
     }
@@ -558,6 +592,8 @@ public sealed class AnalysisViewModel : ObservableObject
         _pathGraph = null;
 
         _pathSummary = "";
+
+        _pathOutcomeNote = "";
 
         _properties = ShapeProperty.None;
 
@@ -590,6 +626,8 @@ public sealed class AnalysisViewModel : ObservableObject
         OnPropertyChanged(nameof(HalfSummary));
         OnPropertyChanged(nameof(HalfCollapsedSummary));
         OnPropertyChanged(nameof(PathSummary));
+        OnPropertyChanged(nameof(PathOutcomeNote));
+        OnPropertyChanged(nameof(HasPathOutcomeNote));
         OnPropertyChanged(nameof(PathGraph));
         OnPropertyChanged(nameof(HasPathGraph));
         OnPropertyChanged(nameof(HasPathSection));

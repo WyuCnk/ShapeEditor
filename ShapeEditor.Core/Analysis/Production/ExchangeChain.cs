@@ -89,10 +89,44 @@ public static class ExchangeChain
         ShapeDocument shifted =
             ShapeOps.Rotate(target, -axis);
 
-        ShapeDocument p1 = PillarPiece(shifted, 0, leftSplit, -1);
-        ShapeDocument p2 = PillarPiece(shifted, leftSplit, half - leftSplit, half);
-        ShapeDocument p3 = PillarPiece(shifted, half, rightSplit, half - 1);
-        ShapeDocument p4 = PillarPiece(shifted, half + rightSplit, half - rightSplit, 0);
+        /*
+         * n = 4 时四个带柱半半边的内容不能直接取目标的静态半边：
+         * 定理 6 / 算法 8 允许「两根 S 列拼合后共同下落」得到半边，
+         * 所以零件的两列取算法 8 选中的前态（未旋转前态即目标时与原逻辑一致）。
+         * n ≥ 6 沿用原来的取法。
+         */
+        ShapeDocument source = shifted;
+
+        if (half == 2)
+        {
+            if (!HalfObtainability.Test(
+                    shifted,
+                    0,
+                    out ShapeDocument? leftPreState,
+                    out _))
+            {
+                return false;
+            }
+
+            if (!HalfObtainability.Test(
+                    shifted,
+                    half,
+                    out ShapeDocument? rightPreState,
+                    out _))
+            {
+                return false;
+            }
+
+            source = shifted.Clone();
+
+            CopyHalfContent(source, leftPreState!, 0, 1);
+            CopyHalfContent(source, rightPreState!, half, half + 1);
+        }
+
+        ShapeDocument p1 = PillarPiece(source, 0, leftSplit, -1);
+        ShapeDocument p2 = PillarPiece(source, leftSplit, half - leftSplit, half);
+        ShapeDocument p3 = PillarPiece(source, half, rightSplit, half - 1);
+        ShapeDocument p4 = PillarPiece(source, half + rightSplit, half - rightSplit, 0);
 
         foreach (ShapeDocument piece in new[] { p1, p2, p3, p4 })
         {
@@ -160,6 +194,44 @@ public static class ExchangeChain
         ShapeDocument? finalWaste =
             matched == output ? waste : output;
 
+        /*
+         * 规格 §4.4：末次交换的任一输出与目标「旋转等价」即成功。
+         * Recipe 的产物必须与目标逐格相同，所以这里把旋转等价的那一份
+         * 转回目标本身（废料一起转），否则 axis ≠ 0 的成功方向会留下
+         * 一个旋转过的 Recipe.Shape，回放时和目标对不上。
+         */
+        if (!ShapeOps.Same(matched, target))
+        {
+            int finalRotation = 0;
+
+            for (int k = 1;
+                 k < target.PartCount;
+                 k++)
+            {
+                if (ShapeOps.Same(
+                        ShapeOps.Rotate(matched, k),
+                        target))
+                {
+                    finalRotation = k;
+                    break;
+                }
+            }
+
+            if (finalRotation == 0)
+            {
+                return false;
+            }
+
+            matched = ShapeOps.Rotate(matched, finalRotation);
+
+            if (finalWaste is not null)
+            {
+                finalWaste = ShapeOps.Rotate(
+                    finalWaste,
+                    finalRotation);
+            }
+        }
+
         var steps = new List<RecipeStep>
         {
             new("制作左半边零件 1（含柱）", p1r),
@@ -204,6 +276,30 @@ public static class ExchangeChain
         ShapeOps.SetPillar(piece, pillar);
 
         return piece;
+    }
+
+    /// <summary>
+    /// 把算法 8 选中的前态内容抄回零件的取料源：只覆盖该半边的两列。
+    /// </summary>
+    private static void CopyHalfContent(
+        ShapeDocument target,
+        ShapeDocument preState,
+        int first,
+        int second)
+    {
+        int firstColumn = ShapeOps.Wrap(first, target.PartCount);
+        int secondColumn = ShapeOps.Wrap(second, target.PartCount);
+
+        for (int layer = 0;
+             layer < target.LayerCount;
+             layer++)
+        {
+            target[layer, firstColumn] =
+                preState[layer, firstColumn].Clone();
+
+            target[layer, secondColumn] =
+                preState[layer, secondColumn].Clone();
+        }
     }
 
     /// <summary>两个图形是否「旋转等价」。</summary>

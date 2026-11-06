@@ -138,7 +138,12 @@ internal static class Program
             ("语料8:n=6 交换链逐格复现", ProductionPathAcceptanceTests.SixQuadrantExchangeChain),
             ("语料9:n=8 交换链逐格复现", ProductionPathAcceptanceTests.EightQuadrantExchangeChain),
             ("解析器:节点链含堆叠/目标", ProductionPathAcceptanceTests.ParserEmitsOperationChain),
-            ("解析器:结论分级", ProductionPathAcceptanceTests.ParserClassifiesOutcomes)
+            ("解析器:结论分级", ProductionPathAcceptanceTests.ParserClassifiesOutcomes),
+            ("语料10:n=2 孤立列拼装成功", ProductionPathAcceptanceTests.TwoQuadrantIsolatedAssembly),
+            ("语料10:n=2 非孤立列返回未覆盖", ProductionPathAcceptanceTests.TwoQuadrantNonIsolatedIsUncovered),
+            ("语料11:n=4 定理6 联合逆提升", ProductionPathAcceptanceTests.FourQuadrantTheorem6JointInverseLift),
+            ("语料11:n=4 只在 axis=1 成功仍可回放", ProductionPathAcceptanceTests.FourQuadrantAxisOneOnlyStillReplays),
+            ("语料11:n=4 可交换判据与交换链一致", ProductionPathAcceptanceTests.FourQuadrantSwappableMatchesChain)
         };
 
         /*

@@ -135,11 +135,34 @@ public static class AnalysisImageExporter
 
     private static readonly Brush WasteEdgeBrush = CreateBrush(0x9A, 0x9A, 0xA5);
 
+    /// <summary>顶针工序：青绿色边框与标签，与窗口 / Web 一致。</summary>
+    private static readonly Brush PinAccentBrush = CreateBrush(0x0E, 0x7C, 0x86);
+
+    private static readonly Brush PinFillBrush = CreateBrush(0xF2, 0xFB, 0xFB);
+
+    /// <summary>堆叠工序：橙色边框与标签。</summary>
+    private static readonly Brush StackAccentBrush = CreateBrush(0xB2, 0x6A, 0x00);
+
+    private static readonly Brush StackFillBrush = CreateBrush(0xFF, 0xF8, 0xEE);
+
+    /// <summary>hybrid 块：绿色边框与标签。</summary>
+    private static readonly Brush BlockAccentBrush = CreateBrush(0x2E, 0x7D, 0x32);
+
+    private static readonly Brush BlockFillBrush = CreateBrush(0xF3, 0xFB, 0xF4);
+
     private static readonly Pen BorderPen = CreatePen(BorderBrush, 1);
 
     private static readonly Pen DividerPen = CreatePen(DividerBrush, 1);
 
     private static readonly Pen NodeBorderPen = CreatePen(NodeBorderBrush, 1.2);
+
+    private static readonly Pen ResultNodePen = CreatePen(PrimaryBrush, 2);
+
+    private static readonly Pen PinNodePen = CreatePen(PinAccentBrush, 2);
+
+    private static readonly Pen StackNodePen = CreatePen(StackAccentBrush, 2);
+
+    private static readonly Pen BlockNodePen = CreatePen(BlockAccentBrush, 2);
 
     private static readonly Pen WasteNodePen = CreateDashedPen(WasteBorderBrush, 1.2);
 
@@ -747,6 +770,17 @@ public static class AnalysisImageExporter
             13,
             BodyBrush);
 
+        if (viewModel.HasPathOutcomeNote)
+        {
+            y = DrawParagraph(
+                context,
+                viewModel.PathOutcomeNote,
+                y,
+                contentWidth,
+                11.5,
+                MutedBrush);
+        }
+
         ProductionPathGraph? graph = viewModel.PathGraph;
 
         if (graph is null)
@@ -795,7 +829,7 @@ public static class AnalysisImageExporter
 
         y = DrawParagraph(
             context,
-            "节点按 5 层从上到下排列，同层节点从左到右紧排，层间固定留 80px 画箭头；预览保持 30px 单元格原始尺寸。废料节点淡显、虚线边框，指向废料的箭头为灰色虚线。",
+            "节点按层从上到下排列，同层节点从左到右紧排，层间固定留 80px 画箭头；行数由制作路径决定（顶针 / 堆叠 / 块会追加新层）。预览保持 30px 单元格原始尺寸。废料节点淡显、虚线边框，指向废料的箭头为灰色虚线；顶针、堆叠、块分别用青绿 / 橙 / 绿边框与「顶P」「堆」「块」小标签区分。",
             y,
             contentWidth,
             11.5,
@@ -861,29 +895,17 @@ public static class AnalysisImageExporter
             node.Width,
             node.Height);
 
-        Brush fill = node.IsWaste
-            ? WasteFillBrush
-            : node.IsResult
-                ? ShapeCardBrush
-                : Brushes.White;
-
-        Brush border = node.IsWaste
-            ? WasteBorderBrush
-            : node.IsResult
-                ? PrimaryBrush
-                : NodeBorderBrush;
-
-        Pen pen = node.IsWaste
-            ? WasteNodePen
-            : node.IsResult
-                ? new Pen(PrimaryBrush, 2)
-                : NodeBorderPen;
-
-        // 结果节点用 2px 主色边框；创建后立即冻结，避免渲染线程拷贝。
-        if (node.IsResult)
+        // 节点类型决定卡片底色与边框：废料淡显、目标主色，
+        // 顶针 / 堆叠 / 块各用一种强调色，其余保持默认。
+        (Brush fill, Pen pen) = node switch
         {
-            pen.Freeze();
-        }
+            { IsWaste: true } => (WasteFillBrush, WasteNodePen),
+            { IsResult: true } => (ShapeCardBrush, ResultNodePen),
+            { IsPin: true } => (PinFillBrush, PinNodePen),
+            { IsStack: true } => (StackFillBrush, StackNodePen),
+            { IsBlock: true } => (BlockFillBrush, BlockNodePen),
+            _ => (Brushes.White, NodeBorderPen)
+        };
 
         context.DrawRoundedRectangle(
             fill,
@@ -892,14 +914,16 @@ public static class AnalysisImageExporter
             GraphCornerRadius,
             GraphCornerRadius);
 
-        // 标题最多两行，与页面卡片一致。
+        // 标题最多两行，与页面卡片一致；右侧要给类型小标签让出空间。
         FormattedText title = CreateText(
             node.Title,
             11,
             node.IsWaste ? WasteTitleBrush : NodeTitleBrush,
             bold: true);
 
-        title.MaxTextWidth = Math.Max(1, rect.Width - 14);
+        title.MaxTextWidth = Math.Max(
+            1,
+            rect.Width - 14 - (node.HasKindTag ? 22 : 0));
 
         title.MaxLineCount = 2;
 
@@ -908,6 +932,11 @@ public static class AnalysisImageExporter
         context.DrawText(
             title,
             new Point(rect.X + 7, rect.Y + 7));
+
+        if (node.HasKindTag)
+        {
+            DrawPathNodeKindTag(context, node, rect);
+        }
 
         if (node.Preview is null)
         {
@@ -943,6 +972,49 @@ public static class AnalysisImageExporter
         {
             context.Pop();
         }
+    }
+
+    /// <summary>
+    /// 画节点右上角的类型小标签（顶P / 堆 / 块）。
+    /// 与窗口和 Web 一致：顶针青绿、堆叠橙、块绿。
+    /// </summary>
+    private static void DrawPathNodeKindTag(
+        DrawingContext context,
+        ProductionPathGraphNode node,
+        Rect rect)
+    {
+        Brush accent = node.IsPin
+            ? PinAccentBrush
+            : node.IsStack
+                ? StackAccentBrush
+                : BlockAccentBrush;
+
+        FormattedText text = CreateText(
+            node.KindTag,
+            9,
+            Brushes.White,
+            bold: true);
+
+        double width = Math.Max(16, text.Width + 8);
+
+        const double height = 14;
+
+        double x = rect.Right - width - 6;
+
+        double y = rect.Y + 6;
+
+        context.DrawRoundedRectangle(
+            accent,
+            null,
+            new Rect(x, y, width, height),
+            6,
+            6);
+
+        context.DrawText(
+            text,
+            new Point(
+                x + (width - text.Width) / 2,
+                y + (height - text.Height) / 2));
     }
 
     /// <summary>画一条箭头：主路径紫色实线，指向废料的箭头灰色虚线。</summary>

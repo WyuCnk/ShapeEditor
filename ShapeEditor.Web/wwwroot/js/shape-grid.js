@@ -2072,6 +2072,8 @@ window.shapeGrid.downloadAnalysis = async function (payload, fileName) {
     const CODE_FONT = '400 13px Consolas, "Courier New", monospace';
     const SECTION_FONT = '700 18px "Microsoft YaHei", "Noto Sans SC", sans-serif';
     const TEXT_FONT = '400 14px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+    const NOTE_FONT = '400 12px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+    const NOTE_LINE_HEIGHT = 18;
     const FOOTER_FONT = '400 12px "Microsoft YaHei", "Noto Sans SC", sans-serif';
 
     const data = payload || {};
@@ -2185,6 +2187,26 @@ window.shapeGrid.downloadAnalysis = async function (payload, fileName) {
             }
         }
 
+        /*
+         * 补充说明用小字号画在正文之后，目前只用于制作路径「未覆盖」的
+         * 「这并不代表不可制作」。没有 notes 的板块行为完全不变。
+         */
+        const noteLines = [];
+        const rawNotes = Array.isArray(section.notes) ? section.notes : [];
+
+        for (let j = 0; j < rawNotes.length; j++) {
+            const wrapped = wrapAnalysisText(
+                measure,
+                rawNotes[j],
+                NOTE_FONT,
+                contentWidth,
+                false);
+
+            for (let k = 0; k < wrapped.length; k++) {
+                noteLines.push(wrapped[k]);
+            }
+        }
+
         // 制作路径节点图：标题与说明行照常绘制，下面按实际尺寸整张画图。
         if (section.graph) {
             blocks.push({
@@ -2246,9 +2268,14 @@ window.shapeGrid.downloadAnalysis = async function (payload, fileName) {
 
         blocks.push({
             kind: "text",
-            height: SECTION_TITLE_HEIGHT + lines.length * LINE_HEIGHT + SECTION_GAP,
+            height:
+                SECTION_TITLE_HEIGHT +
+                lines.length * LINE_HEIGHT +
+                noteLines.length * NOTE_LINE_HEIGHT +
+                SECTION_GAP,
             title: title,
-            lines: lines
+            lines: lines,
+            notes: noteLines
         });
     }
 
@@ -2367,6 +2394,22 @@ window.shapeGrid.downloadAnalysis = async function (payload, fileName) {
                 }
 
                 lineY += LINE_HEIGHT;
+            }
+
+            // 补充说明：更小的字号与更浅的颜色，跟在正文之后
+            const noteLines = Array.isArray(block.notes) ? block.notes : [];
+
+            if (noteLines.length > 0) {
+                ctx.font = NOTE_FONT;
+                ctx.fillStyle = "#6B6B76";
+
+                for (let j = 0; j < noteLines.length; j++) {
+                    if (noteLines[j] !== "") {
+                        ctx.fillText(noteLines[j], PADDING, lineY);
+                    }
+
+                    lineY += NOTE_LINE_HEIGHT;
+                }
             }
 
             // 板块之间的细分隔线
@@ -2784,12 +2827,48 @@ window.shapeGrid.disposeAnalysisFit = function (canvas) {
 };
 
 /*
+ * 制作路径节点右上角的类型小标签（顶P / 堆 / 块）。
+ * 颜色与 C# 端和页面 CSS 保持一致：顶针青绿、堆叠橙、块绿。
+ */
+function drawAnalysisNodeKindTag(ctx, rect, tag, kind) {
+    const TAG_FONT = '700 9px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+    const colors = {
+        pin: "#0E7C86",
+        stack: "#B26A00",
+        block: "#2E7D32"
+    };
+
+    ctx.save();
+
+    ctx.font = TAG_FONT;
+
+    const tagWidth = Math.max(16, ctx.measureText(tag).width + 8);
+    const tagHeight = 14;
+    const tagX = rect.x + rect.width - tagWidth - 6;
+    const tagY = rect.y + 6;
+
+    ctx.fillStyle = colors[kind] || "#6B6B76";
+
+    ctx.beginPath();
+    ctx.roundRect(tagX, tagY, tagWidth, tagHeight, 6);
+    ctx.fill();
+
+    ctx.fillStyle = "#FFFFFF";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(tag, tagX + tagWidth / 2, tagY + tagHeight / 2);
+
+    ctx.restore();
+}
+
+/*
  * 分析导出图里的制作路径节点图。
  *
  * 坐标来自 C# 的分层布局，节点尺寸与页面一致：
  * 宽 = 象限数 × 30 + 16，高 = 50 + 层数 × 30。
  * 预览固定 30px 单元格、1:1 绘制；图有多宽就画多宽，不缩放、不分片。
  * 废料节点淡显、虚线边框，指向废料的箭头为灰色虚线。
+ * 顶针 / 堆叠 / 块用不同边框色与右上角小标签区分。
  */
 function drawAnalysisPathGraph(ctx, graph, left, top) {
     const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
@@ -2859,16 +2938,38 @@ function drawAnalysisPathGraph(ctx, graph, left, top) {
         const node = nodes[i];
         const r = rectOf(node);
 
+        let fillColor = "#FFFFFF";
+        let strokeColor = "#D0D0D0";
+        let lineWidth = 1.2;
+
         if (node.isWaste) {
-            ctx.fillStyle = "#FBFBFC";
-            ctx.strokeStyle = "#C4C4CC";
+            fillColor = "#FBFBFC";
+            strokeColor = "#C4C4CC";
         }
-        else {
-            ctx.fillStyle = node.isResult ? "#FAF8FF" : "#FFFFFF";
-            ctx.strokeStyle = node.isResult ? "#512BD4" : "#D0D0D0";
+        else if (node.isResult) {
+            fillColor = "#FAF8FF";
+            strokeColor = "#512BD4";
+            lineWidth = 2;
+        }
+        else if (node.kind === "pin") {
+            fillColor = "#F2FBFB";
+            strokeColor = "#0E7C86";
+            lineWidth = 2;
+        }
+        else if (node.kind === "stack") {
+            fillColor = "#FFF8EE";
+            strokeColor = "#B26A00";
+            lineWidth = 2;
+        }
+        else if (node.kind === "block") {
+            fillColor = "#F3FBF4";
+            strokeColor = "#2E7D32";
+            lineWidth = 2;
         }
 
-        ctx.lineWidth = node.isResult ? 2 : 1.2;
+        ctx.fillStyle = fillColor;
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = lineWidth;
 
         ctx.save();
 
@@ -2889,11 +2990,13 @@ function drawAnalysisPathGraph(ctx, graph, left, top) {
         ctx.textAlign = "left";
         ctx.textBaseline = "top";
 
+        const kindTag = String(node.kindTag || "");
+
         const titleLines = wrapAnalysisText(
             ctx,
             node.title || "",
             TITLE_FONT,
-            Math.max(20, r.width - 14),
+            Math.max(20, r.width - 14 - (kindTag ? 26 : 0)),
             false);
 
         for (let line = 0; line < Math.min(2, titleLines.length); line++) {
@@ -2904,6 +3007,11 @@ function drawAnalysisPathGraph(ctx, graph, left, top) {
             }
 
             ctx.fillText(text, r.x + 7, r.y + 7 + line * 13);
+        }
+
+        // 顶针 / 堆叠 / 块：右上角类型小标签，与页面一致
+        if (kindTag) {
+            drawAnalysisNodeKindTag(ctx, r, kindTag, node.kind);
         }
 
         // 预览：与页面相同的 30px 单元格，不做缩放；废料降低对比度

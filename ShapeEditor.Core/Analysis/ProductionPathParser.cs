@@ -50,6 +50,7 @@ public sealed record ProductionPathResult(
 ///   → ProductionPipeline.Solve(target, cap = target.LayerCount, rank ≤ 3)
 ///   → 把 Recipe 树摊平成节点链：
 ///       交换叶子 = 四个带柱半半边 / 预旋转 / 两次交换 / 转回 / 末次交换 + 废料
+///       n = 2    = 左右孤立列（算法 7）+ 交换
 ///       顶针     = 内层节点链 + 顶针节点
 ///       堆叠     = 内层节点链 + 可制作块 + 堆叠节点
 ///   → ProductionPath { Steps, Graph, 方向 }
@@ -94,23 +95,6 @@ public static class ProductionPathParser
             };
         }
 
-        int half = parts / 2;
-
-        if (half < 2)
-        {
-            /*
-             * n = 2 的孤立列拼装（规格 §5.2）还没有接进 pipeline：
-             * 这里必须报「未覆盖」，不能写成「不可制作」。
-             */
-            return new ProductionPathResult(
-                false,
-                null,
-                "n = 2 的孤立列拼装尚未覆盖（未覆盖，不是不可制作）。")
-            {
-                Outcome = PipelineOutcome.Uncovered
-            };
-        }
-
         PipelineResult solved = ProductionPipeline.Solve(
             target,
             target.LayerCount,
@@ -141,6 +125,12 @@ public static class ProductionPathParser
         }
 
         Recipe recipe = solved.Recipe;
+
+        // n = 2：定理 5 的孤立列拼装没有交换切点，节点链单独输出。
+        if (recipe.Shape.PartCount == 2)
+        {
+            return BuildTwoQuadrantPath(recipe);
+        }
 
         Recipe? exchange = FindExchange(recipe);
 
@@ -197,6 +187,89 @@ public static class ProductionPathParser
         return notes.Count == 0
             ? "制作路径求解失败。"
             : string.Join(" ", notes);
+    }
+
+    /// <summary>
+    /// n = 2 的节点链（规格 §5.2、定理 5）：
+    /// 左列、右列分别按算法 7 做成孤立列，再直接交换拼合。
+    /// 没有四个带柱半半边，也没有预旋转。
+    /// </summary>
+    private static ProductionPathResult BuildTwoQuadrantPath(
+        Recipe recipe)
+    {
+        ShapeDocument target = recipe.Shape;
+
+        ShapeDocument leftHalf = ShapeOps.Project(target, 0, 1);
+        ShapeDocument rightHalf = ShapeOps.Project(target, 1, 1);
+
+        var steps = new List<ProductionStep>
+        {
+            new(
+                "制作左孤立列（算法 7）",
+                leftHalf,
+                ProductionStepKind.PillarPiece,
+                RotationDirection.None,
+                0),
+            new(
+                "制作右孤立列（算法 7）",
+                rightHalf,
+                ProductionStepKind.PillarPiece,
+                RotationDirection.None,
+                0),
+            new(
+                "交换得到目标图形",
+                target,
+                ProductionStepKind.Target,
+                RotationDirection.None,
+                0)
+        };
+
+        string leftId = "isolated-left";
+        string rightId = "isolated-right";
+        string targetId = "target";
+
+        var nodes = new List<ProductionNode>
+        {
+            new(
+                leftId,
+                "制作左孤立列（算法 7）",
+                ProductionNodeKind.PillarPiece,
+                1,
+                leftHalf),
+            new(
+                rightId,
+                "制作右孤立列（算法 7）",
+                ProductionNodeKind.PillarPiece,
+                1,
+                rightHalf),
+            new(
+                targetId,
+                "交换得到目标图形",
+                ProductionNodeKind.Target,
+                2,
+                target)
+        };
+
+        var edges = new List<ProductionEdge>
+        {
+            new(leftId, targetId),
+            new(rightId, targetId)
+        };
+
+        return new ProductionPathResult(
+            true,
+            new ProductionPath(
+                0,
+                0,
+                0,
+                "(1)+(2)",
+                true,
+                steps,
+                new ProductionGraph(nodes, edges)),
+            null)
+        {
+            Outcome = PipelineOutcome.Producible
+        };
     }
 
     /// <summary>找到路径树里唯一的交换叶子。</summary>

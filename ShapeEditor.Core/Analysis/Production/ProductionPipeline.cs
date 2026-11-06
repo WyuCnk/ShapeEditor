@@ -62,6 +62,11 @@ public sealed record PipelineResult(
 /// Stage 4  回放校验（见 Replay）
 /// </code>
 ///
+/// n 分档按规格 §5：
+/// n = 2 走定理 5 的孤立列拼装（算法 7 + 交换）；
+/// n = 4 的交换链按定理 6 / 算法 8 取前态（见 <see cref="HalfObtainability"/>）；
+/// n ≥ 6 交换链直接组装。
+///
 /// <see cref="TowerFill"/> 与 <see cref="HybridStrips"/> 目前是**保守实现**：
 /// 只做「直接填充」与「拆单个顶针」，其余情形返回空集合，
 /// 于是那些情形会落到「未覆盖」而不是误判。
@@ -100,6 +105,13 @@ public static class ProductionPipeline
         {
             return PipelineResult.NotProducible(
                 $"第 {badColumn + 1} 象限不合法。");
+        }
+
+        // n = 2：定理 5 的孤立列拼装（规格 §5.2）。
+        // 每个半边只有一列，没有交换切点，不能走交换链。
+        if (target.PartCount == 2)
+        {
+            return SolveTwoQuadrants(target, notes);
         }
 
         SplitAtHighestCrystal(
@@ -149,6 +161,47 @@ public static class ProductionPipeline
         notes.Add($"rank = {result.Rank}，节点数 = {result.CountNodes()}。");
 
         return PipelineResult.Producible(result, notes);
+    }
+
+    /// <summary>
+    /// n = 2 的孤立列拼装（规格 §5.2、定理 5、算法 7）：
+    /// 左右两列分别通过定理 4（孤立列判据）⇒ 整图可分；
+    /// 分别做成孤立列，再送入交换拼合。
+    ///
+    /// 失败时返回「未覆盖」而不是「不可制作」：唯一的否定判据仍然只有不合法角。
+    /// </summary>
+    private static PipelineResult SolveTwoQuadrants(
+        ShapeDocument target,
+        List<string> notes)
+    {
+        bool left = IsolatedColumn.IsIsolatedColumn(target, 0);
+        bool right = IsolatedColumn.IsIsolatedColumn(target, 1);
+
+        notes.Add(
+            $"n = 2：定理 5——左列通过孤立列判据？{left}；" +
+            $"右列通过？{right}。");
+
+        if (!left || !right)
+        {
+            notes.Add("有列不满足定理 4，未覆盖（不是不可制作）。");
+            return PipelineResult.Uncovered(notes);
+        }
+
+        ShapeDocument leftHalf = ShapeOps.Project(target, 0, 1);
+        ShapeDocument rightHalf = ShapeOps.Project(target, 1, 1);
+
+        var steps = new List<RecipeStep>
+        {
+            new("制作左孤立列（算法 7）", leftHalf),
+            new("制作右孤立列（算法 7）", rightHalf),
+            new("交换得到目标图形", target)
+        };
+
+        notes.Add("n = 2：两列按算法 7 做成孤立列后直接交换拼合。");
+
+        return PipelineResult.Producible(
+            Recipe.CreateExchange(target, steps),
+            notes);
     }
 
     /// <summary>

@@ -1,6 +1,7 @@
 using Microsoft.Maui.Controls.Shapes;
 using Microsoft.Maui.Layouts;
 using ShapeEditor.Core.Analysis;
+using ShapeEditor.Core.Analysis.Production;
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Physics;
 using ShapeEditor.Core.Services;
@@ -379,6 +380,10 @@ public partial class AnalysisPage : ContentPage
         PathGraphNote.IsVisible = false;
 
         PathSummaryLabel.Text = "";
+
+        PathOutcomeNoteLabel.Text = "";
+
+        PathOutcomeNoteLabel.IsVisible = false;
     }
 
     private void RenderPreview(
@@ -687,8 +692,24 @@ public partial class AnalysisPage : ContentPage
 
         if (!path.IsProducible || path.Path is null)
         {
-            PathSummaryLabel.Text = "不可制作：" +
-                (string.IsNullOrWhiteSpace(path.Error) ? "无法解析。" : path.Error);
+            /*
+             * 三态措辞：「不可制作」只在存在不合法角时使用；
+             * 求解器没有找到路径但也没有否定时是「未覆盖」，
+             * 必须明确告诉用户这不代表不可制作。
+             */
+            if (path.Outcome == PipelineOutcome.Uncovered)
+            {
+                PathSummaryLabel.Text =
+                    "暂不支持解析：该图形的制作路径超出当前算法覆盖范围。";
+
+                PathOutcomeNoteLabel.Text = "这并不代表不可制作。";
+
+                PathOutcomeNoteLabel.IsVisible = true;
+            }
+            else
+            {
+                PathSummaryLabel.Text = "不可制作：存在不合法角。";
+            }
 
             return;
         }

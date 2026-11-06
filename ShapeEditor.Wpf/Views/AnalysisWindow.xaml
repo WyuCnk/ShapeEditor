@@ -115,6 +115,22 @@
                                     <Setter Property="StrokeThickness" Value="1.2" />
                                     <Setter Property="StrokeDashArray" Value="4 3" />
                                 </DataTrigger>
+                                <!-- 顶针 / 堆叠 / 块：不同边框色，一眼区分 -->
+                                <DataTrigger Binding="{Binding IsPin}" Value="True">
+                                    <Setter Property="Fill" Value="#F2FBFB" />
+                                    <Setter Property="Stroke" Value="#0E7C86" />
+                                    <Setter Property="StrokeThickness" Value="2" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding IsStack}" Value="True">
+                                    <Setter Property="Fill" Value="#FFF8EE" />
+                                    <Setter Property="Stroke" Value="#B26A00" />
+                                    <Setter Property="StrokeThickness" Value="2" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding IsBlock}" Value="True">
+                                    <Setter Property="Fill" Value="#F3FBF4" />
+                                    <Setter Property="Stroke" Value="#2E7D32" />
+                                    <Setter Property="StrokeThickness" Value="2" />
+                                </DataTrigger>
                             </Style.Triggers>
                         </Style>
                     </Rectangle.Style>
@@ -127,25 +143,59 @@
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Row="0"
-                               Text="{Binding Title}"
-                               FontSize="11"
-                               FontWeight="SemiBold"
-                               LineHeight="13"
-                               LineStackingStrategy="BlockLineHeight"
-                               TextWrapping="Wrap"
-                               ClipToBounds="True">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock">
-                                <Setter Property="Foreground" Value="#4A3F72" />
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding IsWaste}" Value="True">
-                                        <Setter Property="Foreground" Value="#9A9AA5" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
+                    <!-- 标题行：左侧标题，右侧类型小标签（顶P / 堆 / 块） -->
+                    <Grid Grid.Row="0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock Grid.Column="0"
+                                   Text="{Binding Title}"
+                                   FontSize="11"
+                                   FontWeight="SemiBold"
+                                   LineHeight="13"
+                                   LineStackingStrategy="BlockLineHeight"
+                                   TextWrapping="Wrap"
+                                   ClipToBounds="True">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Foreground" Value="#4A3F72" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsWaste}" Value="True">
+                                            <Setter Property="Foreground" Value="#9A9AA5" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+
+                        <Border Grid.Column="1"
+                                CornerRadius="5"
+                                Padding="4,1"
+                                Margin="3,0,0,0"
+                                VerticalAlignment="Top"
+                                Visibility="{Binding HasKindTag, Converter={StaticResource BoolToVis}}">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Background" Value="#0E7C86" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsStack}" Value="True">
+                                            <Setter Property="Background" Value="#B26A00" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding IsBlock}" Value="True">
+                                            <Setter Property="Background" Value="#2E7D32" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+
+                            <TextBlock Text="{Binding KindTag}"
+                                       FontSize="9"
+                                       FontWeight="Bold"
+                                       Foreground="#FFFFFF" />
+                        </Border>
+                    </Grid>
 
                     <Grid Grid.Row="2"
                           ClipToBounds="True">
@@ -690,6 +740,12 @@
                                                                Foreground="{StaticResource Brush.Text}"
                                                                TextWrapping="Wrap" />
 
+                                                    <!-- 未覆盖时的小字说明：这并不代表不可制作 -->
+                                                    <TextBlock Text="{Binding PathOutcomeNote}"
+                                                               Style="{StaticResource Text.Hint}"
+                                                               Margin="0,3,0,0"
+                                                               Visibility="{Binding HasPathOutcomeNote, Converter={StaticResource BoolToVis}}" />
+
                                                     <!-- 节点图容器：横纵都可滚动，预览保持 30px 单元格不缩放 -->
                                                     <Border Background="#FBFAFF"
                                                             BorderBrush="#E6E2F2"
@@ -800,7 +856,7 @@
 
                                                     <TextBlock Style="{StaticResource Text.Hint}"
                                                                Margin="0,6,0,0"
-                                                               Text="节点按 5 层从上到下排列，同层节点从左到右紧排，层间固定留 80px 画箭头；预览保持 30px 单元格原始尺寸，图形较宽或较高时容器可横纵滚动。废料节点淡显、虚线边框，指向废料的箭头为灰色虚线。" />
+                                                               Text="节点按层从上到下排列，同层节点从左到右紧排，层间固定留 80px 画箭头；行数由制作路径决定（顶针 / 堆叠 / 块会追加新层）。预览保持 30px 单元格原始尺寸，图形较宽或较高时容器可横纵滚动。废料节点淡显、虚线边框，指向废料的箭头为灰色虚线；顶针、堆叠、块分别用青绿 / 橙 / 绿边框与「顶P」「堆」「块」小标签区分。" />
                                                 </StackPanel>
                                             </StackPanel>
                                         </Border>
