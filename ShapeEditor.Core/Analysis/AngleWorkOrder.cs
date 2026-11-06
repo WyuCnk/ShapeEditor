@@ -27,6 +27,9 @@ public enum AngleWorkStepKind
     /// <summary>下落：碎晶后材料落位。</summary>
     Collapse,
 
+    /// <summary>顶针：一次顶针完成批量下落（构造 H）。</summary>
+    Pin,
+
     /// <summary>结晶：补晶体。</summary>
     Crystallize,
 
@@ -45,11 +48,17 @@ public enum AngleConstruction
     /// <summary>没有可用构造。</summary>
     None,
 
-    /// <summary>构造 G：四象限单孔环下落，一次降一层。</summary>
+    /// <summary>构造 G：四象限单孔环下落，一次降一层（多层时重复多轮）。</summary>
     G,
 
     /// <summary>构造 F：至少六象限的受控下落，一次降到目标 d 层。</summary>
-    F
+    F,
+
+    /// <summary>构造 H：四象限的一次顶针批量下落（一次 Pin 完成整段下降）。</summary>
+    H,
+
+    /// <summary>填充+暴破：把塔下缺口填成晶体，再用切割打碎这一段晶体。</summary>
+    FillBreak
 }
 
 /// <summary>
@@ -62,7 +71,7 @@ public enum AngleConstruction
 /// <para>
 /// <see cref="Rotation"/> 是切割前需要顺转的象限数（顺时针为正，与
 /// <see cref="ShapeOps.Rotate"/> 一致）；<see cref="AuxiliaryColumns"/> 是
-/// 前态里辅助列所在的原始象限索引。
+/// 前态里辅助列所在的原始象限索引（按环顺序）。
 /// </para>
 /// </summary>
 public sealed record AngleWorkOrder(
@@ -91,15 +100,20 @@ public sealed record AngleWorkOrder(
 /// 角工序生成器。
 ///
 /// <para>
-/// 对简单角只返回一条说明；对碎晶角按象限数选构造：
-/// <c>n = 4 → 构造 G</c>，<c>n ≥ 6 → 构造 F</c>。
-/// 前态 = 目标列 + 辅助列，画在 cap 高的示意画布上；其余象限留空。
+/// 对简单角只返回一条说明；对碎晶角按形态选构造：
 /// </para>
+/// <list type="bullet">
+/// <item><c>n = 4、单层缺口</c> → 构造 G（一轮环下落）；</item>
+/// <item><c>n = 4、多层缺口</c> → 先试构造 H（一次顶针批量下落），
+/// 顶针做不了时退回多轮构造 G（每轮降一层）；</item>
+/// <item><c>n ≥ 6</c> → 构造 F（一次受控下落到 d 层）；</item>
+/// <item><b>缺口不在晶体塔正下方</b>（塔底正下方还有普通格/顶针）→
+/// 填充+暴破：先把塔下缺口填成晶体，再用切割打碎这一段晶体。</item>
+/// </list>
 /// <para>
-/// 前态的算法是 G/F 的逆变换：目标列晶体塔（最高晶体所在的连续晶体段）正下方必须是空位，
-/// 再往下的最高非空格 <c>d</c> 是普通格。把 <c>d</c> 的普通格搬到晶体塔正下方
-/// <c>s = t−1</c>，再由 G/F 的碎晶+受控下落把它送回 <c>d</c>，缺口就出现在
-/// <c>s</c>（也就是晶体塔正下方）。
+/// 前态 = 目标列 + 辅助列，画在 cap 高的示意画布上；其余象限留空。
+/// 构造 G/F/H 的逆变换都是「把落点 d 的普通格搬到晶体塔正下方 s，
+/// 再由碎晶/顶针让它受控落回 d」。
 /// </para>
 /// <para>
 /// <b>为什么末步不是结晶</b>：<see cref="ShapePhysics.Crystallize"/> 是全局操作，
@@ -178,6 +192,7 @@ public static class AngleWorkOrderBuilder
 
         int highest = AngleClassifier.HighestCrystalLayer(target, column);
 
+        // t = 最高晶体段的底端（0 起）。
         int t = highest;
 
         while (t > 0 &&
@@ -197,12 +212,33 @@ public static class AngleWorkOrderBuilder
                 "最高晶体段从地面开始，缺口不在晶体塔正下方，G/F 不适用。");
         }
 
+        // === 缺口不在晶体塔正下方：填充 + 暴破 ===
+
         if (target[s, column].Type != CellType.Empty)
         {
-            return Incomplete(
+            /*
+             * 塔底正下方不是空位，G/F/H 的逆变换都要求把 d 层的普通格搬到 s 层，
+             * 这里没有 s 层的空位可用。
+             *
+             * 改用「填充 + 暴破」：把塔下的缺口区域填成晶体（相当于用构造 A
+             * 在这里结晶），再用切割把这一整段晶体打碎，缺口就由切割造出来。
+             */
+            if (parts < 4)
+            {
+                return Incomplete(
+                    column,
+                    kind,
+                    "缺口不在晶体塔正下方，填充+暴破至少要 4 个象限（目标列 + 托柱 + 桥柱）。");
+            }
+
+            return BuildFillBreak(
+                target,
                 column,
-                kind,
-                $"最高晶体塔正下方（第 {s + 1} 层）不是空位；G/F 的缺口必须直接位于晶体塔之下。");
+                layers,
+                parts,
+                half,
+                t,
+                kind);
         }
 
         int d = -1;
@@ -236,59 +272,129 @@ public static class AngleWorkOrderBuilder
 
         bool singleLayerGap = d == s - 1;
 
-        // 构造 G 的 B 列要在 t+1 层放针；晶体塔本身至少三连晶（到 t+2），
-        // 因此 t+2 必须仍落在 cap 之内。
-        bool gPinRoom = s + 2 < layers;
-
-        bool gPossible =
-            parts == 4 &&
-            topLength >= 3 &&
-            singleLayerGap &&
-            gPinRoom;
-
-        bool fPossible = parts >= 6;
-
-        if (!gPossible && !fPossible)
+        if (parts == 4)
         {
-            string reason;
+            // 构造 G 的 B 列要在 t+1 层放针；晶体塔本身至少三连晶（到 t+2），
+            // 因此 t+2 必须仍落在 cap 之内。
+            bool gPinRoom = s + 2 < layers;
+            bool gTowerOk = topLength >= 3;
 
-            if (parts == 4)
+            if (singleLayerGap)
             {
-                if (topLength < 3)
+                if (gTowerOk && gPinRoom)
+                {
+                    return BuildCutPath(
+                        target,
+                        column,
+                        layers,
+                        parts,
+                        half,
+                        s,
+                        d,
+                        kind,
+                        AngleConstruction.G);
+                }
+
+                string reason;
+
+                if (!gTowerOk)
                 {
                     reason = "构造 G 需要晶体塔至少三连晶（t、t+1、t+2 都是晶体），该列不满足。";
-                }
-                else if (!singleLayerGap)
-                {
-                    reason = "构造 G 一次只能把普通格降一层；该列的缺口高于一层，需要多轮 G（尚未实现）。";
                 }
                 else
                 {
                     reason = "构造 G 需要在 t+1 层放针，但晶体塔已经顶到 cap，放不下 G 的支撑环。";
                 }
-            }
-            else
-            {
-                reason = "象限数既不是 4 也不 ≥ 6，构造 G/F 都不适用。";
+
+                return Incomplete(column, kind, reason);
             }
 
-            return Incomplete(column, kind, reason);
+            // === n = 4、多层缺口：优先一次顶针（构造 H），否则多轮 G ===
+
+            AngleWorkOrder hOrder = TryBuildH(
+                target,
+                column,
+                layers,
+                parts,
+                s,
+                d,
+                kind);
+
+            if (hOrder.IsComplete)
+            {
+                return hOrder;
+            }
+
+            if (gTowerOk && gPinRoom)
+            {
+                AngleWorkOrder gOrder = BuildMultiRoundG(
+                    target,
+                    column,
+                    layers,
+                    parts,
+                    half,
+                    t,
+                    s,
+                    d,
+                    kind);
+
+                if (gOrder.IsComplete)
+                {
+                    return gOrder;
+                }
+
+                return AppendFailure(
+                    gOrder,
+                    "构造 H（一次顶针）也未通过：" + (hOrder.Note ?? "不适用"));
+            }
+
+            return AppendFailure(
+                hOrder,
+                "多轮构造 G 也不适用：晶体塔不足三连晶（t、t+1、t+2 都要是晶体）。");
         }
 
-        var limitations = new List<string>
+        if (parts >= 6)
         {
-            "前态只画目标列与辅助列，其余象限留空；它们不参与本订单的验证。",
-            "碎晶角必须「先有晶体塔、后造缺口」：目的地的缺口在结晶之后才出现，" +
-            "所以本工序不含末步结晶（全局结晶会把缺口填平）。",
-            "构造 G/F 的验证直接使用 ShapePhysics 的现有语义：" +
-            "Cut 沿固定刀口 n/2 把跨刀口晶体整块打碎、两半各自下落一次。"
-        };
+            return BuildCutPath(
+                target,
+                column,
+                layers,
+                parts,
+                half,
+                s,
+                d,
+                kind,
+                AngleConstruction.F);
+        }
 
-        // === 选构造并搭前态 ===
+        return Incomplete(
+            column,
+            kind,
+            "象限数既不是 4 也不 ≥ 6，构造 G/F 都不适用。");
+    }
 
-        AngleConstruction construction = parts == 4
-            ? AngleConstruction.G
-            : AngleConstruction.F;
+    #region 构造 G / F（切割路径）
+
+    /// <summary>
+    /// 构造 G（单层）或 F（n ≥ 6）的切割路径：前态 → Cut → Collapse → Target。
+    /// </summary>
+    private static AngleWorkOrder BuildCutPath(
+        ShapeDocument target,
+        int column,
+        int layers,
+        int parts,
+        int half,
+        int s,
+        int d,
+        AngleBuildKind kind,
+        AngleConstruction construction)
+    {
+        var limitations = BaseLimitations(
+            construction == AngleConstruction.G
+                ? "构造 G 的验证直接使用 ShapePhysics 的现有语义：" +
+                  "Cut 沿固定刀口 n/2 把跨刀口晶体整块打碎、两半各自下落一次。"
+                : "构造 F 的验证直接使用 ShapePhysics 的现有语义：" +
+                  "Cut 沿固定刀口 n/2 把跨刀口晶体整块打碎、两半各自下落一次。");
 
         ShapeDocument preState = BuildPreState(
             target,
@@ -472,11 +578,7 @@ public static class AngleWorkOrderBuilder
             collapsedBack,
             AngleWorkStepKind.Collapse));
 
-        steps.Add(new AngleWorkStep(
-            "补晶体：本角不需要末步结晶——Crystallize 是全局操作，" +
-            "会把刚做出来的缺口重新填平；前态里的晶体塔应由构造 A 的逐层结晶预先做出。",
-            null,
-            AngleWorkStepKind.Note));
+        steps.Add(CrystallizeNote());
 
         steps.Add(new AngleWorkStep(
             "清除辅助象限，得到目标角",
@@ -497,6 +599,886 @@ public static class AngleWorkOrderBuilder
         };
     }
 
+    #endregion
+
+    #region 构造 H（一次顶针）
+
+    /// <summary>
+    /// 构造 H：四象限的一次顶针批量下落。
+    ///
+    /// <para>
+    /// 环上依次是 <c>目标 A | 晶体桥柱 B | 满高纯晶体柱 E | 针槽柱 N</c>。
+    /// 所有层号都按<b>顶针后</b>对齐：顶针把前态第 z 层抬到第 z+1 层。
+    /// 目标列的源普通格写在顶针前的 s−1 层，顶针后位于 s，再沿被 E 连带打碎的
+    /// B 晶体通道落到 d。
+    /// </para>
+    /// <para>
+    /// 只有 n = 4 时四个辅助列刚好占满整圈；这里专门用于<b>多层缺口</b>
+    /// （一次 Pin 完成整段下降）。若前提不满足或回放对不上，返回带
+    /// Note 的未完成单，由调用方退回多轮 G。
+    /// </para>
+    /// </summary>
+    private static AngleWorkOrder TryBuildH(
+        ShapeDocument target,
+        int column,
+        int layers,
+        int parts,
+        int s,
+        int d,
+        AngleBuildKind kind)
+    {
+        var limitations = BaseLimitations(
+            "构造 H 的验证直接使用 ShapePhysics.Pin：" +
+            "顶针把整体上移一层，超限晶体整簇破碎后下落一次。");
+
+        // === 构造 H 的前提 ===
+
+        if (d < 1)
+        {
+            return Incomplete(
+                column,
+                kind,
+                "构造 H 的落点 d 必须至少是第 2 层（1 起）：顶针会新增第 1 层顶针，" +
+                "普通格不能落到第 1 层。",
+                limitations,
+                construction: AngleConstruction.H);
+        }
+
+        if (target[d, column].Type != CellType.Shape)
+        {
+            return Incomplete(
+                column,
+                kind,
+                "构造 H 只搬运普通格，该列落点不是普通格。",
+                limitations,
+                construction: AngleConstruction.H);
+        }
+
+        if (target[0, column].Type is not (CellType.Pin or CellType.Empty))
+        {
+            return Incomplete(
+                column,
+                kind,
+                "构造 H 的顶针会在第 1 层补顶针（若前态底层非空），" +
+                "因此目标底层必须是顶针或空。",
+                limitations,
+                construction: AngleConstruction.H);
+        }
+
+        if (target[0, column].Type == CellType.Pin)
+        {
+            if (d == 1)
+            {
+                return Incomplete(
+                    column,
+                    kind,
+                    "构造 H 的底层顶针与落点 d = 1 冲突（顶针会占住第 1 层）。",
+                    limitations,
+                    construction: AngleConstruction.H);
+            }
+
+            if (target[1, column].Type == CellType.Empty)
+            {
+                return Incomplete(
+                    column,
+                    kind,
+                    "构造 H 要生成底层顶针，前态第 1 层必须非空，" +
+                    "但它会被顶针抬到第 2 层；该列第 2 层为空。",
+                    limitations,
+                    construction: AngleConstruction.H);
+            }
+        }
+        else if (d > 1 && target[1, column].Type != CellType.Empty)
+        {
+            return Incomplete(
+                column,
+                kind,
+                "构造 H 的底层没有顶针时，前态第 1 层必须为空，" +
+                "该列第 2 层却非空，逆变换对不上。",
+                limitations,
+                construction: AngleConstruction.H);
+        }
+
+        // === 前态：目标列整体下移一层（源格放到 s−1），辅助列按顶针后层号对齐 ===
+
+        char color = CrystalColor(target, column);
+
+        var preState = new ShapeDocument(layers, parts);
+
+        for (int layer = 1;
+             layer < layers;
+             layer++)
+        {
+            preState[layer - 1, column] = layer < target.LayerCount
+                ? target[layer, column].Clone()
+                : ShapeCell.Empty();
+        }
+
+        // 落点 d 在顶针前是 d−1 层；这里必须先空出来，源格才能落进去。
+        preState[d - 1, column] = ShapeCell.Empty();
+
+        // 源普通格：目标 d 层的材料，顶针前位于 s−1 层。
+        preState[s - 1, column] = target[d, column].Clone();
+
+        if (target[0, column].Type == CellType.Pin)
+        {
+            // 前态第 1 层非空 ⇒ 顶针补出目标第 1 层的顶针；
+            // 同时这个格子被抬到第 2 层，正好是目标第 2 层。
+            preState[0, column] = target[1, column].Clone();
+        }
+
+        int bColumn = Wrap(column + 1, parts);
+        int eColumn = Wrap(column + 2, parts);
+        int nColumn = Wrap(column - 1, parts);
+
+        // B：第 z 层放晶体 ⇔ 顶针后的 z+1 ∈ I = [d, s−1]。
+        FillPillar(preState, bColumn);
+
+        for (int layer = d - 1;
+             layer <= s - 2;
+             layer++)
+        {
+            preState[layer, bColumn] = ShapeCell.Crystal(color);
+        }
+
+        // E：满高纯晶体柱；顶针后顶端超限，整根晶体柱碎掉。
+        for (int layer = 0;
+             layer < layers;
+             layer++)
+        {
+            preState[layer, eColumn] = ShapeCell.Crystal(color);
+        }
+
+        // N：第 z 层放针 ⇔ 顶针后的 z+1 ∈ J = {s}；其他层普通格。
+        FillPillar(preState, nColumn);
+        preState[s - 1, nColumn] = ShapeCell.Pin();
+
+        var auxiliaryColumns = new[] { nColumn, bColumn, eColumn };
+
+        var steps = new List<AngleWorkStep>
+        {
+            new(
+                "碎晶前的角（带辅助象限，按顶针后层号对齐）",
+                preState,
+                AngleWorkStepKind.PreState)
+        };
+
+        if (!ShapeOps.IsStable(preState))
+        {
+            return Incomplete(
+                column,
+                kind,
+                "构造 H 的前态不稳定（一次下落后会变形），后续顶针验证无法进行。",
+                limitations,
+                steps,
+                AngleConstruction.H,
+                0,
+                auxiliaryColumns);
+        }
+
+        // === 一次顶针 ===
+
+        PhysicsResult pinResult = ShapePhysics.Pin(preState);
+
+        if (!pinResult.Success || pinResult.Document is null)
+        {
+            return Incomplete(
+                column,
+                kind,
+                "ShapePhysics.Pin 失败：" + (pinResult.Error ?? "未知原因"),
+                limitations,
+                steps,
+                AngleConstruction.H,
+                0,
+                auxiliaryColumns);
+        }
+
+        ShapeDocument pinned = pinResult.Document;
+
+        if (!MatchesTargetColumn(
+                pinned,
+                target,
+                column,
+                layers,
+                out string? difference))
+        {
+            return Incomplete(
+                column,
+                kind,
+                "一次顶针后的目标列与目标不符：" + difference,
+                limitations,
+                steps,
+                AngleConstruction.H,
+                0,
+                auxiliaryColumns,
+                new AngleWorkStep(
+                    "一次顶针结果（未通过验证，仅供参考）",
+                    pinned,
+                    AngleWorkStepKind.Note));
+        }
+
+        // 结构性核对：B 的晶体桥必须已被 E 的整柱破碎连带删除。
+        int bRotated = bColumn;
+
+        bool bridgeGone = true;
+
+        for (int layer = d;
+             layer <= s - 1;
+             layer++)
+        {
+            if (pinned[layer, bRotated].Type == CellType.Crystal)
+            {
+                bridgeGone = false;
+            }
+        }
+
+        if (!bridgeGone)
+        {
+            return Incomplete(
+                column,
+                kind,
+                "顶针后晶体桥没有全部删除，构造 H 的前提不成立。",
+                limitations,
+                steps,
+                AngleConstruction.H,
+                0,
+                auxiliaryColumns);
+        }
+
+        steps.Add(new AngleWorkStep(
+            "顶针：一次顶针把整体抬一层，E 顶端超限碎裂并连带删掉 B 的晶体桥，" +
+            "源普通格沿通道落到目标 d 层",
+            pinned,
+            AngleWorkStepKind.Pin));
+
+        steps.Add(CrystallizeNote());
+
+        steps.Add(new AngleWorkStep(
+            "清除辅助象限，得到目标角",
+            target,
+            AngleWorkStepKind.Target));
+
+        return new AngleWorkOrder(
+            column,
+            kind,
+            steps,
+            null)
+        {
+            IsComplete = true,
+            Construction = AngleConstruction.H,
+            Rotation = 0,
+            AuxiliaryColumns = auxiliaryColumns,
+            Limitations = limitations
+        };
+    }
+
+    #endregion
+
+    #region 多轮构造 G
+
+    /// <summary>
+    /// 多轮构造 G：缺口高 k 层就做 k 轮，每轮只把源普通格降一层。
+    ///
+    /// <para>
+    /// 第 k 轮的源格在 <c>s−k</c> 层，空位 h 取它正下方（<c>s−k−1</c>）；
+    /// 每轮都重新装 B（第 h 层晶体、第 t+1 层针）与 E（第 h 层晶体），
+    /// 切割碎晶后源格整体下降一层，空位被搬到晶体塔正下方。
+    /// </para>
+    /// </summary>
+    private static AngleWorkOrder BuildMultiRoundG(
+        ShapeDocument target,
+        int column,
+        int layers,
+        int parts,
+        int half,
+        int t,
+        int s,
+        int d,
+        AngleBuildKind kind)
+    {
+        var limitations = BaseLimitations(
+            "多轮构造 G 的验证直接使用 ShapePhysics 的现有语义：" +
+            "每轮 Cut 沿固定刀口 n/2 把跨刀口晶体整块打碎、两半各自下落一次。");
+
+        char color = CrystalColor(target, column);
+
+        int p = half - 2;
+        int rotation = Wrap(p - column, parts);
+
+        // 首轮前态：把 d 层的普通格搬到 s 层，缺口留在 d..s−1。
+        var current = new ShapeDocument(layers, parts);
+
+        for (int layer = 0;
+             layer < layers;
+             layer++)
+        {
+            current[layer, column] = layer < target.LayerCount
+                ? target[layer, column].Clone()
+                : ShapeCell.Empty();
+        }
+
+        current[s, column] = target[d, column].Clone();
+        current[d, column] = ShapeCell.Empty();
+
+        var steps = new List<AngleWorkStep>();
+
+        int rounds = s - d;
+
+        for (int round = 0;
+             round < rounds;
+             round++)
+        {
+            int sourceLayer = s - round;
+            int h = sourceLayer - 1;
+
+            ShapeDocument preState = BuildRoundGPreState(
+                current,
+                layers,
+                parts,
+                column,
+                t,
+                h,
+                color);
+
+            int bColumn = Wrap(column + 1, parts);
+            int eColumn = Wrap(column + 2, parts);
+
+            var auxiliaryColumns = new[] { bColumn, eColumn };
+
+            steps.Add(new AngleWorkStep(
+                rounds == 1
+                    ? "碎晶前的角（带辅助象限）"
+                    : $"第 {round + 1}/{rounds} 轮碎晶前的角（带辅助象限）",
+                preState,
+                AngleWorkStepKind.PreState));
+
+            if (!ShapeOps.IsStable(preState))
+            {
+                return Incomplete(
+                    column,
+                    kind,
+                    $"第 {round + 1} 轮前态不稳定（一次下落后会变形），后续碎晶/下落验证无法进行。",
+                    limitations,
+                    steps,
+                    AngleConstruction.G,
+                    rotation,
+                    auxiliaryColumns);
+            }
+
+            var rotated = ShapeOps.Rotate(preState, rotation);
+
+            ShapeDocument rawWest = CutWestBeforeCollapse(rotated, half);
+
+            CutResult realCut = ShapePhysics.Cut(rotated);
+
+            if (!realCut.Success ||
+                realCut.West is null ||
+                realCut.East is null)
+            {
+                return Incomplete(
+                    column,
+                    kind,
+                    $"第 {round + 1} 轮 ShapePhysics.Cut 失败：" +
+                    (realCut.Error ?? "未知原因"),
+                    limitations,
+                    steps,
+                    AngleConstruction.G,
+                    rotation,
+                    auxiliaryColumns);
+            }
+
+            ShapeDocument rawCollapsed =
+                ShapePhysics.Collapse(rawWest).Document!;
+
+            if (!ShapeOps.Same(rawCollapsed, realCut.West))
+            {
+                return Incomplete(
+                    column,
+                    kind,
+                    $"第 {round + 1} 轮结构性半破与 ShapePhysics.Cut 的结果对不上。",
+                    limitations,
+                    steps,
+                    AngleConstruction.G,
+                    rotation,
+                    auxiliaryColumns);
+            }
+
+            int bRotated = Wrap(bColumn + rotation, parts);
+
+            bool bridgeGone =
+                rawWest[h, bRotated].Type != CellType.Crystal;
+
+            ShapeDocument rawBack = ShapeOps.Rotate(rawWest, -rotation);
+
+            ShapeDocument collapsedBack =
+                ShapeOps.Rotate(rawCollapsed, -rotation);
+
+            // 本轮预期：源格从 sourceLayer 落到 h，其他格子不动。
+            var expected = new ShapeDocument(layers, parts);
+
+            for (int layer = 0;
+                 layer < layers;
+                 layer++)
+            {
+                expected[layer, column] = current[layer, column].Clone();
+            }
+
+            expected[h, column] = current[sourceLayer, column].Clone();
+            expected[sourceLayer, column] = ShapeCell.Empty();
+
+            if (!bridgeGone)
+            {
+                return Incomplete(
+                    column,
+                    kind,
+                    $"第 {round + 1} 轮切割没有打碎辅助列的晶体桥。",
+                    limitations,
+                    steps,
+                    AngleConstruction.G,
+                    rotation,
+                    auxiliaryColumns);
+            }
+
+            steps.Add(new AngleWorkStep(
+                rounds == 1
+                    ? (rotation == 0
+                        ? "切割：沿 n/2 刀口半破，打碎桥柱晶体"
+                        : $"切割：先顺转 {rotation} 个象限，再沿 n/2 刀口半破，打碎桥柱晶体")
+                    : $"第 {round + 1}/{rounds} 轮切割：打碎桥柱晶体",
+                rawBack,
+                AngleWorkStepKind.Cut));
+
+            if (!MatchesColumn(
+                    collapsedBack,
+                    expected,
+                    column,
+                    layers,
+                    out string? difference))
+            {
+                return Incomplete(
+                    column,
+                    kind,
+                    $"第 {round + 1} 轮下落结果与预期不符：{difference}",
+                    limitations,
+                    steps,
+                    AngleConstruction.G,
+                    rotation,
+                    auxiliaryColumns,
+                    new AngleWorkStep(
+                        $"第 {round + 1} 轮下落结果（未通过验证，仅供参考）",
+                        collapsedBack,
+                        AngleWorkStepKind.Note));
+            }
+
+            steps.Add(new AngleWorkStep(
+                rounds == 1
+                    ? "下落：材料落位，缺口移到晶体塔正下方"
+                    : $"第 {round + 1}/{rounds} 轮下落：源普通格下降一层",
+                collapsedBack,
+                AngleWorkStepKind.Collapse));
+
+            current = new ShapeDocument(layers, parts);
+
+            for (int layer = 0;
+                 layer < layers;
+                 layer++)
+            {
+                current[layer, column] = collapsedBack[layer, column].Clone();
+            }
+        }
+
+        if (!MatchesTargetColumn(
+                current,
+                target,
+                column,
+                layers,
+                out string? finalDifference))
+        {
+            return Incomplete(
+                column,
+                kind,
+                "多轮 G 全部完成后目标列仍与目标不符：" + finalDifference,
+                limitations,
+                steps,
+                AngleConstruction.G,
+                rotation,
+                new[] { Wrap(column + 1, parts), Wrap(column + 2, parts) },
+                new AngleWorkStep(
+                    "多轮 G 最终结果（未通过验证，仅供参考）",
+                    current,
+                    AngleWorkStepKind.Note));
+        }
+
+        steps.Add(CrystallizeNote());
+
+        steps.Add(new AngleWorkStep(
+            "清除辅助象限，得到目标角",
+            target,
+            AngleWorkStepKind.Target));
+
+        return new AngleWorkOrder(
+            column,
+            kind,
+            steps,
+            null)
+        {
+            IsComplete = true,
+            Construction = AngleConstruction.G,
+            Rotation = rotation,
+            AuxiliaryColumns = new[]
+            {
+                Wrap(column + 1, parts),
+                Wrap(column + 2, parts)
+            },
+            Limitations = limitations
+        };
+    }
+
+    /// <summary>
+    /// 多轮 G 每一轮的前态：当前目标列原样 + B/E 两列辅助，
+    /// B 第 h 层晶体、第 t+1 层针，E 第 h 层晶体。
+    /// </summary>
+    private static ShapeDocument BuildRoundGPreState(
+        ShapeDocument current,
+        int layers,
+        int parts,
+        int column,
+        int t,
+        int h,
+        char color)
+    {
+        var preState = new ShapeDocument(layers, parts);
+
+        for (int layer = 0;
+             layer < layers;
+             layer++)
+        {
+            preState[layer, column] = current[layer, column].Clone();
+        }
+
+        int bColumn = Wrap(column + 1, parts);
+        int eColumn = Wrap(column + 2, parts);
+
+        FillPillar(preState, bColumn);
+        preState[h, bColumn] = ShapeCell.Crystal(color);
+        preState[t + 1, bColumn] = ShapeCell.Pin();
+
+        FillPillar(preState, eColumn);
+        preState[h, eColumn] = ShapeCell.Crystal(color);
+
+        return preState;
+    }
+
+    #endregion
+
+    #region 填充 + 暴破
+
+    /// <summary>
+    /// 缺口不在晶体塔正下方时的构造：填充 + 暴破。
+    ///
+    /// <para>
+    /// 前态直接使用目标列，但把塔下的空格<b>填充成晶体</b>；目标列西侧放一根
+    /// 满高普通柱（holder）托住塔，东侧放一根只在这些填充层带晶体的桥柱 E。
+    /// 半破沿 n/2 刀口把「填充晶体 + E 的晶体」一起打碎，缺口就由切割造出来；
+    /// holder 留在西半边，保证塔不会随碎晶一起下落。
+    /// </para>
+    /// <para>
+    /// 只填充<b>不与目标原有晶体上下相邻</b>的空格（safe 候选）；若 safe 为空，
+    /// 再退而尝试全部空格。任何候选都必须用真实 Cut 回放并逐格核对目标列。
+    /// </para>
+    /// </summary>
+    private static AngleWorkOrder BuildFillBreak(
+        ShapeDocument target,
+        int column,
+        int layers,
+        int parts,
+        int half,
+        int t,
+        AngleBuildKind kind)
+    {
+        var limitations = BaseLimitations(
+            "填充+暴破的验证直接使用 ShapePhysics 的现有语义：" +
+            "结晶只把目标列塔下的缺口填成晶体；Cut 沿 n/2 刀口把跨刀口的填充晶体" +
+            "与桥柱晶体整块打碎，两半各自下落一次。");
+
+        var allEmpty = new List<int>();
+
+        for (int layer = 0;
+             layer < t;
+             layer++)
+        {
+            if (target[layer, column].Type == CellType.Empty)
+            {
+                allEmpty.Add(layer);
+            }
+        }
+
+        if (allEmpty.Count == 0)
+        {
+            return Incomplete(
+                column,
+                kind,
+                "缺口不在晶体塔正下方，但塔下没有可填充的空位，无法用填充+暴破。",
+                limitations,
+                construction: AngleConstruction.FillBreak);
+        }
+
+        var safe = new List<int>();
+
+        foreach (int layer in allEmpty)
+        {
+            bool belowCrystal =
+                layer > 0 &&
+                target[layer - 1, column].Type == CellType.Crystal;
+
+            bool aboveCrystal =
+                layer + 1 < target.LayerCount &&
+                target[layer + 1, column].Type == CellType.Crystal;
+
+            if (!belowCrystal && !aboveCrystal)
+            {
+                safe.Add(layer);
+            }
+        }
+
+        var candidates = new List<List<int>>();
+
+        if (safe.Count > 0)
+        {
+            candidates.Add(safe);
+        }
+
+        if (allEmpty.Count > 0 &&
+            (safe.Count == 0 || !SameLayers(safe, allEmpty)))
+        {
+            candidates.Add(allEmpty);
+        }
+
+        AngleWorkOrder? bestFailure = null;
+
+        foreach (List<int> fill in candidates)
+        {
+            AngleWorkOrder attempt = TryFillBreakCandidate(
+                target,
+                column,
+                layers,
+                parts,
+                half,
+                kind,
+                fill,
+                limitations);
+
+            if (attempt.IsComplete)
+            {
+                return attempt;
+            }
+
+            if (bestFailure is null ||
+                attempt.Steps.Count > bestFailure.Steps.Count)
+            {
+                bestFailure = attempt;
+            }
+        }
+
+        return bestFailure ?? Incomplete(
+            column,
+            kind,
+            "填充+暴破没有可用候选。",
+            limitations,
+            construction: AngleConstruction.FillBreak);
+    }
+
+    private static AngleWorkOrder TryFillBreakCandidate(
+        ShapeDocument target,
+        int column,
+        int layers,
+        int parts,
+        int half,
+        AngleBuildKind kind,
+        List<int> fill,
+        List<string> limitations)
+    {
+        char color = CrystalColor(target, column);
+
+        var preState = new ShapeDocument(layers, parts);
+
+        for (int layer = 0;
+             layer < layers &&
+             layer < target.LayerCount;
+             layer++)
+        {
+            preState[layer, column] = target[layer, column].Clone();
+        }
+
+        foreach (int layer in fill)
+        {
+            preState[layer, column] = ShapeCell.Crystal(color);
+        }
+
+        int holderColumn = Wrap(column - 1, parts);
+        int eColumn = Wrap(column + 1, parts);
+
+        // holder：满高普通柱，留在西半边托住晶体塔。
+        FillPillar(preState, holderColumn);
+
+        // E：满高普通柱，只在填充层带晶体，用来跨刀口连带打碎填充晶体。
+        FillPillar(preState, eColumn);
+
+        foreach (int layer in fill)
+        {
+            preState[layer, eColumn] = ShapeCell.Crystal(color);
+        }
+
+        int p = half - 1;
+        int rotation = Wrap(p - column, parts);
+
+        var auxiliaryColumns = new[] { holderColumn, eColumn };
+
+        var steps = new List<AngleWorkStep>
+        {
+            new(
+                "碎晶前的角（塔下缺口已填充成晶体）",
+                preState,
+                AngleWorkStepKind.PreState)
+        };
+
+        if (!ShapeOps.IsStable(preState))
+        {
+            return Incomplete(
+                column,
+                kind,
+                "填充+暴破的前态不稳定（一次下落后会变形），后续碎晶验证无法进行。",
+                limitations,
+                steps,
+                AngleConstruction.FillBreak,
+                rotation,
+                auxiliaryColumns);
+        }
+
+        var rotated = ShapeOps.Rotate(preState, rotation);
+
+        ShapeDocument rawWest = CutWestBeforeCollapse(rotated, half);
+
+        CutResult realCut = ShapePhysics.Cut(rotated);
+
+        if (!realCut.Success ||
+            realCut.West is null ||
+            realCut.East is null)
+        {
+            return Incomplete(
+                column,
+                kind,
+                "填充+暴破的 ShapePhysics.Cut 失败：" +
+                (realCut.Error ?? "未知原因"),
+                limitations,
+                steps,
+                AngleConstruction.FillBreak,
+                rotation,
+                auxiliaryColumns);
+        }
+
+        ShapeDocument rawCollapsed =
+            ShapePhysics.Collapse(rawWest).Document!;
+
+        if (!ShapeOps.Same(rawCollapsed, realCut.West))
+        {
+            return Incomplete(
+                column,
+                kind,
+                "填充+暴破的结构性半破与 ShapePhysics.Cut 的结果对不上。",
+                limitations,
+                steps,
+                AngleConstruction.FillBreak,
+                rotation,
+                auxiliaryColumns);
+        }
+
+        int pRotated = Wrap(p, parts);
+
+        ShapeDocument rawBack = ShapeOps.Rotate(rawWest, -rotation);
+
+        ShapeDocument collapsedBack =
+            ShapeOps.Rotate(rawCollapsed, -rotation);
+
+        // 填充的晶体必须真的被切割打碎。
+        bool fillGone = true;
+
+        foreach (int layer in fill)
+        {
+            if (rawWest[layer, pRotated].Type == CellType.Crystal)
+            {
+                fillGone = false;
+            }
+        }
+
+        if (!fillGone)
+        {
+            return Incomplete(
+                column,
+                kind,
+                "切割没有把填充的晶体全部打碎。",
+                limitations,
+                steps,
+                AngleConstruction.FillBreak,
+                rotation,
+                auxiliaryColumns);
+        }
+
+        steps.Add(new AngleWorkStep(
+            rotation == 0
+                ? "切割：沿 n/2 刀口半破，打碎填充晶体与桥柱晶体"
+                : $"切割：先顺转 {rotation} 个象限，再沿 n/2 刀口半破，打碎填充晶体与桥柱晶体",
+            rawBack,
+            AngleWorkStepKind.Cut));
+
+        if (!MatchesTargetColumn(
+                collapsedBack,
+                target,
+                column,
+                layers,
+                out string? difference))
+        {
+            return Incomplete(
+                column,
+                kind,
+                "填充+暴破后的目标列与目标不符：" + difference,
+                limitations,
+                steps,
+                AngleConstruction.FillBreak,
+                rotation,
+                auxiliaryColumns,
+                new AngleWorkStep(
+                    "填充+暴破结果（未通过验证，仅供参考）",
+                    collapsedBack,
+                    AngleWorkStepKind.Note));
+        }
+
+        steps.Add(new AngleWorkStep(
+            "下落：碎晶后材料落位，目标列的缺口由切割造出",
+            collapsedBack,
+            AngleWorkStepKind.Collapse));
+
+        steps.Add(new AngleWorkStep(
+            "清除辅助象限，得到目标角",
+            target,
+            AngleWorkStepKind.Target));
+
+        return new AngleWorkOrder(
+            column,
+            kind,
+            steps,
+            null)
+        {
+            IsComplete = true,
+            Construction = AngleConstruction.FillBreak,
+            Rotation = rotation,
+            AuxiliaryColumns = auxiliaryColumns,
+            Limitations = limitations
+        };
+    }
+
+    #endregion
+
     #region 前态
 
     private static ShapeDocument BuildPreState(
@@ -512,9 +1494,7 @@ public static class AngleWorkOrderBuilder
     {
         int parts = target.PartCount;
 
-        char color =
-            target[AngleClassifier.HighestCrystalLayer(target, column), column]
-                .ColorCode ?? 'u';
+        char color = CrystalColor(target, column);
 
         var preState = new ShapeDocument(layers, parts);
 
@@ -579,6 +1559,17 @@ public static class AngleWorkOrderBuilder
         {
             document[layer, column] = ShapeCell.Shape('C', 'u');
         }
+    }
+
+    private static char CrystalColor(
+        ShapeDocument target,
+        int column)
+    {
+        int highest = AngleClassifier.HighestCrystalLayer(target, column);
+
+        return highest >= 0
+            ? target[highest, column].ColorCode ?? 'u'
+            : 'u';
     }
 
     #endregion
@@ -750,6 +1741,82 @@ public static class AngleWorkOrderBuilder
 
     #region 校验与返回
 
+    private static List<string> BaseLimitations(
+        string verificationText)
+    {
+        return new List<string>
+        {
+            "前态只画目标列与辅助列，其余象限留空；它们不参与本订单的验证。",
+            "碎晶角必须「先有晶体塔、后造缺口」：目的地的缺口在结晶之后才出现，" +
+            "所以本工序不含末步结晶（全局结晶会把缺口填平）。",
+            verificationText
+        };
+    }
+
+    private static AngleWorkStep CrystallizeNote()
+    {
+        return new AngleWorkStep(
+            "补晶体：本角不需要末步结晶——Crystallize 是全局操作，" +
+            "会把刚做出来的缺口重新填平；前态里的晶体塔应由构造 A 的逐层结晶预先做出。",
+            null,
+            AngleWorkStepKind.Note);
+    }
+
+    private static AngleWorkOrder AppendFailure(
+        AngleWorkOrder order,
+        string extra)
+    {
+        var steps = new List<AngleWorkStep>(order.Steps);
+
+        steps.Add(new AngleWorkStep(extra, null, AngleWorkStepKind.Note));
+
+        var limitations = new List<string>(order.Limitations);
+
+        if (!limitations.Contains(extra))
+        {
+            limitations.Add(extra);
+        }
+
+        string note = order.Note is null
+            ? extra
+            : order.Note + "；" + extra;
+
+        return new AngleWorkOrder(
+            order.Column,
+            order.Kind,
+            steps,
+            note)
+        {
+            IsComplete = false,
+            Construction = order.Construction,
+            Rotation = order.Rotation,
+            AuxiliaryColumns = order.AuxiliaryColumns,
+            Limitations = limitations
+        };
+    }
+
+    private static bool SameLayers(
+        List<int> left,
+        List<int> right)
+    {
+        if (left.Count != right.Count)
+        {
+            return false;
+        }
+
+        for (int index = 0;
+             index < left.Count;
+             index++)
+        {
+            if (left[index] != right[index])
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private static bool MatchesTargetColumn(
         ShapeDocument actual,
         ShapeDocument target,
@@ -771,6 +1838,35 @@ public static class AngleWorkOrderBuilder
             {
                 difference =
                     $"第 {layer + 1} 层期望 {Describe(expected)}，实际 {Describe(got)}；" +
+                    $"实际列 = {ShapeSignature.ColumnText(actual, column)}";
+
+                return false;
+            }
+        }
+
+        difference = null;
+
+        return true;
+    }
+
+    private static bool MatchesColumn(
+        ShapeDocument actual,
+        ShapeDocument expected,
+        int column,
+        int layers,
+        out string? difference)
+    {
+        for (int layer = 0;
+             layer < layers;
+             layer++)
+        {
+            ShapeCell want = expected[layer, column];
+            ShapeCell got = actual[layer, column];
+
+            if (!ShapeOps.SameCell(want, got))
+            {
+                difference =
+                    $"第 {layer + 1} 层期望 {Describe(want)}，实际 {Describe(got)}；" +
                     $"实际列 = {ShapeSignature.ColumnText(actual, column)}";
 
                 return false;

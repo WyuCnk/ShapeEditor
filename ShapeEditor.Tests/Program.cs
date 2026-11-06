@@ -125,7 +125,7 @@ internal static class Program
             ("物理:奇数象限被拒", PhysicsTests.OddPartCountIsRejected),
             ("物理:象限数取偶", PhysicsTests.NormalizePartCountRoundsUpToEven),
 
-            // 结晶原语、角分类与角工序（构造 G/F）。
+            // 结晶原语、角分类与角工序（构造 G/F/H、填充+暴破、多轮 G）。
             ("结晶:空格与顶针变晶体", AngleWorkOrderTests.CrystallizeFillsEmptyAndPin),
             ("结晶:纯函数与颜色校验", AngleWorkOrderTests.CrystallizeIsPureAndValidatesColor),
             ("角分类:简单角", AngleWorkOrderTests.ClassifySimpleAngles),
@@ -136,10 +136,13 @@ internal static class Program
             ("角工序:构造 G 规格例子", AngleWorkOrderTests.ConstructionGMatchesSpecExample),
             ("角工序:构造 F 用户样例两列", AngleWorkOrderTests.ConstructionFHandlesUserSample),
             ("角工序:构造 F 多层缺口", AngleWorkOrderTests.ConstructionFHandlesMultiLayerGap),
+            ("角工序:构造 H 一次顶针批量下落", AngleWorkOrderTests.ConstructionHSinglePinBatchDrop),
+            ("角工序:填充暴破缺口不在塔下", AngleWorkOrderTests.ConstructionFillBreakHandlesGapNotUnderTower),
+            ("角工序:填充暴破失败保留前缀", AngleWorkOrderTests.FillBreakKeepsVerifiedPrefixOnMismatch),
+            ("角工序:多轮 G 多层缺口", AngleWorkOrderTests.FourQuadrantMultiLayerGapUsesRepeatedG),
             ("角工序:多层缺口诚实报未实现", AngleWorkOrderTests.ConstructionGDoesNotFakeMultiLayerGap),
-            ("角工序:缺口不在塔下诚实报未实现", AngleWorkOrderTests.ConstructionRejectsGapNotUnderTower),
             ("角工序:前态不稳定时保留前缀", AngleWorkOrderTests.UnstablePrestateKeepsVerifiedPrefix),
-            ("角工序:构造 G 多层缺口（xfail）", AngleWorkOrderTests.FourQuadrantMultiLayerGapIsNotYetImplemented),
+            ("角工序:cap 高于目标高度", AngleWorkOrderTests.ConstructionHandlesCapAboveTargetHeight),
 
             // 交接规格 §5 的 9 组验收语料。
             ("语料1:角判据计数 4..12688", ProductionPathAcceptanceTests.AngleCriterionCounts),
@@ -165,14 +168,12 @@ internal static class Program
         /*
          * 规格 §5 第 6、7 组明确标注为 xfail：
          * TowerFill 只做直接填充、HybridStrips 只拆单顶针，完整路径尚未覆盖。
-         * 角工序的 n=4 多层缺口需要多轮 G（或其他 n=4 的 D 构造），也先标 xfail。
          * 这里把它们标成预期失败；将来实现后，测试会打印 XPASS。
          */
         var expectedFailures = new HashSet<string>(StringComparer.Ordinal)
         {
             "语料6:claw 完整路径（xfail）",
-            "语料7:二择 完整路径（xfail）",
-            "角工序:构造 G 多层缺口（xfail）"
+            "语料7:二择 完整路径（xfail）"
         };
 
         int failed = 0;
