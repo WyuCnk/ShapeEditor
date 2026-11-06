@@ -2105,6 +2105,22 @@ window.shapeGrid.downloadAnalysis = async function (payload, fileName) {
                 graphContentWidth,
                 Number(graph.width) || 0);
         }
+
+        // 角的工序：每条列节点链单独成图，卡片左右还各有 12px 内边距。
+        const angleColumns = sections[i] && Array.isArray(sections[i].angleColumns)
+            ? sections[i].angleColumns
+            : [];
+
+        for (let j = 0; j < angleColumns.length; j++) {
+            const angleGraph = angleColumns[j] && angleColumns[j].graph;
+
+            if (angleGraph) {
+                graphContentWidth = Math.max(
+                    graphContentWidth,
+                    (Number(angleGraph.width) || 0) +
+                    ANALYSIS_ANGLE_CARD_PADDING * 2);
+            }
+        }
     }
 
     const contentWidth = Math.max(
@@ -2219,6 +2235,33 @@ window.shapeGrid.downloadAnalysis = async function (payload, fileName) {
                 title: title,
                 lines: lines,
                 graph: section.graph
+            });
+
+            continue;
+        }
+
+        /*
+         * 角的工序：每列一张卡片，卡片内可以是一条步骤节点链。
+         * 布局阶段把标题、说明、节点链高度一起量好，绘制阶段直接复用。
+         */
+        const angleLayout = layoutAnalysisAngleColumns(
+            measure,
+            section.angleColumns,
+            contentWidth);
+
+        if (angleLayout) {
+            blocks.push({
+                kind: "angleColumns",
+                height:
+                    SECTION_TITLE_HEIGHT +
+                    lines.length * LINE_HEIGHT +
+                    noteLines.length * NOTE_LINE_HEIGHT +
+                    angleLayout.height +
+                    SECTION_GAP,
+                title: title,
+                lines: lines,
+                notes: noteLines,
+                angleLayout: angleLayout
             });
 
             continue;
@@ -2533,6 +2576,58 @@ window.shapeGrid.downloadAnalysis = async function (payload, fileName) {
             continue;
         }
 
+        if (block.kind === "angleColumns") {
+            drawSectionTitle(block.title, y);
+
+            ctx.font = TEXT_FONT;
+            ctx.fillStyle = "#3A3A44";
+            ctx.textAlign = "left";
+            ctx.textBaseline = "top";
+
+            let lineY = y + SECTION_TITLE_HEIGHT;
+
+            for (let j = 0; j < block.lines.length; j++) {
+                if (block.lines[j] !== "") {
+                    ctx.fillText(block.lines[j], PADDING, lineY);
+                }
+
+                lineY += LINE_HEIGHT;
+            }
+
+            const noteLines = Array.isArray(block.notes) ? block.notes : [];
+
+            if (noteLines.length > 0) {
+                ctx.font = NOTE_FONT;
+                ctx.fillStyle = "#6B6B76";
+
+                for (let j = 0; j < noteLines.length; j++) {
+                    if (noteLines[j] !== "") {
+                        ctx.fillText(noteLines[j], PADDING, lineY);
+                    }
+
+                    lineY += NOTE_LINE_HEIGHT;
+                }
+            }
+
+            const angleBottom = drawAnalysisAngleColumns(
+                ctx,
+                block.angleLayout,
+                PADDING,
+                lineY,
+                contentWidth);
+
+            // 板块之间的细分隔线
+            ctx.strokeStyle = "#EEEAF7";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(PADDING, angleBottom + 6);
+            ctx.lineTo(width - PADDING, angleBottom + 6);
+            ctx.stroke();
+
+            y += block.height;
+            continue;
+        }
+
         if (block.kind === "placeholder") {
             drawSectionTitle(block.title, y);
 
@@ -2835,7 +2930,14 @@ function drawAnalysisNodeKindTag(ctx, rect, tag, kind) {
     const colors = {
         pin: "#0E7C86",
         stack: "#B26A00",
-        block: "#2E7D32"
+        block: "#2E7D32",
+        "angle-pre": "#6A4CC3",
+        "angle-cut": "#C62828",
+        "angle-collapse": "#B26A00",
+        "angle-pin": "#0E7C86",
+        "angle-crystallize": "#1565C0",
+        "angle-target": "#2E7D32",
+        "angle-note": "#9A9AA5"
     };
 
     ctx.save();
@@ -2966,6 +3068,40 @@ function drawAnalysisPathGraph(ctx, graph, left, top) {
             strokeColor = "#2E7D32";
             lineWidth = 2;
         }
+        else if (node.kind === "angle-pre") {
+            fillColor = "#F3F0FC";
+            strokeColor = "#6A4CC3";
+            lineWidth = 2;
+        }
+        else if (node.kind === "angle-cut") {
+            fillColor = "#FFF1F1";
+            strokeColor = "#C62828";
+            lineWidth = 2;
+        }
+        else if (node.kind === "angle-collapse") {
+            fillColor = "#FFF8EE";
+            strokeColor = "#B26A00";
+            lineWidth = 2;
+        }
+        else if (node.kind === "angle-pin") {
+            fillColor = "#F2FBFB";
+            strokeColor = "#0E7C86";
+            lineWidth = 2;
+        }
+        else if (node.kind === "angle-crystallize") {
+            fillColor = "#F0F7FF";
+            strokeColor = "#1565C0";
+            lineWidth = 2;
+        }
+        else if (node.kind === "angle-target") {
+            fillColor = "#F3FBF4";
+            strokeColor = "#2E7D32";
+            lineWidth = 2;
+        }
+        else if (node.kind === "angle-note") {
+            fillColor = "#FBFBFC";
+            strokeColor = "#9A9AA5";
+        }
 
         ctx.fillStyle = fillColor;
         ctx.strokeStyle = strokeColor;
@@ -2973,7 +3109,8 @@ function drawAnalysisPathGraph(ctx, graph, left, top) {
 
         ctx.save();
 
-        if (node.isWaste) {
+        // 废料节点与角工序的纯说明节点都使用虚线边框。
+        if (node.isWaste || node.kind === "angle-note") {
             ctx.setLineDash([5, 4]);
         }
 
@@ -2984,6 +3121,40 @@ function drawAnalysisPathGraph(ctx, graph, left, top) {
 
         ctx.restore();
 
+        /*
+         * 角工序的纯说明节点没有竖式图：整张卡片直接画说明文字，
+         * 不再画标题行与预览，保证与页面上的说明卡片一致。
+         */
+        if (node.kind === "angle-note" && !node.state) {
+            const NOTE_FONT = '400 11px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+
+            const noteLines = wrapAnalysisText(
+                ctx,
+                node.title || "",
+                NOTE_FONT,
+                Math.max(20, r.width - 16),
+                false);
+
+            ctx.font = NOTE_FONT;
+            ctx.fillStyle = "#5B5B66";
+            ctx.textAlign = "left";
+            ctx.textBaseline = "top";
+
+            const maxLines = Math.max(1, Math.floor((r.height - 16) / 15));
+
+            for (let line = 0; line < Math.min(maxLines, noteLines.length); line++) {
+                let text = noteLines[line];
+
+                if (line === maxLines - 1 && noteLines.length > maxLines) {
+                    text += "…";
+                }
+
+                ctx.fillText(text, r.x + 8, r.y + 8 + line * 15);
+            }
+
+            continue;
+        }
+
         // 标题最多两行，与页面卡片一致
         ctx.font = TITLE_FONT;
         ctx.fillStyle = node.isWaste ? "#9A9AA5" : "#4A3F72";
@@ -2992,11 +3163,20 @@ function drawAnalysisPathGraph(ctx, graph, left, top) {
 
         const kindTag = String(node.kindTag || "");
 
+        // 角工序的类型标签最多两个字，给右上角多留一点空间。
+        const isAngleNode =
+            typeof node.kind === "string" &&
+            node.kind.indexOf("angle-") === 0;
+
+        const titleReserve = kindTag
+            ? (isAngleNode ? 34 : 26)
+            : 0;
+
         const titleLines = wrapAnalysisText(
             ctx,
             node.title || "",
             TITLE_FONT,
-            Math.max(20, r.width - 14 - (kindTag ? 26 : 0)),
+            Math.max(20, r.width - 14 - titleReserve),
             false);
 
         for (let line = 0; line < Math.min(2, titleLines.length); line++) {
@@ -3604,6 +3784,380 @@ function drawAnalysisAxisBlocks(ctx, layout, left, top, cardWidth) {
     return top + layout.height;
 }
 
+/*
+ * 角的工序导出：每列一张卡片。
+ *
+ * 卡片 = 标题行（角 N · 简单角 / 碎晶角 · 构造 X）+ 内容：
+ * 简单角一行说明；碎晶角一条步骤节点链（Graph）；未完全验证时在节点链后
+ * 追加「该列工序尚未完全验证」、Note 与 Limitations 小字。
+ */
+const ANALYSIS_ANGLE_CARD_PADDING = 12;
+
+const ANALYSIS_ANGLE_CARD_GAP = 12;
+
+const ANALYSIS_ANGLE_TITLE_FONT = '700 15px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+
+const ANALYSIS_ANGLE_TITLE_LINE_HEIGHT = 22;
+
+const ANALYSIS_ANGLE_BODY_FONT = '400 13px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+
+const ANALYSIS_ANGLE_BODY_LINE_HEIGHT = 20;
+
+const ANALYSIS_ANGLE_STATUS_FONT = '700 12px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+
+const ANALYSIS_ANGLE_STATUS_LINE_HEIGHT = 20;
+
+const ANALYSIS_ANGLE_NOTE_FONT = '400 12px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+
+const ANALYSIS_ANGLE_NOTE_LINE_HEIGHT = 17;
+
+const ANALYSIS_ANGLE_GRAPH_GAP = 10;
+
+const ANALYSIS_ANGLE_TITLE_COLOR = "#4527A0";
+
+const ANALYSIS_ANGLE_SIMPLE_COLOR = "#2E9E5B";
+
+const ANALYSIS_ANGLE_STATUS_COLOR = "#C62828";
+
+const ANALYSIS_ANGLE_NOTE_COLOR = "#6B6B76";
+
+/* 把 section.angleColumns 归一化成页面/导出共用的字段，跳过空项。 */
+function normalizeAnalysisAngleColumns(rawColumns) {
+    if (!Array.isArray(rawColumns)) {
+        return [];
+    }
+
+    const result = [];
+
+    for (let i = 0; i < rawColumns.length; i++) {
+        const raw = rawColumns[i];
+
+        if (!raw || typeof raw !== "object") {
+            continue;
+        }
+
+        const graph = raw.graph &&
+            typeof raw.graph === "object" &&
+            Array.isArray(raw.graph.nodes) &&
+            raw.graph.nodes.length > 0
+            ? raw.graph
+            : null;
+
+        const limitations = Array.isArray(raw.limitations)
+            ? raw.limitations
+                .map(function (value) {
+                    return value === null || value === undefined ? "" : String(value);
+                })
+                .filter(function (value) {
+                    return value !== "";
+                })
+            : [];
+
+        result.push({
+            title: raw.title === null || raw.title === undefined ? "" : String(raw.title),
+            kindText: raw.kindText === null || raw.kindText === undefined ? "" : String(raw.kindText),
+            constructionText: raw.constructionText === null || raw.constructionText === undefined
+                ? ""
+                : String(raw.constructionText),
+            isSimple: !!raw.isSimple,
+            isComplete: !!raw.isComplete,
+            statusText: raw.statusText === null || raw.statusText === undefined
+                ? ""
+                : String(raw.statusText),
+            simpleText: raw.simpleText === null || raw.simpleText === undefined
+                ? ""
+                : String(raw.simpleText),
+            note: raw.note === null || raw.note === undefined ? "" : String(raw.note),
+            limitations: limitations,
+            graph: graph
+        });
+    }
+
+    return result;
+}
+
+/*
+ * 角工序卡片排版：先把标题、说明、节点链高度都量出来，绘制时不再测量。
+ * 返回 { height, cards, cardWidth, innerWidth }；没有列时返回 null。
+ */
+function layoutAnalysisAngleColumns(measure, rawColumns, maxWidth) {
+    const columns = normalizeAnalysisAngleColumns(rawColumns);
+
+    if (columns.length === 0) {
+        return null;
+    }
+
+    const cardWidth = Math.max(120, maxWidth);
+    const innerWidth = Math.max(40, cardWidth - ANALYSIS_ANGLE_CARD_PADDING * 2);
+
+    const cards = [];
+    let totalHeight = 0;
+
+    for (let i = 0; i < columns.length; i++) {
+        const column = columns[i];
+
+        const headerParts = [column.title, column.kindText];
+
+        if (column.constructionText !== "") {
+            headerParts.push(column.constructionText);
+        }
+
+        // 与页面标题行的「尚未完全验证」状态标签保持一致。
+        if (!column.isComplete) {
+            headerParts.push("尚未完全验证");
+        }
+
+        const headerText = headerParts
+            .filter(function (part) {
+                return part !== "";
+            })
+            .join(" · ");
+
+        measure.font = ANALYSIS_ANGLE_TITLE_FONT;
+
+        const headerLines = wrapAnalysisText(
+            measure,
+            headerText,
+            ANALYSIS_ANGLE_TITLE_FONT,
+            innerWidth,
+            false);
+
+        const simpleLines = [];
+        const statusLines = [];
+        const noteLines = [];
+        const limitationTitleLines = [];
+        const limitationLines = [];
+
+        let graph = null;
+        let graphHeight = 0;
+        let bodyHeight = 0;
+
+        if (column.isSimple) {
+            const simpleText = column.simpleText || "最高晶体连续触地，无需工序";
+
+            const wrapped = wrapAnalysisText(
+                measure,
+                simpleText,
+                ANALYSIS_ANGLE_BODY_FONT,
+                innerWidth,
+                false);
+
+            for (let k = 0; k < wrapped.length; k++) {
+                simpleLines.push(wrapped[k]);
+            }
+
+            bodyHeight = simpleLines.length * ANALYSIS_ANGLE_BODY_LINE_HEIGHT;
+        }
+        else {
+            if (column.graph) {
+                graph = column.graph;
+                graphHeight = Number(graph.height) || 0;
+                bodyHeight += graphHeight + ANALYSIS_ANGLE_GRAPH_GAP;
+            }
+
+            if (!column.isComplete) {
+                const statusText = column.statusText || "该列工序尚未完全验证";
+
+                const statusWrapped = wrapAnalysisText(
+                    measure,
+                    statusText,
+                    ANALYSIS_ANGLE_STATUS_FONT,
+                    innerWidth,
+                    false);
+
+                for (let k = 0; k < statusWrapped.length; k++) {
+                    statusLines.push(statusWrapped[k]);
+                }
+
+                bodyHeight += statusLines.length * ANALYSIS_ANGLE_STATUS_LINE_HEIGHT;
+
+                if (column.note !== "") {
+                    const noteWrapped = wrapAnalysisText(
+                        measure,
+                        column.note,
+                        ANALYSIS_ANGLE_NOTE_FONT,
+                        innerWidth,
+                        false);
+
+                    for (let k = 0; k < noteWrapped.length; k++) {
+                        noteLines.push(noteWrapped[k]);
+                    }
+
+                    bodyHeight += noteLines.length * ANALYSIS_ANGLE_NOTE_LINE_HEIGHT;
+                }
+
+                if (column.limitations.length > 0) {
+                    const titleWrapped = wrapAnalysisText(
+                        measure,
+                        "限制与前提",
+                        ANALYSIS_ANGLE_NOTE_FONT,
+                        innerWidth,
+                        false);
+
+                    for (let k = 0; k < titleWrapped.length; k++) {
+                        limitationTitleLines.push(titleWrapped[k]);
+                    }
+
+                    bodyHeight += limitationTitleLines.length * ANALYSIS_ANGLE_NOTE_LINE_HEIGHT;
+
+                    for (let k = 0; k < column.limitations.length; k++) {
+                        const limitationWrapped = wrapAnalysisText(
+                            measure,
+                            "· " + column.limitations[k],
+                            ANALYSIS_ANGLE_NOTE_FONT,
+                            innerWidth,
+                            false);
+
+                        for (let n = 0; n < limitationWrapped.length; n++) {
+                            limitationLines.push(limitationWrapped[n]);
+                        }
+
+                        bodyHeight += limitationWrapped.length * ANALYSIS_ANGLE_NOTE_LINE_HEIGHT;
+                    }
+                }
+            }
+        }
+
+        const cardHeight =
+            ANALYSIS_ANGLE_CARD_PADDING * 2 +
+            headerLines.length * ANALYSIS_ANGLE_TITLE_LINE_HEIGHT +
+            bodyHeight;
+
+        cards.push({
+            headerLines: headerLines,
+            isSimple: column.isSimple,
+            isComplete: column.isComplete,
+            simpleLines: simpleLines,
+            statusLines: statusLines,
+            noteLines: noteLines,
+            limitationTitleLines: limitationTitleLines,
+            limitationLines: limitationLines,
+            graph: graph,
+            graphHeight: graphHeight,
+            height: cardHeight
+        });
+
+        totalHeight += cardHeight;
+
+        if (i < columns.length - 1) {
+            totalHeight += ANALYSIS_ANGLE_CARD_GAP;
+        }
+    }
+
+    return {
+        height: totalHeight,
+        cards: cards,
+        cardWidth: cardWidth,
+        innerWidth: innerWidth
+    };
+}
+
+/*
+ * 画角工序卡片：浅色卡片 + 标题 + 内容。
+ * 节点链直接复用 drawAnalysisPathGraph，保证与页面、交换工序同一套配色与 30px 预览。
+ * 返回整组卡片的下边界，供板块分隔线定位。
+ */
+function drawAnalysisAngleColumns(ctx, layout, left, top, cardWidth) {
+    if (!layout || !Array.isArray(layout.cards) || layout.cards.length === 0) {
+        return top;
+    }
+
+    let cardTop = top;
+
+    for (let i = 0; i < layout.cards.length; i++) {
+        const card = layout.cards[i];
+
+        ctx.save();
+        ctx.fillStyle = "#FBFAFE";
+        ctx.strokeStyle = "#E6E2F2";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.roundRect(left, cardTop, cardWidth, card.height, 10);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+
+        const innerLeft = left + ANALYSIS_ANGLE_CARD_PADDING;
+
+        let cursorY = cardTop + ANALYSIS_ANGLE_CARD_PADDING;
+
+        ctx.font = ANALYSIS_ANGLE_TITLE_FONT;
+        ctx.fillStyle = ANALYSIS_ANGLE_TITLE_COLOR;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+
+        for (let j = 0; j < card.headerLines.length; j++) {
+            ctx.fillText(card.headerLines[j], innerLeft, cursorY);
+            cursorY += ANALYSIS_ANGLE_TITLE_LINE_HEIGHT;
+        }
+
+        if (card.isSimple) {
+            ctx.font = ANALYSIS_ANGLE_BODY_FONT;
+            ctx.fillStyle = ANALYSIS_ANGLE_SIMPLE_COLOR;
+
+            for (let j = 0; j < card.simpleLines.length; j++) {
+                ctx.fillText(card.simpleLines[j], innerLeft, cursorY);
+                cursorY += ANALYSIS_ANGLE_BODY_LINE_HEIGHT;
+            }
+        }
+        else {
+            if (card.graph) {
+                drawAnalysisPathGraph(ctx, card.graph, innerLeft, cursorY);
+                cursorY += card.graphHeight + ANALYSIS_ANGLE_GRAPH_GAP;
+            }
+
+            if (!card.isComplete) {
+                ctx.textAlign = "left";
+                ctx.textBaseline = "top";
+
+                if (card.statusLines.length > 0) {
+                    ctx.font = ANALYSIS_ANGLE_STATUS_FONT;
+                    ctx.fillStyle = ANALYSIS_ANGLE_STATUS_COLOR;
+
+                    for (let j = 0; j < card.statusLines.length; j++) {
+                        ctx.fillText(card.statusLines[j], innerLeft, cursorY);
+                        cursorY += ANALYSIS_ANGLE_STATUS_LINE_HEIGHT;
+                    }
+                }
+
+                if (card.noteLines.length > 0) {
+                    ctx.font = ANALYSIS_ANGLE_NOTE_FONT;
+                    ctx.fillStyle = ANALYSIS_ANGLE_NOTE_COLOR;
+
+                    for (let j = 0; j < card.noteLines.length; j++) {
+                        ctx.fillText(card.noteLines[j], innerLeft, cursorY);
+                        cursorY += ANALYSIS_ANGLE_NOTE_LINE_HEIGHT;
+                    }
+                }
+
+                if (card.limitationTitleLines.length > 0) {
+                    ctx.font = '700 12px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+                    ctx.fillStyle = ANALYSIS_ANGLE_NOTE_COLOR;
+
+                    for (let j = 0; j < card.limitationTitleLines.length; j++) {
+                        ctx.fillText(card.limitationTitleLines[j], innerLeft, cursorY);
+                        cursorY += ANALYSIS_ANGLE_NOTE_LINE_HEIGHT;
+                    }
+                }
+
+                if (card.limitationLines.length > 0) {
+                    ctx.font = ANALYSIS_ANGLE_NOTE_FONT;
+                    ctx.fillStyle = ANALYSIS_ANGLE_NOTE_COLOR;
+
+                    for (let j = 0; j < card.limitationLines.length; j++) {
+                        ctx.fillText(card.limitationLines[j], innerLeft, cursorY);
+                        cursorY += ANALYSIS_ANGLE_NOTE_LINE_HEIGHT;
+                    }
+                }
+            }
+        }
+
+        cardTop += card.height + ANALYSIS_ANGLE_CARD_GAP;
+    }
+
+    return top + layout.height;
+}
+
 /* 供 Blazor 回读节点的真实渲染尺寸，箭头锚点据此贴合边框 */
 window.shapeGridMeasureNodes = function () {
     return Array.from(document.querySelectorAll(".graph-node[data-node-id]")).map(function (el) {
@@ -3621,9 +4175,13 @@ window.shapeGridMeasureNodes = function () {
  * 其余页面（工作区）仍使用中心连心线与矩形边界的交点。
  */
 window.shapeGridLayoutEdges = function (layered) {
-    const canvas = document.querySelector(".graph-canvas");
-    if (!canvas) { return; }
+    // 分析页可能同时存在交换工序与多列角工序，每个 .graph-canvas 单独校正。
+    document.querySelectorAll(".graph-canvas").forEach(function (canvas) {
+        layoutGraphCanvas(canvas, layered);
+    });
+};
 
+function layoutGraphCanvas(canvas, layeredGraph) {
     const canvasRect = canvas.getBoundingClientRect();
     const nodes = {};
 
@@ -3699,7 +4257,7 @@ window.shapeGridLayoutEdges = function (layered) {
         let a1;
         let a2;
 
-        if (layered) {
+        if (layeredGraph) {
             const anchors = layeredAnchors(from, to);
             a1 = anchors.start;
             a2 = anchors.end;
@@ -3741,4 +4299,4 @@ window.shapeGridLayoutEdges = function (layered) {
                 (bx + vy * half) + "," + (by - vx * half));
         }
     });
-};
+}

@@ -1385,12 +1385,60 @@ button {
 }
 
 .analysis-loading-box {
-    padding: 12px 20px;
-    border-radius: 999px;
+    width: min(360px, 80vw);
+    padding: 16px 20px;
+    border-radius: 14px;
     background: #ffffff;
     color: #4527a0;
     font-size: 14px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+/* 编辑器遮罩与分析页共用的进度条：横向 bar 宽 100%、高 6px、圆角、主色 #512bd4 */
+.analysis-progress {
+    width: 100%;
+}
+
+.analysis-progress-title {
+    margin: 0 0 10px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #4527a0;
+}
+
+.analysis-progress-track {
+    width: 100%;
+    height: 6px;
+    border-radius: 999px;
+    background: #e6e0f5;
+    overflow: hidden;
+}
+
+.analysis-progress-fill {
+    height: 100%;
+    border-radius: 999px;
+    background: #512bd4;
+    transition: width 0.15s ease-out;
+}
+
+.analysis-progress-text {
+    margin: 8px 0 0;
+    font-size: 13px;
+    color: #4527a0;
+}
+
+/* 分析页顶部的进度卡片 */
+.analysis-progress-card {
+    margin: 16px 0;
+    padding: 16px 18px;
+    background: #ffffff;
+    border: 1px solid #e6e2f2;
+    border-radius: 12px;
+}
+
+/* 「角的工序」按需构建时的行内进度 */
+.analysis-inline-progress {
+    margin: 8px 0 4px;
 }
 /* ==================== 制作路径画布 ==================== */
 
@@ -2514,6 +2562,216 @@ button {
 .path-node.kind-stack .path-node-head,
 .path-node.kind-block .path-node-head {
     padding-right: 26px;
+}
+
+/* ==================== 分析页：角的工序 ==================== */
+
+/*
+ * 每个角一张卡片：标题行显示「角 N + 分类 + 构造」，
+ * 简单角一行说明；碎晶角一条步骤节点链（30px 单元格 1:1 预览）。
+ */
+.angle-work-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.angle-work-card {
+    padding: 12px;
+    border: 1px solid #e6e2f2;
+    border-radius: 12px;
+    background: #fbfaff;
+}
+
+.angle-work-head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+    .angle-work-head h4 {
+        margin: 0;
+        font-size: 14px;
+        color: #3a3a44;
+    }
+
+.angle-kind,
+.angle-construction,
+.angle-status-chip {
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 18px;
+}
+
+.angle-kind.simple {
+    background: #eaf7ee;
+    color: #2e7d32;
+}
+
+.angle-kind.break {
+    background: #fdf0e6;
+    color: #b26a00;
+}
+
+.angle-construction {
+    background: #f0ecfb;
+    color: #512bd4;
+}
+
+.angle-status-chip {
+    background: #fdeaea;
+    color: #c62828;
+}
+
+.angle-work-simple {
+    margin: 0;
+    font-size: 13px;
+    color: #2e9e5b;
+}
+
+/* 节点链容器：图形宽时横向滚动，高时纵向滚动 */
+.angle-work-graph {
+    margin: 4px 0 0;
+    overflow: auto;
+    border: 1px solid #e6e2f2;
+    border-radius: 10px;
+    background: #ffffff;
+}
+
+.angle-graph-canvas {
+    position: relative;
+}
+
+.angle-node {
+    padding: 7px;
+    gap: 4px;
+    cursor: default;
+}
+
+/* 角工序的标签最多两个字，给右上角留出更大空间 */
+.angle-node .path-node-head {
+    padding-right: 34px;
+}
+
+/* 纯说明步骤：没有竖式图，整张卡片展示说明文字 */
+.angle-note-body {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    font-size: 11px;
+    line-height: 15px;
+    color: #5b5b66;
+    word-break: break-word;
+}
+
+/* 步骤类型：边框与右上角标签都使用不同颜色 */
+.angle-node.angle-kind-prestate {
+    border-color: #6a4cc3;
+    border-width: 2px;
+    background: #f3f0fc;
+}
+
+.angle-node.angle-kind-cut {
+    border-color: #c62828;
+    border-width: 2px;
+    background: #fff1f1;
+}
+
+.angle-node.angle-kind-collapse {
+    border-color: #b26a00;
+    border-width: 2px;
+    background: #fff8ee;
+}
+
+.angle-node.angle-kind-pin {
+    border-color: #0e7c86;
+    border-width: 2px;
+    background: #f2fbfb;
+}
+
+.angle-node.angle-kind-crystallize {
+    border-color: #1565c0;
+    border-width: 2px;
+    background: #f0f7ff;
+}
+
+.angle-node.angle-kind-target {
+    border-color: #2e7d32;
+    border-width: 2px;
+    background: #f3fbf4;
+}
+
+.angle-node.angle-kind-note {
+    border-style: dashed;
+    border-color: #9a9aa5;
+    background: #fbfbfc;
+}
+
+.angle-node.angle-kind-prestate .path-node-kind {
+    background: #6a4cc3;
+}
+
+.angle-node.angle-kind-cut .path-node-kind {
+    background: #c62828;
+}
+
+.angle-node.angle-kind-collapse .path-node-kind {
+    background: #b26a00;
+}
+
+.angle-node.angle-kind-pin .path-node-kind {
+    background: #0e7c86;
+}
+
+.angle-node.angle-kind-crystallize .path-node-kind {
+    background: #1565c0;
+}
+
+.angle-node.angle-kind-target .path-node-kind {
+    background: #2e7d32;
+}
+
+/* 未完全验证：红色左边框的提示块，Note 与 Limitations 用小字 */
+.angle-work-warning {
+    margin-top: 10px;
+    padding: 8px 10px;
+    border-left: 3px solid #d64545;
+    border-radius: 6px;
+    background: #fdf6f6;
+}
+
+.angle-work-status {
+    margin: 0 0 4px;
+    font-size: 12px;
+    font-weight: 700;
+    color: #c62828;
+}
+
+.angle-work-note {
+    margin: 0 0 4px;
+    font-size: 12px;
+    line-height: 18px;
+    color: #5b5b66;
+}
+
+.angle-work-limitation-title {
+    margin: 4px 0 2px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #8a8a95;
+}
+
+.angle-work-limitations {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 11px;
+    line-height: 17px;
+    color: #6b6b76;
 }
 
 /* 固定 30px 单元格，由 JS 按 DPR 设置画布后备尺寸 */

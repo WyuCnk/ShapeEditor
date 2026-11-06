@@ -1,0 +1,38 @@
+@*
+    分析进度条：编辑器遮罩与分析页共用同一套实现。
+
+    横向 bar 宽度跟随容器 100%，高 6px、圆角、主色 #512bd4；
+    下方一行显示当前阶段与百分比，例如「正在分析：半边稳定性 55%」。
+*@
+<div class="analysis-progress">
+    @if (!string.IsNullOrEmpty(Title))
+    {
+        <div class="analysis-progress-title">@Title</div>
+    }
+
+    <div class="analysis-progress-track"
+         role="progressbar"
+         aria-valuemin="0"
+         aria-valuemax="100"
+         aria-valuenow="@PercentValue">
+        <div class="analysis-progress-fill" style="width:@(PercentValue)%;"></div>
+    </div>
+
+    <p class="analysis-progress-text">正在分析：@Stage @(PercentValue)%</p>
+</div>
+
+@code {
+    /// <summary>可选标题；编辑器遮罩用它显示「分析中…」。</summary>
+    [Parameter]
+    public string? Title { get; set; }
+
+    /// <summary>当前阶段文字，例如「半边稳定性」。</summary>
+    [Parameter]
+    public string Stage { get; set; } = "";
+
+    /// <summary>当前百分比（0–100），越界时自动收敛。</summary>
+    [Parameter]
+    public int Percent { get; set; }
+
+    private int PercentValue => Math.Clamp(Percent, 0, 100);
+}

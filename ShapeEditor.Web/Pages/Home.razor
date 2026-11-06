@@ -1,6 +1,5 @@
 @page "/"
 
-@using ShapeEditor.Core.Analysis
 @using ShapeEditor.Core.Models
 @using ShapeEditor.Core.Services
 @using ShapeEditor.Core.Theme
@@ -31,8 +30,13 @@
 
 @if (_isAnalyzing)
 {
+    @* 这里只做轻量校验和短代码导出，真正的分析全部在分析页分阶段完成。 *@
     <div class="analysis-loading-mask" role="status" aria-live="polite">
-        <div class="analysis-loading-box">分析中…</div>
+        <div class="analysis-loading-box">
+            <AnalysisProgressBar Title="分析中…"
+                                 Stage="@_progressStage"
+                                 Percent="@_progressPercent" />
+        </div>
     </div>
 }
 
@@ -280,11 +284,13 @@
         ErrorMessage = "";
 
         _isAnalyzing = true;
+        _progressStage = "解析短代码";
+        _progressPercent = 0;
 
         /*
-         * 先让「分析中…」和遮罩真正渲染出来，再开始耗时的分析预演。
+         * 先让进度遮罩真正渲染出来。
          * Blazor WebAssembly 没有独立的 UI 线程，若不留出一帧，
-         * 计算可能在首次重绘前就结束，用户看不到任何反馈。
+         * 轻量校验可能在首次重绘前就结束，用户看不到任何反馈。
          */
         await InvokeAsync(StateHasChanged);
         await Task.Delay(50);
@@ -293,16 +299,20 @@
         {
             ShapeDocument document = Document.Clone();
 
-            string code = await Task.Run(() =>
-            {
-                string exported = new ShortCodeExporter().Export(
-                    document,
-                    omitTopEmptyLayers: true);
+            /*
+             * 编辑器只做轻量校验：导出短代码后立即跳转。
+             * 四种分析和制作路径全部移到分析页分阶段执行，
+             * 避免同一份计算在编辑器与分析页各跑一遍，也只需要维护一套进度实现。
+             */
+            string code = Exporter.Export(
+                document,
+                omitTopEmptyLayers: true);
 
-                WarmUpAnalysis(exported);
+            _progressStage = "解析短代码";
+            _progressPercent = 15;
 
-                return exported;
-            });
+            await InvokeAsync(StateHasChanged);
+            await Task.Delay(1);
 
             Analysis.Set(code, "editor");
 
@@ -316,45 +326,6 @@
         {
             _isAnalyzing = false;
         }
-    }
-
-    /// <summary>
-    /// 按分析页的流程预演一次计算，让「分析中…」有实际工作可做。
-    /// 结果不参与跳转，分析页仍会按当前下落规则重新计算。
-    /// </summary>
-    private static void WarmUpAnalysis(string code)
-    {
-        if (!ShortCodeParser.TryInferDimensions(
-                code,
-                out int layers,
-                out int parts,
-                out _))
-        {
-            return;
-        }
-
-        ParseResult parsed = new ShortCodeParser().Parse(
-            code,
-            layers,
-            parts);
-
-        if (!parsed.Success || parsed.Document is null)
-        {
-            return;
-        }
-
-        ShapeAnalysisResult angles = ShapeAngleAnalyzer.Analyze(
-            parsed.Document);
-
-        HalfStabilityResult half = HalfStabilityAnalyzer.Analyze(
-            parsed.Document);
-
-        ShapePropertyAnalyzer.Analyze(
-            parsed.Document,
-            angles.IsStable,
-            half.IsExchangeable);
-
-        ProductionPathParser.Parse(parsed.Document);
     }
 
 
@@ -371,6 +342,12 @@
 
     /// <summary>点「分析」后到跳转前的加载态，同时用于禁用按钮和显示遮罩。</summary>
     private bool _isAnalyzing;
+
+    /// <summary>遮罩里的进度阶段；离开编辑器前只经历「解析短代码」。</summary>
+    private string _progressStage = "解析短代码";
+
+    /// <summary>遮罩里的进度百分比，与阶段一起展示。</summary>
+    private int _progressPercent;
 
     private ElementReference _canvas;
 

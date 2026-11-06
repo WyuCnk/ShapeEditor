@@ -1,4 +1,5 @@
 @page "/analysis"
+@implements IDisposable
 
 @using System.Globalization
 @using ShapeEditor.Core.Analysis
@@ -30,7 +31,7 @@
                 </button>
             </div>
             <button class="primary-button"
-                    disabled="@(_document is null)"
+                    disabled="@(_document is null || _analyzing || _angleWorkBusy)"
                     @onclick="ExportImageAsync">
                 导出图片
             </button>
@@ -41,14 +42,21 @@
         </div>
     </header>
 
-    @if (!string.IsNullOrWhiteSpace(_exportError))
+    @if (!string.IsNullOrWhiteSpace(_errorMessage))
     {
         <div class="error-message" role="alert">
-            @_exportError
+            @_errorMessage
         </div>
     }
 
-    @if (_analysis is null)
+    @if (_analyzing)
+    {
+        @* 分阶段计算期间只显示进度条，完成后隐藏并展示内容。 *@
+        <section class="analysis-progress-card" role="status" aria-live="polite">
+            <AnalysisProgressBar Stage="@_stage" Percent="@_percent" />
+        </section>
+    }
+    else if (_analysis is null)
     {
         <div class="analysis-empty">
             还没有可分析的图形。请先在编辑器里点「分析」。
@@ -381,23 +389,145 @@
                                 </section>
                             }
 
-                            @* 角的工序：后续按角绘制（每个角补柱后的制作工序），先放占位说明。 *@
+                            @* 角的工序：按列列出分类、构造与步骤节点链；默认隐藏。 *@
                             <section class="analysis-subsection">
                                 <div class="analysis-section-head analysis-subsection-head">
                                     <h3>角的工序</h3>
                                     <button type="button" class="analysis-toggle"
-                                            @onclick="() => _showPathAngles = !_showPathAngles">
+                                            @onclick="TogglePathAngles">
                                         @(_showPathAngles ? "隐藏" : "显示")
                                     </button>
                                 </div>
 
                                 @if (_showPathAngles)
                                 {
-                                    <div class="path-placeholder">待设计</div>
+                                    @if (_angleWorkBusy)
+                                    {
+                                        @* 首次展开（或图形/规则变化后）按列构建；默认隐藏时不计算。 *@
+                                        <div class="analysis-inline-progress">
+                                            <AnalysisProgressBar Stage="@_angleWorkStage"
+                                                                 Percent="@_angleWorkPercent" />
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                    <p class="analysis-summary">@AngleWorkSummary</p>
 
                                     <p class="analysis-note">
-                                        后续按角绘制：每个角补柱后的制作工序。
+                                        碎晶角按「前态 → 切割 → 下落 → 目标」列出；节点预览固定 30px 单元格、1:1 不缩放。
+                                        工序前态按目标图形层数作为画布高度，需要更高脚手架才能成立的构造会标为尚未完全验证。
+                                        简单角的最高晶体连续触地，不需要工序。
                                     </p>
+
+                                    <div class="angle-work-list">
+                                        @foreach (AngleWorkColumn work in AngleWorks)
+                                        {
+                                            <section class="angle-work-card" data-angle-column="@work.Column">
+                                                <div class="angle-work-head">
+                                                    <h4>角 @(work.Column + 1)</h4>
+                                                    <span class="angle-kind @(work.IsSimple ? "simple" : "break")">@work.KindText</span>
+
+                                                    @if (!string.IsNullOrEmpty(work.ConstructionText))
+                                                    {
+                                                        <span class="angle-construction">@work.ConstructionText</span>
+                                                    }
+
+                                                    @if (!work.IsComplete)
+                                                    {
+                                                        <span class="angle-status-chip">尚未完全验证</span>
+                                                    }
+                                                </div>
+
+                                                @if (work.IsSimple)
+                                                {
+                                                    <p class="angle-work-simple">@work.SimpleText</p>
+                                                }
+                                                else
+                                                {
+                                                    @if (work.Nodes.Count > 0)
+                                                    {
+                                                        @* 一列一条节点链；箭头由 shapeGridLayoutEdges 按真实矩形绘制。 *@
+                                                        <div class="angle-work-graph"
+                                                             style="height:@Px(AngleGraphViewportHeight(work))px">
+                                                            <div class="graph-canvas angle-graph-canvas"
+                                                                 style="width:@Px(work.GraphWidth)px;height:@Px(work.GraphHeight)px">
+                                                                <svg class="graph-arrows"
+                                                                     width="@Px(work.GraphWidth)"
+                                                                     height="@Px(work.GraphHeight)">
+                                                                    @foreach (AngleWorkEdge edge in work.Edges)
+                                                                    {
+                                                                        <path d="@edge.Path"
+                                                                              class="path-edge"
+                                                                              data-edge-from="@edge.FromId"
+                                                                              data-edge-to="@edge.ToId" />
+
+                                                                        <polygon points="@edge.Arrow"
+                                                                                 class="path-arrow"
+                                                                                 data-edge-from="@edge.FromId"
+                                                                                 data-edge-to="@edge.ToId" />
+                                                                    }
+                                                                </svg>
+
+                                                                @foreach (AngleWorkNode node in work.Nodes)
+                                                                {
+                                                                    <div class="graph-node path-node angle-node @node.KindClass"
+                                                                         data-node-id="@node.Id"
+                                                                         style="left:@Px(node.X)px;top:@Px(node.Y)px;width:@Px(node.Width)px;height:@Px(node.Height)px">
+                                                                        @if (node.IsNote && node.Shape is null)
+                                                                        {
+                                                                            @* 纯说明步骤没有竖式图，正文直接展示说明文字。 *@
+                                                                            <div class="angle-note-body">@node.Title</div>
+                                                                        }
+                                                                        else
+                                                                        {
+                                                                            @if (node.KindTag.Length > 0)
+                                                                            {
+                                                                                <span class="path-node-kind">@node.KindTag</span>
+                                                                            }
+
+                                                                            <div class="path-node-head" title="@node.Title">@node.Title</div>
+
+                                                                            <div class="graph-node-body path-node-body">
+                                                                                @if (node.Shape is not null)
+                                                                                {
+                                                                                    <PathNodePreview Document="node.Shape!" />
+                                                                                }
+                                                                            </div>
+                                                                        }
+                                                                    </div>
+                                                                }
+                                                            </div>
+                                                        </div>
+                                                    }
+
+                                                    @if (!work.IsComplete)
+                                                    {
+                                                        @* 未通过验证时如实展示原因和限制，不伪造后续步骤。 *@
+                                                        <div class="angle-work-warning">
+                                                            <p class="angle-work-status">该列工序尚未完全验证</p>
+
+                                                            @if (!string.IsNullOrWhiteSpace(work.Note))
+                                                            {
+                                                                <p class="angle-work-note">@work.Note</p>
+                                                            }
+
+                                                            @if (work.Limitations.Count > 0)
+                                                            {
+                                                                <p class="angle-work-limitation-title">限制与前提</p>
+                                                                <ul class="angle-work-limitations">
+                                                                    @foreach (string limitation in work.Limitations)
+                                                                    {
+                                                                        <li>@limitation</li>
+                                                                    }
+                                                                </ul>
+                                                            }
+                                                        </div>
+                                                    }
+                                                }
+                                            </section>
+                                        }
+                                    </div>
+                                    }
                                 }
                             </section>
                         }
@@ -413,6 +543,27 @@
 
 @code {
     private string _code = "";
+
+    /// <summary>当前分析阶段文字，显示在页面顶部进度条下方。</summary>
+    private string _stage = "解析短代码";
+
+    /// <summary>当前分析进度百分比（0–100）。</summary>
+    private int _percent;
+
+    /// <summary>是否正在分阶段计算；为 true 时只显示进度条。</summary>
+    private bool _analyzing;
+
+    /// <summary>分析/导出失败的顶部提示。</summary>
+    private string _errorMessage = "";
+
+    /// <summary>页面是否已销毁；用于让后台的分阶段任务尽快退出。</summary>
+    private bool _disposed;
+
+    /// <summary>
+    /// 分析运行版本号。重新分析或页面销毁时自增，
+    /// 仍在运行的旧任务在下一个阶段边界发现版本不一致后直接退出。
+    /// </summary>
+    private int _analysisVersion;
 
     private ShapeDocument? _document;
 
@@ -438,6 +589,66 @@
     /// 制作路径的节点图布局，与页面和导出共用。
     /// </summary>
     private ProductionPathGraph? _pathGraph;
+
+    /// <summary>
+    /// 角工序卡片。只在「角的工序」区域显示时按列异步构建；
+    /// 隐藏状态下保持 null，不做任何 AngleWorkOrderBuilder.Build。
+    /// </summary>
+    private IReadOnlyList<AngleWorkColumn>? _angleWorks;
+
+    /// <summary>_angleWorks 对应的图形，用于切换图形后失效重算。</summary>
+    private ShapeDocument? _angleWorksDocument;
+
+    /// <summary>角工序是否正在按列构建；为 true 时该区域显示自己的进度条。</summary>
+    private bool _angleWorkBusy;
+
+    /// <summary>角工序构建的阶段文字。</summary>
+    private string _angleWorkStage = "角的工序";
+
+    /// <summary>角工序构建进度百分比（0–100）。</summary>
+    private int _angleWorkPercent;
+
+    /// <summary>角工序构建版本号，隐藏区域或重新分析时自增以取消旧任务。</summary>
+    private int _angleWorkVersion;
+
+    /// <summary>
+    /// 已构建的角工序卡片；尚未构建或已失效时返回空列表。
+    /// 这里刻意不做惰性计算，避免渲染线程被大图形的逐列 Build 阻塞。
+    /// </summary>
+    private IReadOnlyList<AngleWorkColumn> AngleWorks =>
+        _angleWorks ?? Array.Empty<AngleWorkColumn>();
+
+    /// <summary>角工序区域的汇总：简单角数量与碎晶角验证进度。</summary>
+    private string AngleWorkSummary
+    {
+        get
+        {
+            IReadOnlyList<AngleWorkColumn> works = AngleWorks;
+
+            if (works.Count == 0)
+            {
+                return "没有可分析的角。";
+            }
+
+            int simple = works.Count(work => work.IsSimple);
+            int breaks = works.Count - simple;
+
+            if (breaks == 0)
+            {
+                return $"共 {works.Count} 个角：全部是简单角，无需工序。";
+            }
+
+            int complete = works.Count(work => !work.IsSimple && work.IsComplete);
+
+            string summary =
+                $"共 {works.Count} 个角：{simple} 个简单角、{breaks} 个碎晶角；" +
+                $"{complete}/{breaks} 列碎晶角工序已验证通过";
+
+            return complete == breaks
+                ? summary + "。"
+                : summary + $"，{breaks - complete} 列尚未完全验证。";
+        }
+    }
 
     private readonly ShortCodeExporter Exporter = new();
 
@@ -528,13 +739,30 @@
             ? 240
             : Math.Min(560, Math.Max(220, Math.Ceiling(_pathGraph.Height)));
 
+    /// <summary>角工序节点链容器的可视高度，规则与制作路径节点图一致。</summary>
+    private static double AngleGraphViewportHeight(
+        AngleWorkColumn work) =>
+        // +2 补上容器 1px 上下边框（全局 box-sizing: border-box）。
+        Math.Min(560, Math.Max(160, Math.Ceiling(work.GraphHeight) + 2));
+
     /// <summary>把坐标格式化成不带千分位分隔符的像素值。</summary>
     private static string Px(double value) =>
         value.ToString("0.##", CultureInfo.InvariantCulture);
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!_showPath || !_showPathExchange || _pathGraph is null)
+        // 交换工序与角的工序都可能有节点图；只要有一处在显示就校正箭头。
+        bool showExchange =
+            _showPath && _showPathExchange && _pathGraph is not null;
+
+        bool showAngles =
+            _showPath &&
+            _showPathAngles &&
+            _analysis is not null &&
+            _half is not null &&
+            AngleWorks.Any(work => work.Nodes.Count > 0);
+
+        if (!showExchange && !showAngles)
         {
             return;
         }
@@ -543,6 +771,7 @@
         {
             // 复用工作区的连线绘制，但按分层图规则取锚点：
             // 跨层用上排底边中点 → 下排顶边中点。
+            // JS 会遍历页面上所有 .graph-canvas，因此交换工序与多列角工序可以共存。
             await JS.InvokeVoidAsync("shapeGridLayoutEdges", true);
         }
         catch
@@ -562,16 +791,14 @@
 
     private bool _showPath = true;
 
-    // 制作路径下的两个子区域：交换工序（分层节点图）与角的工序（占位）。
-    // 交换工序默认显示；角的工序仍在设计中，默认隐藏，避免占位内容干扰阅读。
+    // 制作路径下的两个子区域：交换工序（分层节点图）与角的工序（按列节点链）。
+    // 交换工序默认显示；角的工序保持默认隐藏（用户要求），展开时才按需计算。
     private bool _showPathExchange = true;
 
+    // 角的工序默认隐藏（用户要求）；展开时才构建工序，避免隐藏时白算。
     private bool _showPathAngles = false;
 
     private bool _showRules = true;
-
-    // 页面没有对话框，导出失败时用顶部提示条显示。
-    private string _exportError = "";
 
     private readonly ShapeProperty[] _propertyOrder =
     {
@@ -599,23 +826,52 @@
             : $"共 {_analysis.Angles.Count} 个角，{_analysis.LegalCount} 个合法" +
               (_analysis.IsFullyLegal ? "（全部合法）" : "");
 
+    private async Task TogglePathAngles()
+    {
+        if (_showPathAngles)
+        {
+            _showPathAngles = false;
+
+            // 隐藏区域立即取消仍在进行的按列构建；下次展开时重新构建。
+            _angleWorkVersion++;
+            _angleWorkBusy = false;
+
+            await InvokeAsync(StateHasChanged);
+
+            return;
+        }
+
+        _showPathAngles = true;
+
+        // 先渲染出该区域的进度条，再进行可能耗时的逐列构建。
+        await InvokeAsync(StateHasChanged);
+
+        if (!_showPath || _document is null)
+        {
+            return;
+        }
+
+        if (_angleWorks is not null &&
+            ReferenceEquals(_angleWorksDocument, _document))
+        {
+            return;
+        }
+
+        await BuildAngleWorksAsync();
+    }
+
     private void SetMode(
         CollapseMode mode)
     {
+        if (_mode == mode)
+        {
+            return;
+        }
+
         _mode = mode;
 
-        if (_document is not null)
-        {
-            _analysis = ShapeAngleAnalyzer.Analyze(_document, mode);
-            _half = HalfStabilityAnalyzer.Analyze(_document, mode);
-            RecomputePath();
-
-            _properties = ShapePropertyAnalyzer.Analyze(
-                _document,
-                _analysis?.IsStable ?? false,
-                _half?.IsExchangeable ?? false,
-                mode);
-        }
+        // 模式影响稳定性与制作路径，整页重新分阶段计算。
+        _ = AnalyzeAsync();
     }
 
     /// <summary>
@@ -629,7 +885,7 @@
             return;
         }
 
-        _exportError = "";
+        _errorMessage = "";
 
         try
         {
@@ -640,7 +896,7 @@
         }
         catch (Exception exception)
         {
-            _exportError = $"导出图片失败：{exception.Message}";
+            _errorMessage = $"导出图片失败：{exception.Message}";
         }
     }
 
@@ -691,7 +947,7 @@
                 payload.Sections.Add(BuildPathSection());
             }
 
-            if (_showPathAngles)
+            if (_showPathAngles && _half is not null && _angleWorks is not null)
             {
                 payload.Sections.Add(BuildPathAnglesSection());
             }
@@ -774,17 +1030,84 @@
     }
 
     /// <summary>
-    /// 角的工序占位板块。后续按角绘制（每个角补柱后的制作工序），
-    /// 现在导出成与页面一致的占位框。
+    /// 角的工序板块：与页面一致，每个角一张卡片。
+    ///
+    /// 简单角只导出一行说明；碎晶角导出步骤节点链（每条链一个图，保持 30px 单元格 1:1）；
+    /// 未完全验证时在节点链后追加「该列工序尚未完全验证」、Note 与 Limitations。
+    /// 只有该区域已展开并完成按列构建时才导出；隐藏或构建中不会触发额外计算。
     /// </summary>
-    private static AnalysisExportSection BuildPathAnglesSection()
+    private AnalysisExportSection BuildPathAnglesSection()
     {
-        return new AnalysisExportSection
+        var section = new AnalysisExportSection
         {
-            Title = "角的工序",
-            IsPlaceholder = true,
-            Lines = new List<string> { "待设计" }
+            Title = "角的工序"
         };
+
+        IReadOnlyList<AngleWorkColumn> works = AngleWorks;
+
+        section.Lines.Add(AngleWorkSummary);
+        section.Lines.Add(
+            "碎晶角按「前态 → 切割 → 下落 → 目标」列出；节点预览为 30px 单元格的 1:1 竖式图。");
+        section.Lines.Add(
+            "工序前态按目标图形层数作为画布高度，需要更高脚手架才能成立的构造会标为尚未完全验证。");
+
+        foreach (AngleWorkColumn work in works)
+        {
+            var column = new AnalysisExportAngleColumn
+            {
+                Title = $"角 {work.Column + 1}",
+                KindText = work.KindText,
+                ConstructionText = work.ConstructionText ?? "",
+                IsSimple = work.IsSimple,
+                IsComplete = work.IsComplete,
+                StatusText = work.StatusText ?? "",
+                SimpleText = work.IsSimple ? work.SimpleText : "",
+                Note = work.Note,
+                Limitations = work.Limitations.ToList()
+            };
+
+            if (work.Nodes.Count > 0)
+            {
+                var graph = new AnalysisExportGraph
+                {
+                    Width = work.GraphWidth,
+                    Height = work.GraphHeight
+                };
+
+                foreach (AngleWorkNode node in work.Nodes)
+                {
+                    graph.Nodes.Add(new AnalysisExportGraphNode
+                    {
+                        Id = node.Id,
+                        Title = node.Title,
+                        X = node.X,
+                        Y = node.Y,
+                        Width = node.Width,
+                        Height = node.Height,
+                        State = node.Shape is null
+                            ? null
+                            : ShapeCanvasState.Create(node.Shape),
+                        Kind = node.KindName,
+                        KindTag = node.KindTag
+                    });
+                }
+
+                foreach (AngleWorkEdge edge in work.Edges)
+                {
+                    graph.Edges.Add(new AnalysisExportGraphEdge
+                    {
+                        FromId = edge.FromId,
+                        ToId = edge.ToId
+                    });
+                }
+
+                column.Graph = graph;
+            }
+
+            section.AngleColumns.Add(column);
+        }
+
+        return section;
     }
 
     private AnalysisExportSection BuildPropertiesSection()
@@ -951,29 +1274,341 @@
 
         _code = Request.Code;
 
-        if (!ShortCodeParser.TryInferDimensions(_code, out int layers, out int parts, out _))
+        /*
+         * 不能在 OnParametersSet 里同步跑完所有分析，否则大图形会白屏卡住。
+         * 这里启动分阶段异步任务：每个阶段之间 await 并触发重绘，
+         * 让顶部的进度条能够真实推进。
+         */
+        _ = AnalyzeAsync();
+    }
+
+    /// <summary>
+    /// 分阶段执行全部分析。
+    ///
+    /// Blazor WebAssembly 只有一个线程，<see cref="Task.Run(Action)"/> 并不能真正并行；
+    /// 这里靠阶段之间把控制权让给浏览器（StateHasChanged + 极短延迟）来刷新进度条。
+    /// </summary>
+    private async Task AnalyzeAsync()
+    {
+        int version = ++_analysisVersion;
+
+        _errorMessage = "";
+
+        // 重新分析时让旧的角工序结果和仍在进行的逐列构建全部失效。
+        _angleWorkVersion++;
+        _angleWorkBusy = false;
+        _angleWorks = null;
+        _angleWorksDocument = null;
+
+        _analysis = null;
+        _half = null;
+        _path = null;
+        _pathGraph = null;
+        _properties = ShapeProperty.None;
+        _document = null;
+
+        _analyzing = true;
+
+        try
+        {
+            // ---- 解析短代码 0–15% ----
+            await ReportProgressAsync(version, "解析短代码", 0);
+
+            if (IsStale(version))
+            {
+                return;
+            }
+
+            if (!ShortCodeParser.TryInferDimensions(
+                    _code,
+                    out int layers,
+                    out int parts,
+                    out _))
+            {
+                FinishAnalysis();
+                return;
+            }
+
+            await ReportProgressAsync(version, "解析短代码", 8);
+
+            if (IsStale(version))
+            {
+                return;
+            }
+
+            ParseResult parsed = new ShortCodeParser().Parse(
+                _code,
+                layers,
+                parts);
+
+            if (!parsed.Success || parsed.Document is null)
+            {
+                FinishAnalysis();
+                return;
+            }
+
+            ShapeDocument document = parsed.Document;
+            _document = document;
+
+            // 解析阶段收尾到 15%，随后进入角合法性。
+            await ReportProgressAsync(version, "解析短代码", 15);
+
+            // ---- 角合法性 15–40%：逐列计算，百分比随列数推进 ----
+            await ReportProgressAsync(version, "角合法性", 15);
+
+            var angles = new List<AngleResult>(document.PartCount);
+
+            for (int part = 0; part < document.PartCount; part++)
+            {
+                if (IsStale(version))
+                {
+                    return;
+                }
+
+                angles.Add(ShapeAngleAnalyzer.AnalyzeAngle(document, part));
+
+                int percent = 15 +
+                    (int)(25.0 * (part + 1) / document.PartCount);
+
+                if (percent != _percent)
+                {
+                    await ReportProgressAsync(version, "角合法性", percent);
+                }
+            }
+
+            // ---- 稳定性 40–55% ----
+            await ReportProgressAsync(version, "稳定性", 40);
+
+            if (IsStale(version))
+            {
+                return;
+            }
+
+            bool isStable = ShapeAngleAnalyzer.IsStable(document, _mode);
+
+            // 逐列算好的角结果与单独的稳定性判定合并成页面使用的分析结果。
+            _analysis = new ShapeAnalysisResult(
+                document.PartCount,
+                document.LayerCount,
+                angles)
+            {
+                IsStable = isStable,
+                Mode = _mode
+            };
+
+            await ReportProgressAsync(version, "稳定性", 55);
+
+            if (IsStale(version))
+            {
+                return;
+            }
+
+            // ---- 半边稳定性 55–85% ----
+            await ReportProgressAsync(version, "半边稳定性", 55);
+
+            _half = HalfStabilityAnalyzer.Analyze(document, _mode);
+
+            await ReportProgressAsync(version, "半边稳定性", 85);
+
+            if (IsStale(version))
+            {
+                return;
+            }
+
+            // ---- 图形性质 85–90% ----
+            await ReportProgressAsync(version, "图形性质", 85);
+
+            _properties = ShapePropertyAnalyzer.Analyze(
+                document,
+                isStable,
+                _half?.IsExchangeable ?? false,
+                _mode);
+
+            await ReportProgressAsync(version, "图形性质", 90);
+
+            if (IsStale(version))
+            {
+                return;
+            }
+
+            // ---- 制作路径 90–100%，含 ProductionPathParser ----
+            await ReportProgressAsync(version, "制作路径", 90);
+
+            RecomputePath();
+
+            await ReportProgressAsync(version, "制作路径", 100);
+
+            if (IsStale(version))
+            {
+                return;
+            }
+
+            _analyzing = false;
+
+            await InvokeAsync(StateHasChanged);
+
+            // 角工序默认隐藏；若之前展开着，则按列异步重建，并单独显示它自己的进度。
+            if (_showPath && _showPathAngles && !_disposed)
+            {
+                _ = BuildAngleWorksAsync();
+            }
+        }
+        catch (Exception exception)
+        {
+            if (IsStale(version))
+            {
+                return;
+            }
+
+            _errorMessage = $"分析失败：{exception.Message}";
+            FinishAnalysis();
+        }
+    }
+
+    /// <summary>解析失败或分析抛异常时收起进度条，回到空状态。</summary>
+    private void FinishAnalysis()
+    {
+        _analyzing = false;
+        _document = null;
+        _analysis = null;
+        _half = null;
+        _path = null;
+        _pathGraph = null;
+        _properties = ShapeProperty.None;
+        _angleWorks = null;
+        _angleWorksDocument = null;
+
+        if (!_disposed)
+        {
+            _ = InvokeAsync(StateHasChanged);
+        }
+    }
+
+    /// <summary>当前异步任务是否已被更新的分析或页面销毁取代。</summary>
+    private bool IsStale(
+        int version) =>
+        _disposed || version != _analysisVersion;
+
+    /// <summary>
+    /// 更新阶段与百分比并让浏览器重绘。
+    ///
+    /// StateHasChanged 只更新渲染队列，必须再让出到浏览器事件循环，
+    /// 进度条才会真正画出来；单次 1ms，按整数百分比推进，次数有限。
+    /// </summary>
+    private async Task ReportProgressAsync(
+        int version,
+        string stage,
+        int percent)
+    {
+        if (IsStale(version))
         {
             return;
         }
 
-        ParseResult parsed = new ShortCodeParser().Parse(_code, layers, parts);
+        _stage = stage;
+        _percent = Math.Clamp(percent, 0, 100);
 
-        if (!parsed.Success || parsed.Document is null)
+        await InvokeAsync(StateHasChanged);
+        await Task.Delay(1);
+    }
+
+    /// <summary>
+    /// 按列构建「角的工序」。只有该区域展开时才调用；
+    /// 每列完成后更新一次自己的进度条，隐藏区域或重新分析时立即退出。
+    /// </summary>
+    private async Task BuildAngleWorksAsync()
+    {
+        ShapeDocument? document = _document;
+
+        if (document is null || _disposed)
         {
-            _analysis = null;
-
             return;
         }
 
-        _document = parsed.Document;
-        _analysis = ShapeAngleAnalyzer.Analyze(_document, _mode);
-        _half = HalfStabilityAnalyzer.Analyze(_document, _mode);
-        RecomputePath();
+        int version = ++_angleWorkVersion;
 
-        _properties = ShapePropertyAnalyzer.Analyze(
-            _document,
-            _analysis?.IsStable ?? false,
-            _half?.IsExchangeable ?? false,
-            _mode);
+        _angleWorkBusy = true;
+        _angleWorkStage = "角的工序";
+        _angleWorkPercent = 0;
+        _angleWorks = null;
+        _angleWorksDocument = null;
+
+        await InvokeAsync(StateHasChanged);
+        await Task.Delay(1);
+
+        try
+        {
+            var works = new List<AngleWorkColumn>(document.PartCount);
+
+            for (int column = 0; column < document.PartCount; column++)
+            {
+                if (_disposed || version != _angleWorkVersion)
+                {
+                    return;
+                }
+
+                works.Add(AngleWorkColumnBuilder.BuildColumn(
+                    document,
+                    column,
+                    document.LayerCount));
+
+                int percent = (int)(100.0 * (column + 1) /
+                    document.PartCount);
+
+                if (percent != _angleWorkPercent)
+                {
+                    await ReportAngleProgressAsync(version, percent);
+                }
+            }
+
+            if (_disposed || version != _angleWorkVersion)
+            {
+                return;
+            }
+
+            _angleWorks = works;
+            _angleWorksDocument = document;
+            _angleWorkPercent = 100;
+            _angleWorkBusy = false;
+
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception exception)
+        {
+            if (_disposed || version != _angleWorkVersion)
+            {
+                return;
+            }
+
+            _errorMessage = $"角工序计算失败：{exception.Message}";
+            _angleWorkBusy = false;
+
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    /// <summary>更新角工序自己的进度条并让出一次浏览器事件循环。</summary>
+    private async Task ReportAngleProgressAsync(
+        int version,
+        int percent)
+    {
+        if (_disposed || version != _angleWorkVersion)
+        {
+            return;
+        }
+
+        _angleWorkPercent = Math.Clamp(percent, 0, 100);
+
+        await InvokeAsync(StateHasChanged);
+        await Task.Delay(1);
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+
+        // 让仍在运行的分阶段任务在下一个检查点退出。
+        _analysisVersion++;
+        _angleWorkVersion++;
     }
 }

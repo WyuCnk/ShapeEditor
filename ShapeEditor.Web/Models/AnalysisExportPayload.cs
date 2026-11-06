@@ -68,10 +68,55 @@ public sealed class AnalysisExportSection
     /// 预览保持 30px 单元格、不做缩放。
     /// </summary>
     public AnalysisExportGraph? Graph { get; set; }
+
+    /// <summary>
+    /// 角的工序：每一列一张卡片。非空时按「角 N + 分类/构造 + 节点链」绘制，
+    /// 与页面上的角工序卡片一致；为空时该板块仍按普通文本行绘制。
+    /// </summary>
+    public List<AnalysisExportAngleColumn> AngleColumns { get; set; } = new();
 }
 
 /// <summary>
-/// 导出图里的制作路径节点图。
+/// 导出图里的一列角工序。
+///
+/// <see cref="Graph"/> 是这一列的步骤节点链（坐标从 0 开始），
+/// 未完全验证时 <see cref="Note"/> 与 <see cref="Limitations"/> 用小字画在节点链下方。
+/// </summary>
+public sealed class AnalysisExportAngleColumn
+{
+    /// <summary>列标题，例如「角 1」。</summary>
+    public string Title { get; set; } = "";
+
+    /// <summary>分类文本：简单角 / 碎晶角。</summary>
+    public string KindText { get; set; } = "";
+
+    /// <summary>构造文本，例如「构造 G」「填充 + 暴破」；没有构造时为空。</summary>
+    public string ConstructionText { get; set; } = "";
+
+    /// <summary>简单角只画一行说明，不画节点链。</summary>
+    public bool IsSimple { get; set; }
+
+    /// <summary>工序是否已逐步验证通过。</summary>
+    public bool IsComplete { get; set; }
+
+    /// <summary>未完全验证时的标题：「该列工序尚未完全验证」。</summary>
+    public string StatusText { get; set; } = "";
+
+    /// <summary>简单角的一行说明。</summary>
+    public string SimpleText { get; set; } = "";
+
+    /// <summary>未完成原因；已通过时为 null。</summary>
+    public string? Note { get; set; }
+
+    /// <summary>UI 展示用的限制/前提说明，只在未完成时绘制。</summary>
+    public List<string> Limitations { get; set; } = new();
+
+    /// <summary>该列的步骤节点链；简单角为 null。</summary>
+    public AnalysisExportGraph? Graph { get; set; }
+}
+
+/// <summary>
+/// 导出图里的节点图（制作路径，或角的工序的一列节点链）。
 ///
 /// 坐标为节点图内部坐标（与页面一致），JS 直接按原尺寸绘制；
 /// 图比页面宽时整张导出图随之变宽，不分片、不缩放。
@@ -113,10 +158,14 @@ public sealed class AnalysisExportGraphNode
 
     public bool IsPending { get; set; }
 
-    /// <summary>节点类型：pin / stack / block；其余节点为空。</summary>
+    /// <summary>
+    /// 节点类型：pin / stack / block（制作路径），
+    /// 或 angle-pre / angle-cut / angle-collapse / angle-pin /
+    /// angle-crystallize / angle-target / angle-note（角的工序）。
+    /// </summary>
     public string Kind { get; set; } = "";
 
-    /// <summary>右上角类型小标签：顶P / 堆 / 块；其余节点为空。</summary>
+    /// <summary>右上角类型小标签：顶P / 堆 / 块；角工序为 前态/切/落/顶/晶/目标。</summary>
     public string KindTag { get; set; } = "";
 }
 
