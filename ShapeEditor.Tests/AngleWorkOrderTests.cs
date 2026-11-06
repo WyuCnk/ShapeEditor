@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using ShapeEditor.Core.Analysis;
 using ShapeEditor.Core.Analysis.Production;
 using ShapeEditor.Core.Models;
@@ -1206,6 +1207,13 @@ internal static class AngleWorkOrderTests
     /// <summary>
     /// 满高托柱仍是 D 不成立分支（算法 4）的兜底构造：
     /// <c>.TcTc</c> 的 D 不成立、却属于 S，由满高托柱完成。
+    ///
+    /// <para>
+    /// §7.1 的循环判据生效后，「前态 = 目标列 + 托柱」不能再算完成
+    /// （前态没有任何临时晶体或抬升）。同一形态改由「填充底层缺口 +
+    /// 满高托柱」完成：前态 <c>cTcTc</c> 比目标多一枚临时晶体，
+    /// 切割打碎它之后目标列正好等于 <c>.TcTc</c>，托柱仍在西半边。
+    /// </para>
     /// </summary>
     public static void PillarHolderRemainsFallbackForNonDBranches()
     {
@@ -1237,9 +1245,13 @@ internal static class AngleWorkOrderTests
         ShapeDocument preState = Step(order, AngleWorkStepKind.PreState).Shape!;
 
         Assert.Equal(
+            "cTcTc",
+            ShapeSignature.ColumnText(preState, 0),
+            "前态应把底层缺口填成临时晶体（不能直接等于目标列）");
+        Assert.NotEqual(
             text,
             ShapeSignature.ColumnText(preState, 0),
-            "满高托柱的前态应保留目标列原样");
+            "前态的目标列必须与目标不同，否则就是循环");
         Assert.True(ShapeOps.IsStable(preState), "满高托柱的前态应稳定");
 
         int holderColumn = order.AuxiliaryColumns[0];
@@ -1273,6 +1285,140 @@ internal static class AngleWorkOrderTests
                 target,
                 Step(order, AngleWorkStepKind.Target).Shape),
             "末步应得到目标角");
+    }
+
+    #endregion
+
+    #region §7 回归角（假阳性、托柱、子形态、耗时）
+
+    /// <summary>
+    /// TODO.md §7 的五个回归角：<c>.T.c</c>、<c>T.T.c</c>、<c>P.T.c</c>、
+    /// <c>.TT.c</c>、<c>.T..c</c>。
+    ///
+    /// <para>每个角都要满足：</para>
+    /// <list type="number">
+    /// <item><see cref="AngleWorkOrder.IsComplete"/> 为 true，最终列逐格等于目标；</item>
+    /// <item>前态的目标列<b>不等于</b>目标本身，且前态至少含一处临时晶体
+    /// （§7.1：前态 = 目标的「先做出来再切掉辅助柱」是循环，不算完成）；</item>
+    /// <item><c>.T..c</c> 的塔列不含 <c>.T.c</c> 子形态（缺口错开层，避免多一次顶破）。</item>
+    /// </list>
+    /// <para>
+    /// 另外用 Stopwatch 断言 <c>.TT.c</c> 的单次 Build 耗时 &lt; 30 ms：
+    /// 它以前会在构造 H 的 support × block × fuse × 列编码五重枚举里跑满整圈。
+    /// </para>
+    /// </summary>
+    public static void RegressionCornersAreConstructible()
+    {
+        var corners = new (string Text, int Cap)[]
+        {
+            (".T.c", 4),
+            ("T.T.c", 5),
+            ("P.T.c", 5),
+            (".TT.c", 5),
+            (".T..c", 5)
+        };
+
+        // 预热 JIT：计时只统计稳定态下的单次 Build。
+        _ = AngleWorkOrderBuilder.Build(FromColumns(4, 4, (0, ".T.c")), 0, 4);
+        _ = AngleWorkOrderBuilder.Build(FromColumns(4, 5, (0, ".TT.c")), 0, 5);
+
+        foreach ((string text, int cap) in corners)
+        {
+            ShapeDocument target = FromColumns(4, cap, (0, text));
+
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+
+            Assert.Equal(AngleBuildKind.NeedsCrystalBreak, order.Kind);
+            Assert.True(
+                order.IsComplete,
+                order.Note ?? $"{text} 应可制作");
+            Assert.True(
+                order.Note is null,
+                order.Note ?? $"{text} 通过时不应有未覆盖说明");
+
+            // 最终列逐格等于目标（类型、形状码、颜色都一致）。
+            AngleWorkStep targetStep = Step(order, AngleWorkStepKind.Target);
+
+            Assert.Equal(
+                text,
+                ShapeSignature.ColumnText(targetStep.Shape!, 0),
+                $"{text} 的末步目标列应逐格等于目标");
+            AssertColumnCells(targetStep.Shape!, 0, text);
+
+            // 最后一条操作步（Pin/Cut/Collapse/Support）也必须已经等于目标。
+            AngleWorkStep lastOperational = order.Steps.Last(step =>
+                step.Shape is not null &&
+                step.Kind is AngleWorkStepKind.Pin or
+                    AngleWorkStepKind.Cut or
+                    AngleWorkStepKind.Collapse or
+                    AngleWorkStepKind.Support);
+
+            Assert.Equal(
+                text,
+                ShapeSignature.ColumnText(lastOperational.Shape!, 0),
+                $"{text} 的最后一条操作步应逐格等于目标");
+
+            // §7.1 必要条件：前态不能就是目标本身，且必须真的有临时材料。
+            ShapeDocument preState = Step(order, AngleWorkStepKind.PreState).Shape!;
+            string preColumn = ShapeSignature.ColumnText(preState, 0);
+
+            Assert.NotEqual(
+                text,
+                preColumn,
+                $"{text} 的前态不能等于目标本身，否则就是循环");
+            Assert.True(
+                CountTemporaryCrystals(preState, target) >= 1,
+                $"{text} 的前态至少要有 1 颗目标里没有的临时晶体");
+            Assert.True(ShapeOps.IsStable(preState), $"{text} 的前态应稳定");
+
+            // 步骤链用真实物理回放。
+            if (order.Construction == AngleConstruction.C)
+            {
+                Assert.True(
+                    ShapeOps.Same(
+                        ShapePhysics.Pin(preState).Document,
+                        Step(order, AngleWorkStepKind.Pin).Shape),
+                    $"{text} 的 Pin 步应等于真实顶针结果");
+                Assert.Equal(
+                    text,
+                    ShapeSignature.ColumnText(
+                        Step(order, AngleWorkStepKind.Support).Shape!,
+                        0),
+                    $"{text} 的构造 C 交接后目标列应等于目标");
+            }
+            else
+            {
+                ReplayAndVerifyColumn(order, target, 0);
+            }
+
+            /*
+             * §7.1 第 3 处：`.T..c` 的塔列不能含正在求解的子形态 `.T.c`。
+             * 正解是 `..Tc.`（普通格紧贴晶体），不是 `.T.c.`。
+             */
+            if (text == ".T..c")
+            {
+                Assert.False(
+                    preColumn.Contains(".T.c", StringComparison.Ordinal),
+                    $"`.T..c` 的塔列不应含 `.T.c` 子形态，实际为 {preColumn}");
+            }
+        }
+
+        // §7.1 第 2 条：`.TT.c` 的耗时应在与 `.T.c` 同量级（留余量取 30 ms）。
+        ShapeDocument expensive = FromColumns(4, 5, (0, ".TT.c"));
+
+        _ = AngleWorkOrderBuilder.Build(expensive, 0, 5);
+
+        Stopwatch stopwatch = Stopwatch.StartNew();
+
+        AngleWorkOrder fast = AngleWorkOrderBuilder.Build(expensive, 0, 5);
+
+        stopwatch.Stop();
+
+        Assert.True(fast.IsComplete, fast.Note ?? ".TT.c 应可制作");
+        Assert.True(
+            stopwatch.Elapsed.TotalMilliseconds < 30.0,
+            $".TT.c 单次 Build 耗时 {stopwatch.Elapsed.TotalMilliseconds:F2} ms，" +
+            "应在 30 ms 以内");
     }
 
     #endregion
@@ -1703,6 +1849,39 @@ internal static class AngleWorkOrderTests
             if (document[layer, column].Type == CellType.Crystal)
             {
                 count++;
+            }
+        }
+
+        return count;
+    }
+
+    /// <summary>
+    /// 前态里「目标中没有」的晶体数量（同格比较）：即临时晶体数。
+    /// </summary>
+    private static int CountTemporaryCrystals(
+        ShapeDocument preState,
+        ShapeDocument target)
+    {
+        int count = 0;
+
+        for (int part = 0; part < preState.PartCount; part++)
+        {
+            for (int layer = 0; layer < preState.LayerCount; layer++)
+            {
+                if (preState[layer, part].Type != CellType.Crystal)
+                {
+                    continue;
+                }
+
+                bool alsoInTarget =
+                    part < target.PartCount &&
+                    layer < target.LayerCount &&
+                    target[layer, part].Type == CellType.Crystal;
+
+                if (!alsoInTarget)
+                {
+                    count++;
+                }
             }
         }
 

@@ -325,15 +325,30 @@ public static class AngleWorkOrderBuilder
             cap,
             kind);
 
+        string? tierCycleReason = null;
+
         if (tierOrder is not null && tierOrder.IsComplete)
         {
             /*
-             * 档内链（算法 1 → 2 → 3）会自己标出真正成功的那一档，
-             * 这里只给没打标的实现补上分档标记。
+             * 最后一道循环闸门：任何分档构造若拿「目标列本身」当前态，
+             * 验收等式就平凡成立。这里统一再挡一次，避免某个新构造
+             * 绕过各自的候选检查。
              */
-            return tierOrder.Algorithm == AngleAlgorithm.None
-                ? Label(tierOrder, algorithm, attempt: false)
-                : tierOrder;
+            if (HasCyclicPreState(tierOrder, target))
+            {
+                tierCycleReason = CyclicPreStateReason;
+                tierOrder = null;
+            }
+            else
+            {
+                /*
+                 * 档内链（算法 1 → 2 → 3）会自己标出真正成功的那一档，
+                 * 这里只给没打标的实现补上分档标记。
+                 */
+                return tierOrder.Algorithm == AngleAlgorithm.None
+                    ? Label(tierOrder, algorithm, attempt: false)
+                    : tierOrder;
+            }
         }
 
         /*
@@ -349,14 +364,19 @@ public static class AngleWorkOrderBuilder
             parts,
             half);
 
+        if (legacy.IsComplete && HasCyclicPreState(legacy, target))
+        {
+            legacy = AppendFailure(legacy, CyclicPreStateReason);
+        }
+
         if (algorithm == AngleAlgorithm.Algorithm4)
         {
             return Label(legacy, AngleAlgorithm.Algorithm4, attempt: false);
         }
 
-        string tierReason = tierOrder?.Note is null
+        string tierReason = tierCycleReason ?? (tierOrder?.Note is null
             ? "该形态没有找到回放验证通过的列级步骤"
-            : StripUncoveredPrefix(tierOrder.Note);
+            : StripUncoveredPrefix(tierOrder.Note));
 
         if (legacy.IsComplete)
         {
@@ -836,12 +856,12 @@ public static class AngleWorkOrderBuilder
         }
 
         // ── 第一步：底块提升 + 正规化（晶体下移一层，普通格留原位）──
-        string? towerColumn = BuildNormalizedTowerColumn(
+        string? normalizedTower = BuildNormalizedTowerColumn(
             target,
             column,
             layers);
 
-        if (towerColumn is null)
+        if (normalizedTower is null)
         {
             return null;
         }
@@ -863,39 +883,153 @@ public static class AngleWorkOrderBuilder
         limitations.Add(
             "本档不含末步结晶：Crystallize 是全局操作，会把刚做出来的缺口填平。");
 
-        foreach ((int supportPosition, int blockPosition, int fusePosition)
-                 in EnumerateRoleAssignments(aux))
+        /*
+         * 「缺口形态」预筛：构造 H 的落块柱每个下降通道只搬运一枚普通格。
+         * 正规化塔的晶体正下方若叠着两枚以上普通格，顶针后它们要各自落到
+         * 不同层、而晶体还必须留在原位——一次顶针做不到（`.TT.c` 就是
+         * 这种形态，顶层普通格被下层挡住，落到目标层下面一层）。
+         * 这类形态直接交给填充+暴破，不要在 H 的五重枚举里白跑整圈。
+         */
+        if (!CanUseConstructH(normalizedTower))
         {
-            foreach (string supportText in EnumerateSupportColumns(layers))
-            {
-                foreach (string blockText in EnumerateBlockColumns(
-                             target,
-                             column,
-                             layers))
-                {
-                    AngleWorkOrder? order = TryAlgorithm6Candidate(
-                        target,
-                        column,
-                        layers,
-                        parts,
-                        kind,
-                        towerColumn,
-                        supportText,
-                        blockText,
-                        supportPosition,
-                        blockPosition,
-                        fusePosition,
-                        limitations);
+            return null;
+        }
 
-                    if (order is not null)
+        /*
+         * 塔列优先用「缺口错开层」的变体：普通格不留在缺口下方，而是紧贴
+         * 晶体，由落块柱完成最后一层位移。这样塔的目标列不会再包含一个
+         * 正在求解的子形态（例如 `.T..c` 的正规化塔 `.T.c.` 里含 `.T.c`），
+         * 否则造塔本身又要多一次顶破。正规化塔仍作为后备候选。
+         */
+        foreach (string towerColumn in EnumerateTowerColumns(normalizedTower))
+        {
+            foreach ((int supportPosition, int blockPosition, int fusePosition)
+                     in EnumerateRoleAssignments(aux))
+            {
+                foreach (string supportText in EnumerateSupportColumns(layers))
+                {
+                    foreach (string blockText in EnumerateBlockColumns(
+                                 towerColumn,
+                                 target,
+                                 column,
+                                 layers))
                     {
-                        return order;
+                        AngleWorkOrder? order = TryAlgorithm6Candidate(
+                            target,
+                            column,
+                            layers,
+                            parts,
+                            kind,
+                            towerColumn,
+                            supportText,
+                            blockText,
+                            supportPosition,
+                            blockPosition,
+                            fusePosition,
+                            limitations);
+
+                        if (order is not null)
+                        {
+                            return order;
+                        }
                     }
                 }
             }
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// 构造 H 是否适用于这个塔列：晶体正下方只能有一枚普通格。
+    ///
+    /// <para>
+    /// 顶针把整列上移一层后，落块柱把「源层」的普通格整批放到目标层；
+    /// 若晶体下面叠着两枚普通格，下面的那枚会挡住上面那枚的下降通道，
+    /// 两枚不可能同时停在各自的目标层。这是形态层面的限制，先筛掉即可，
+    /// 不必进入 support × block × fuse 的枚举。
+    /// </para>
+    /// </summary>
+    private static bool CanUseConstructH(
+        string towerColumn)
+    {
+        int crystal = towerColumn.LastIndexOf(ShapeSignature.CrystalCode);
+
+        if (crystal < 0)
+        {
+            return true;
+        }
+
+        int stackedSolids = 0;
+
+        for (int layer = crystal - 1;
+             layer >= 0 &&
+             towerColumn[layer] == ShapeSignature.SolidCode;
+             layer--)
+        {
+            stackedSolids++;
+        }
+
+        return stackedSolids <= 1;
+    }
+
+    /// <summary>
+    /// 塔列候选：优先「缺口错开层」的变体，其次才是正规化塔列。
+    /// </summary>
+    private static IEnumerable<string> EnumerateTowerColumns(
+        string normalizedTower)
+    {
+        string? offset = OffsetGapBelowCrystal(normalizedTower);
+
+        if (offset is not null &&
+            !string.Equals(offset, normalizedTower, StringComparison.Ordinal))
+        {
+            yield return offset;
+        }
+
+        yield return normalizedTower;
+    }
+
+    /// <summary>
+    /// 把「普通格 / 空 / 晶体」的纵向缺口错开一层：普通格上移，紧贴晶体。
+    ///
+    /// <para>
+    /// 正规化塔列把晶体下移一层、普通格留在原位，于是普通格与晶体之间
+    /// 隔着一个空格。例如 <c>.T..c</c> 的塔列 <c>.T.c.</c> 前四层正好是
+    /// 子形态 <c>.T.c</c>。把普通格上移一格得到 <c>..Tc.</c>，缺口落到
+    /// 普通格下方，塔列里不再出现这个子形态，造塔可以一次成型。
+    /// </para>
+    /// </summary>
+    private static string? OffsetGapBelowCrystal(
+        string towerColumn)
+    {
+        char[] cells = towerColumn.ToCharArray();
+
+        bool changed = false;
+
+        int index = 0;
+
+        while (index + 2 < cells.Length)
+        {
+            bool matches =
+                cells[index] == ShapeSignature.SolidCode &&
+                cells[index + 1] == ShapeSignature.EmptyCode &&
+                cells[index + 2] == ShapeSignature.CrystalCode;
+
+            if (!matches)
+            {
+                index++;
+                continue;
+            }
+
+            cells[index] = ShapeSignature.EmptyCode;
+            cells[index + 1] = ShapeSignature.SolidCode;
+
+            changed = true;
+            index += 2;
+        }
+
+        return changed ? new string(cells) : null;
     }
 
     /// <summary>
@@ -1013,6 +1147,7 @@ public static class AngleWorkOrderBuilder
     /// 碎晶后它们和目标列的普通格一起整批落回目标层。
     /// </summary>
     private static IEnumerable<string> EnumerateBlockColumns(
+        string towerColumn,
         ShapeDocument target,
         int column,
         int layers)
@@ -1065,6 +1200,32 @@ public static class AngleWorkOrderBuilder
         yield return
             ShapeSignature.CrystalCode +
             new string(ShapeSignature.SolidCode, layers - 1);
+
+        /*
+         * 「缺口错开层」用的落块柱：晶体段从地面连续到塔列晶体下方，
+         * 上面两格是普通格（分别对齐塔列晶体与其下方那格）。
+         * 顶针后引爆柱把这段晶体整簇打碎，这两枚普通格正好带着
+         * 目标列的普通格落到目标层——`.T..c` 的一次成型塔就靠它。
+         */
+        int crystalLayer = towerColumn.LastIndexOf(
+            ShapeSignature.CrystalCode);
+
+        if (crystalLayer >= 2 && crystalLayer < layers)
+        {
+            var cells = new char[layers];
+
+            Array.Fill(cells, ShapeSignature.EmptyCode);
+
+            for (int layer = 0; layer < crystalLayer - 1; layer++)
+            {
+                cells[layer] = ShapeSignature.CrystalCode;
+            }
+
+            cells[crystalLayer - 1] = ShapeSignature.SolidCode;
+            cells[crystalLayer] = ShapeSignature.SolidCode;
+
+            yield return new string(cells);
+        }
     }
 
     /// <summary>把一份候选塔装出来并用真实物理回放整条链。</summary>
@@ -1106,16 +1267,12 @@ public static class AngleWorkOrderBuilder
             return null;
         }
 
-        // ── 造塔子配方：只允许交换链（rank 0），并端到端校验 ──
-        if (!ExchangeChain.TryBuild(tower, out Recipe? subRecipe) ||
-            subRecipe is null ||
-            subRecipe.Rank != 0 ||
-            !Replay.Verify(subRecipe, tower, out _))
-        {
-            return null;
-        }
-
-        // ── 一次顶针（构造 H）──
+        /*
+         * 先用「缺口形态」筛：先做最便宜的真实顶针，只有顶针后目标列
+         * 逐格等于目标的候选才值得去跑昂贵的交换链装配（ExchangeChain +
+         * Replay.Verify）。这一步把 `.TT.c` 这类根本走不通的形态挡在
+         * 交换链枚举之外，耗时从整圈枚举降到只剩少量候选。
+         */
         PhysicsResult pinResult = ShapePhysics.Pin(tower);
 
         if (!pinResult.Success || pinResult.Document is null)
@@ -1131,6 +1288,15 @@ public static class AngleWorkOrderBuilder
                 column,
                 layers,
                 out _))
+        {
+            return null;
+        }
+
+        // ── 造塔子配方：只允许交换链（rank 0），并端到端校验 ──
+        if (!ExchangeChain.TryBuild(tower, out Recipe? subRecipe) ||
+            subRecipe is null ||
+            subRecipe.Rank != 0 ||
+            !Replay.Verify(subRecipe, tower, out _))
         {
             return null;
         }
@@ -1294,6 +1460,149 @@ public static class AngleWorkOrderBuilder
 
         /// <summary>算法 1（提升）：只抬升填。</summary>
         LiftOnly
+    }
+
+    /// <summary>
+    /// 单段缺口的填法。
+    ///
+    /// <para>
+    /// <see cref="LeaveGap"/> 只用于兜底链：目标列里的这段缺口本来就存在，
+    /// 不必先填成晶体再造出来。用它保住缺口上方的普通格——
+    /// 缺口上方若是晶体，抬升填法会把普通格抬高一层，切口打开后它会
+    /// 直接落过两层（<c>T.T.c → TT..c</c>）；不改这一段、只填下方缺口，
+    /// 普通格落到目标层时正好由保留侧的托柱侧向托住。
+    /// </para>
+    /// </summary>
+    private enum FillChoice
+    {
+        /// <summary>整段缺口直接填成晶体。</summary>
+        Direct,
+
+        /// <summary>把缺口下方的普通格抬到缺口顶端，再把它让出的位置填成晶体。</summary>
+        Lift,
+
+        /// <summary>保持缺口原样（不填、不抬升）。</summary>
+        LeaveGap
+    }
+
+    /// <summary>
+    /// 目标列是否只有最上面一段晶体（单晶塔）。
+    ///
+    /// <para>
+    /// 单晶塔的角（<c>T.T.c</c>、<c>P.T.c</c>、<c>.TT.c</c>）只有一枚晶体；
+    /// 它下方的临时晶体被打碎后，中间普通格要靠托柱侧向托住。
+    /// 多晶列则有晶体塔，缺口应当由构造 G/H 的环下落来造。
+    /// </para>
+    /// </summary>
+    private static bool IsSingleCrystalTower(
+        ShapeDocument target,
+        int column)
+    {
+        int crystals = 0;
+
+        for (int layer = 0; layer < target.LayerCount; layer++)
+        {
+            if (target[layer, column].Type == CellType.Crystal)
+            {
+                crystals++;
+            }
+        }
+
+        return crystals == 1;
+    }
+
+    /// <summary>
+    /// 循环前态的判据：前态的目标列与目标列相同，或前态没有任何临时晶体/抬升。
+    ///
+    /// <para>
+    /// 验收若是「前态 → 切 → 下落 == 目标」，当前态等于目标时等式平凡成立，
+    /// 会把「先把目标本身做出来、再切掉辅助柱」这种循环误报成完成。
+    /// 所以必须要求前态的目标列与目标不同，并且真的含一处临时晶体或一次抬升。
+    /// </para>
+    /// </summary>
+    private const string CyclicPreStateReason = "前态与目标相同（循环）";
+
+    private static bool IsCyclicPreState(
+        ShapeDocument preState,
+        ShapeDocument target,
+        int column,
+        bool hasLift)
+    {
+        if (ShapeSignature.ColumnText(preState, column) ==
+            ShapeSignature.ColumnText(target, column))
+        {
+            return true;
+        }
+
+        if (hasLift)
+        {
+            return false;
+        }
+
+        return !HasTemporaryCrystal(preState, target);
+    }
+
+    /// <summary>
+    /// 工序单层面的循环判据：前态步的目标列是否等于目标列。
+    ///
+    /// <para>
+    /// 这是 <see cref="Build"/> / 兜底链的统一闸门，防止某个构造分支
+    /// 绕过各自的候选检查，把「前态 = 目标」的平凡回放当成完成。
+    /// </para>
+    /// </summary>
+    private static bool HasCyclicPreState(
+        AngleWorkOrder order,
+        ShapeDocument target)
+    {
+        foreach (AngleWorkStep step in order.Steps)
+        {
+            if (step.Kind != AngleWorkStepKind.PreState ||
+                step.Shape is null)
+            {
+                continue;
+            }
+
+            return ShapeSignature.ColumnText(step.Shape, order.Column) ==
+                   ShapeSignature.ColumnText(target, order.Column);
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// 前态里是否存在目标里没有的晶体（按同一格比较）。
+    ///
+    /// <para>
+    /// 临时晶体是「这一步真的在施工」的证据：碎晶前态里的填充晶体、
+    /// 造塔前态里晶体塔之外的多余晶体都算。只有辅助普通柱的简单前态不算。
+    /// </para>
+    /// </summary>
+    private static bool HasTemporaryCrystal(
+        ShapeDocument preState,
+        ShapeDocument target)
+    {
+        for (int part = 0; part < preState.PartCount; part++)
+        {
+            for (int layer = 0; layer < preState.LayerCount; layer++)
+            {
+                if (preState[layer, part].Type != CellType.Crystal)
+                {
+                    continue;
+                }
+
+                bool alsoInTarget =
+                    part < target.PartCount &&
+                    layer < target.LayerCount &&
+                    target[layer, part].Type == CellType.Crystal;
+
+                if (!alsoInTarget)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -1624,6 +1933,8 @@ public static class AngleWorkOrderBuilder
         // === 满高托柱：n = 4 的 S 形态，目标格靠同层侧向粘连停在目标层 ===
         // 只属于兜底链：算法 1/2 是论文的「提升 / 正规核心」，不借用托柱。
 
+        AngleWorkOrder? cyclicHolder = null;
+
         if (mode == FillPlanMode.All &&
             CanUsePillarHolder(target, column, parts, highest))
         {
@@ -1638,6 +1949,19 @@ public static class AngleWorkOrderBuilder
             if (holderOrder.IsComplete)
             {
                 return holderOrder;
+            }
+
+            /*
+             * 托柱前态 = 目标列本身，按 §7.1 是循环，不算完成。
+             * 先记下这个「看起来能做、其实是循环」的候选；如果后面的
+             * 缺口填法也都不成立，最终 Note 要如实写出循环原因。
+             */
+            if (holderOrder.Note is not null &&
+                holderOrder.Note.Contains(
+                    CyclicPreStateReason,
+                    StringComparison.Ordinal))
+            {
+                cyclicHolder = holderOrder;
             }
         }
 
@@ -1679,7 +2003,7 @@ public static class AngleWorkOrderBuilder
 
         // === 每段缺口的候选填法：优先直接填，其次抬升普通格 ===
 
-        var options = new List<bool[]>(gaps.Count);
+        var options = new List<FillChoice[]>(gaps.Count);
 
         foreach ((int bottom, int top) in gaps)
         {
@@ -1732,15 +2056,44 @@ public static class AngleWorkOrderBuilder
                     construction: AngleConstruction.FillBreak);
             }
 
-            options.Add(
-                useDirect
-                    ? (useLift ? new[] { false, true } : new[] { false })
-                    : new[] { true });
+            var gapOptions = new List<FillChoice>();
+
+            if (useDirect)
+            {
+                gapOptions.Add(FillChoice.Direct);
+            }
+
+            if (useLift)
+            {
+                gapOptions.Add(FillChoice.Lift);
+            }
+
+            /*
+             * 兜底链多给一个「保持缺口原样」的候选：缺口本来就存在于目标列，
+             * 只要下方的临时晶体被打碎后普通格能由托柱托到目标层，就不必
+             * 再用抬升填法把普通格抬高一整层（那会让它多掉一层）。
+             *
+             * 只对「单晶塔 + 晶体正下方的单层缺口」开放：
+             * <c>T.T.c</c> / <c>P.T.c</c> 的中间普通格上方就是这层缺口，
+             * 抬升填法会把它抬高一整层、再落两层。多晶列里晶体塔之间的
+             * 缺口要靠构造 G/H 的晶体环下落来造，不能靠少填一段缺口绕过；
+             * 缺口有多层时抬升本来就是必要的（它负责把缺口整段搬开），
+             * 也留给构造 G/H。
+             */
+            if (mode == FillPlanMode.All &&
+                top == bottom &&
+                top + 1 == highest &&
+                IsSingleCrystalTower(target, column))
+            {
+                gapOptions.Add(FillChoice.LeaveGap);
+            }
+
+            options.Add(gapOptions.ToArray());
         }
 
         int combinations = 1;
 
-        foreach (bool[] option in options)
+        foreach (FillChoice[] option in options)
         {
             combinations *= option.Length;
         }
@@ -1751,18 +2104,18 @@ public static class AngleWorkOrderBuilder
         {
             int remaining = code;
 
-            var plan = new List<(int Bottom, int Top, bool Lift)>(
+            var plan = new List<(int Bottom, int Top, FillChoice Choice)>(
                 gaps.Count);
 
             for (int index = 0; index < gaps.Count; index++)
             {
-                bool[] option = options[index];
+                FillChoice[] option = options[index];
 
-                bool lift = option[remaining % option.Length];
+                FillChoice choice = option[remaining % option.Length];
 
                 remaining /= option.Length;
 
-                plan.Add((gaps[index].Bottom, gaps[index].Top, lift));
+                plan.Add((gaps[index].Bottom, gaps[index].Top, choice));
             }
 
             AngleWorkOrder attempt = TryFillBreakCandidate(
@@ -1787,12 +2140,25 @@ public static class AngleWorkOrderBuilder
             }
         }
 
-        return bestFailure ?? Incomplete(
-            column,
-            kind,
-            "填充+暴破没有可用候选。",
-            limitations,
-            construction: AngleConstruction.FillBreak);
+        if (bestFailure is null)
+        {
+            return cyclicHolder ?? Incomplete(
+                column,
+                kind,
+                "填充+暴破没有可用候选。",
+                limitations,
+                construction: AngleConstruction.FillBreak);
+        }
+
+        if (cyclicHolder is not null)
+        {
+            return AppendFailure(
+                cyclicHolder,
+                StripUncoveredPrefix(
+                    bestFailure.Note ?? "填充+暴破没有可用候选。"));
+        }
+
+        return bestFailure;
     }
 
     /// <summary>
@@ -1806,7 +2172,7 @@ public static class AngleWorkOrderBuilder
         int parts,
         int half,
         AngleBuildKind kind,
-        List<(int Bottom, int Top, bool Lift)> plan,
+        List<(int Bottom, int Top, FillChoice Choice)> plan,
         List<string> limitations)
     {
         char color = CrystalColor(target, column);
@@ -1822,9 +2188,14 @@ public static class AngleWorkOrderBuilder
 
         var fills = new List<int>();
 
-        foreach ((int bottom, int top, bool lift) in plan)
+        foreach ((int bottom, int top, FillChoice choice) in plan)
         {
-            if (!lift)
+            if (choice == FillChoice.LeaveGap)
+            {
+                continue;
+            }
+
+            if (choice == FillChoice.Direct)
             {
                 for (int layer = bottom; layer <= top; layer++)
                 {
@@ -1852,17 +2223,23 @@ public static class AngleWorkOrderBuilder
         int eColumn = Wrap(column + 1, parts);
 
         // 托柱：满高普通柱，留在西半边托住晶体塔与保留晶体。
+        // 构造 D 的原话是「保留目标和原普通柱，删去辅助列」：切割的保留侧
+        // 必须同时含目标列与托柱，普通格才不会在碎晶后失去侧向支撑。
         FillPillar(preState, holderColumn);
 
         // 桥柱：满高普通柱，只在填充层带晶体，跨刀口带走填充晶体。
         FillPillar(preState, eColumn);
 
-        foreach ((int bottom, int top, bool lift) in plan)
+        bool hasLift = false;
+
+        foreach ((int bottom, int top, FillChoice choice) in plan)
         {
             _ = bottom;
 
-            if (lift)
+            if (choice == FillChoice.Lift)
             {
+                hasLift = true;
+
                 // 顶针不参与水平连通：抬升格在碎晶后才会下落。
                 preState[top, holderColumn] = ShapeCell.Pin();
             }
@@ -1886,6 +2263,23 @@ public static class AngleWorkOrderBuilder
                 preState,
                 AngleWorkStepKind.PreState)
         };
+
+        /*
+         * 循环判据：前态的目标列若和 target 一样，说明「切→落」这条等式
+         * 平凡成立，什么都没造。必须先挡掉，否则会误报完成。
+         */
+        if (IsCyclicPreState(preState, target, column, hasLift))
+        {
+            return Incomplete(
+                column,
+                kind,
+                CyclicPreStateReason,
+                limitations,
+                steps,
+                AngleConstruction.FillBreak,
+                rotation,
+                auxiliaryColumns);
+        }
 
         if (!ShapeOps.IsStable(preState))
         {
@@ -2124,6 +2518,24 @@ public static class AngleWorkOrderBuilder
                 preState,
                 AngleWorkStepKind.PreState)
         };
+
+        /*
+         * 满高托柱的前态里目标列就是目标本身，没有任何临时晶体或抬升。
+         * 按 §7.1 的循环判据它不能算完成——否则「先做出目标、再切掉辅助柱」
+         * 会平凡通过，`.TT.c` 这类形态就被兜底路径误报成可制作。
+         */
+        if (IsCyclicPreState(preState, target, column, hasLift: false))
+        {
+            return Incomplete(
+                column,
+                kind,
+                CyclicPreStateReason,
+                limitations,
+                steps,
+                AngleConstruction.FillBreak,
+                rotation,
+                auxiliaryColumns);
+        }
 
         if (!ShapeOps.IsStable(preState))
         {
