@@ -180,6 +180,49 @@ public sealed record AngleWorkOrder(
     /// 可端到端重算。其它算法为 null。
     /// </summary>
     public Recipe? SubRecipe { get; init; }
+
+    /// <summary>
+    /// 验收条件一（docs §6 第 1 条 / TODO.md §7.7）：
+    /// <b>前态的每一列都必须通过五项条件</b>。
+    ///
+    /// <para>
+    /// 前态若有非法列，就说明这个「起点」根本做不出来，
+    /// 后续的 Cut / Pin 回放即使逐格对上也毫无意义
+    /// （<c>.T.T.c</c> 的旧碎晶前态 <c>cTcT.c</c> 就是这样漏过去的）。
+    /// </para>
+    /// </summary>
+    /// <param name="preStateIndex">第几条前态步（0 起）；不存在非法列时为 -1。</param>
+    /// <param name="column">首个非法列（象限索引）；不存在非法列时为 -1。</param>
+    /// <returns>存在非法列时返回 true。</returns>
+    public bool HasIllegalPreState(
+        out int preStateIndex,
+        out int column)
+    {
+        int index = 0;
+
+        foreach (AngleWorkStep step in Steps)
+        {
+            if (step.Kind != AngleWorkStepKind.PreState ||
+                step.Shape is null)
+            {
+                continue;
+            }
+
+            if (!ShapeSignature.AllColumnsLegal(step.Shape, out column))
+            {
+                preStateIndex = index;
+
+                return true;
+            }
+
+            index++;
+        }
+
+        preStateIndex = -1;
+        column = -1;
+
+        return false;
+    }
 }
 
 /// <summary>
@@ -241,6 +284,47 @@ public static class AngleWorkOrderBuilder
     /// </summary>
     public const string UncoveredDisclaimer =
         "未覆盖只说明角工序生成器还没覆盖这个形态，不代表不可制作。";
+
+    /// <summary>
+    /// 前态非法时的统一失败原因（docs §6 第 1 条 / TODO.md §7.7）。
+    /// 候选前态的任意一列不过五项条件 ⇒ 该候选作废，最终 Note 以
+    /// <see cref="UncoveredPrefix"/> 开头并写明本原因。
+    /// </summary>
+    public const string IllegalPreStateReason = "前态存在非法列";
+
+    /// <summary>
+    /// 检查一份候选前态：任意一列不过五项条件就应当作废。
+    ///
+    /// <para>
+    /// 目标列本身不合法时（只有 <c>enforceFiveConditions: false</c> 的合成语料
+    /// 会走到这里，用来单独验证 Cut/Pin/G 的回放语义），不在这一层拦截：
+    /// 那种语料的目标列都做不出来，要求它的前态合法没有意义。
+    /// </para>
+    /// </summary>
+    private static bool IsRejectedPreState(
+        ShapeDocument target,
+        int column,
+        ShapeDocument preState,
+        out int badColumn)
+    {
+        badColumn = -1;
+
+        if (!ShapeSignature.IsLegalColumn(target, column))
+        {
+            return false;
+        }
+
+        return !ShapeSignature.AllColumnsLegal(preState, out badColumn);
+    }
+
+    /// <summary>把「前态存在非法列」写成带列位置的失败原因。</summary>
+    private static string DescribeIllegalPreState(
+        ShapeDocument preState,
+        int badColumn)
+    {
+        return $"{IllegalPreStateReason}（第 {badColumn + 1} 象限的前态列 " +
+               $"{ShapeSignature.ColumnText(preState, badColumn)} 不过五项条件）";
+    }
 
     /// <summary>
     /// 生成角工序：先过五项条件闸门，再按 §6 分档选算法；分档构造失败时才退回兜底链。
@@ -332,7 +416,7 @@ public static class AngleWorkOrderBuilder
             cap,
             kind);
 
-        string? tierCycleReason = null;
+        string? tierRejectionReason = null;
 
         if (tierOrder is not null && tierOrder.IsComplete)
         {
@@ -343,7 +427,21 @@ public static class AngleWorkOrderBuilder
              */
             if (HasCyclicPreState(tierOrder, target))
             {
-                tierCycleReason = CyclicPreStateReason;
+                tierRejectionReason = CyclicPreStateReason;
+                tierOrder = null;
+            }
+            else if (ShapeSignature.IsLegalColumn(target, column) &&
+                     tierOrder.HasIllegalPreState(
+                         out int badPreStateIndex,
+                         out int badPreStateColumn))
+            {
+                /*
+                 * 验收条件一（§6 第 1 条）：前态每一列都要过五项条件。
+                 * 前态里有非法列 ⇒ 这份候选作废，即使 Cut/Pin 回放平凡通过。
+                 */
+                tierRejectionReason =
+                    $"{IllegalPreStateReason}（第 {badPreStateIndex + 1} 条前态的" +
+                    $"第 {badPreStateColumn + 1} 象限不过五项条件）";
                 tierOrder = null;
             }
             else
@@ -376,12 +474,24 @@ public static class AngleWorkOrderBuilder
             legacy = AppendFailure(legacy, CyclicPreStateReason);
         }
 
+        if (legacy.IsComplete &&
+            ShapeSignature.IsLegalColumn(target, column) &&
+            legacy.HasIllegalPreState(
+                out int legacyPreStateIndex,
+                out int legacyPreStateColumn))
+        {
+            legacy = AppendFailure(
+                legacy,
+                $"{IllegalPreStateReason}（第 {legacyPreStateIndex + 1} 条前态的" +
+                $"第 {legacyPreStateColumn + 1} 象限不过五项条件）");
+        }
+
         if (algorithm == AngleAlgorithm.Algorithm4)
         {
             return Label(legacy, AngleAlgorithm.Algorithm4, attempt: false);
         }
 
-        string tierReason = tierCycleReason ?? (tierOrder?.Note is null
+        string tierReason = tierRejectionReason ?? (tierOrder?.Note is null
             ? "该形态没有找到回放验证通过的列级步骤"
             : StripUncoveredPrefix(tierOrder.Note));
 
@@ -894,10 +1004,11 @@ public static class AngleWorkOrderBuilder
         }
 
         /*
-         * 用户塔式构造优先（TODO.md §7.2 的 T.T.c）：
-         * 「底块提升」形态（正规塔是 T.Tc.、底层普通格要抬到第 2 层，
-         * 否则 Pin 会在第 1 层补出一枚目标里没有的顶针）用从目标列直接
-         * 生成的塔 X 做一次 Pin + 构造 C，不再走填充+暴破。
+         * 用户塔式构造优先（TODO.md §7.2 的 T.T.c、§7.7 的 .T.T.c）：
+         * 底块要提升（正规塔是 T.Tc.、底层普通格要抬到第 2 层，
+         * 否则 Pin 会在第 1 层补出一枚目标里没有的顶针），或者多个普通块
+         * 被缺口隔开（.T.Tc.，通用构造 H 的单针支撑柱撑不住）时，
+         * 直接用从目标列生成的塔 X 做一次 Pin + 构造 C，不再走填充+暴破。
          */
         if (ShouldUseTowerStyleH(shiftedTower))
         {
@@ -1541,19 +1652,50 @@ public static class AngleWorkOrderBuilder
     #region 用户塔式构造 H（§7.2：T.T.c / P.T.c）
 
     /// <summary>
-    /// 是否该先试「用户塔式构造 H」：正规塔的底层还有普通格需要抬升一格。
+    /// 是否该先试「用户塔式构造 H」。
     ///
     /// <para>
-    /// <c>T.T.c</c> 的正规塔是 <c>T.Tc.</c>：底层普通格留在第 1 层，Pin 会在
-    /// 第 1 层补出一枚目标里没有的顶针。§7.2 的正解是先把底层普通格抬到第 2 层
-    /// （<c>.TTc.</c>），Pin 后它落回第 1 层，正好是目标。这类形态不再交给
-    /// 填充+暴破，直接用塔式构造 H。
+    /// 两类形态需要塔式的「连续针 + 托柱帽」支撑柱，而不是通用构造 H 的
+    /// 「单针 + 普通格」：
     /// </para>
+    /// <list type="number">
+    /// <item><b>底块要提升</b>：正规塔底层还有普通格（<c>T.T.c</c> 的
+    /// <c>T.Tc.</c>），不抬升的话 Pin 会在第 1 层补出一枚目标里没有的顶针；</item>
+    /// <item><b>多个普通块被缺口隔开</b>：<c>.T.T.c</c> 的 <c>.T.Tc.</c> 有两个
+    /// 普通块（第 2、4 层），通用构造 H 的单针支撑柱撑不住，必须用塔式的
+    /// 连续针柱（见 TODO.md §7.7）。用 <see cref="CanUseConstructH"/> 排除
+    /// <c>.TT.c</c> 那种「两枚普通格直接叠在晶体下」的形态——它按文档
+    /// 应退回算法 2 + 构造 D。
+    /// </item>
+    /// </list>
     /// </summary>
     private static bool ShouldUseTowerStyleH(
         string normalizedTower)
     {
-        return LiftBottomSolid(normalizedTower) is not null;
+        if (LiftBottomSolid(normalizedTower) is not null)
+        {
+            return true;
+        }
+
+        return CountSolids(normalizedTower) >= 2 &&
+               CanUseConstructH(normalizedTower);
+    }
+
+    /// <summary>列里普通格的数量。</summary>
+    private static int CountSolids(
+        string column)
+    {
+        int count = 0;
+
+        foreach (char code in column)
+        {
+            if (code == ShapeSignature.SolidCode)
+            {
+                count++;
+            }
+        }
+
+        return count;
     }
 
     /// <summary>
@@ -1719,6 +1861,13 @@ public static class AngleWorkOrderBuilder
     /// 与角列的普通格同层相邻，负责把下落中的材料托在目标层。
     /// 底针角还可以把底针位置写成普通格（第二个变体）。
     /// </para>
+    /// <para>
+    /// 最后一个变体把<b>目标普通格之间的缺口也填成普通格</b>（只有底层是晶体）。
+    /// TODO.md §7.7 的 <c>.T.T.c</c> 用的就是它：缺口若填晶体，Pin 后会随引爆柱
+    /// 整簇碎掉，桥柱的普通格失去下方支撑，会带着目标列的普通格一起下落
+    /// （实测得到 <c>.TT..c</c>）；填普通格才能让落块柱在 Pin 后仍是一条
+    /// 由托针柱托住的实心链。
+    /// </para>
     /// </summary>
     private static IEnumerable<string> EnumerateTowerBridgeColumns(
         ShapeDocument target,
@@ -1766,6 +1915,27 @@ public static class AngleWorkOrderBuilder
             {
                 yield return text;
             }
+        }
+
+        // 缺口也填普通格：底层仍是晶体（与引爆柱同簇），其余全实心。
+        var gapFilled = new char[layers];
+
+        Array.Fill(gapFilled, ShapeSignature.EmptyCode);
+
+        gapFilled[0] = ShapeSignature.CrystalCode;
+
+        for (int layer = 1;
+             layer <= topSolid && layer < layers;
+             layer++)
+        {
+            gapFilled[layer] = ShapeSignature.SolidCode;
+        }
+
+        string gapFilledText = new string(gapFilled);
+
+        if (seen.Add(gapFilledText))
+        {
+            yield return gapFilledText;
         }
     }
 
@@ -2218,6 +2388,15 @@ public static class AngleWorkOrderBuilder
         WriteColumn(preState, holderColumn, new string(holder), color);
         WriteColumn(preState, bridgeColumn, firstBridge, color);
 
+        /*
+         * 验收条件一（§6 第 1 条）：两刀配方有两条前态，两条都要每列合法。
+         * 任一条有非法列就整份候选作废，由上层退回其它路线。
+         */
+        if (IsRejectedPreState(target, column, preState, out _))
+        {
+            return null;
+        }
+
         if (!ShapeOps.IsStable(preState) ||
             ShapeSignature.ColumnText(preState, column) ==
             ShapeSignature.ColumnText(target, column))
@@ -2271,6 +2450,12 @@ public static class AngleWorkOrderBuilder
         secondBridge[gapLayer - 1] = ShapeSignature.CrystalCode;
 
         WriteColumn(secondStage, bridgeColumn, new string(secondBridge), color);
+
+        // 第二刀的前态同样要过五项条件（验收条件一）。
+        if (IsRejectedPreState(target, column, secondStage, out _))
+        {
+            return null;
+        }
 
         if (!ShapeOps.IsStable(secondStage))
         {
@@ -3016,6 +3201,8 @@ public static class AngleWorkOrderBuilder
 
         AngleWorkOrder? bestFailure = null;
 
+        AngleWorkOrder? illegalPreStateFailure = null;
+
         for (int code = 0; code < combinations; code++)
         {
             int remaining = code;
@@ -3049,6 +3236,20 @@ public static class AngleWorkOrderBuilder
                 return attempt;
             }
 
+            /*
+             * 记下「前态存在非法列」的候选：即使回放验证还留下更长的
+             * 已验证前缀（例如某一段 Cut 通过、另一段缺口对不上），
+             * 最终 Note 也必须如实指出这个假阳性来源（TODO.md §7.7）。
+             */
+            if (attempt.Note is not null &&
+                attempt.Note.Contains(
+                    IllegalPreStateReason,
+                    StringComparison.Ordinal) &&
+                illegalPreStateFailure is null)
+            {
+                illegalPreStateFailure = attempt;
+            }
+
             if (bestFailure is null ||
                 attempt.Steps.Count > bestFailure.Steps.Count)
             {
@@ -3064,6 +3265,17 @@ public static class AngleWorkOrderBuilder
                 "填充+暴破没有可用候选。",
                 limitations,
                 construction: AngleConstruction.FillBreak);
+        }
+
+        if (illegalPreStateFailure is not null &&
+            (bestFailure.Note is null ||
+             !bestFailure.Note.Contains(
+                 IllegalPreStateReason,
+                 StringComparison.Ordinal)))
+        {
+            bestFailure = AppendFailure(
+                bestFailure,
+                StripUncoveredPrefix(illegalPreStateFailure.Note!));
         }
 
         if (cyclicHolder is not null)
@@ -3171,6 +3383,27 @@ public static class AngleWorkOrderBuilder
         int pRotated = Wrap(p, parts);
 
         var auxiliaryColumns = new[] { holderColumn, eColumn };
+
+        /*
+         * 验收条件一（§6 第 1 条）：候选前态的每一列都要过五项条件。
+         * 不过就整份候选作废，不进入 Cut/Collapse 的回放验证。
+         */
+        if (IsRejectedPreState(target, column, preState, out int badPreStateColumn))
+        {
+            return Incomplete(
+                column,
+                kind,
+                DescribeIllegalPreState(preState, badPreStateColumn),
+                limitations,
+                construction: AngleConstruction.FillBreak,
+                rotation: rotation,
+                auxiliaryColumns: auxiliaryColumns,
+                diagnostic: new AngleWorkStep(
+                    "非法前态（已作废）：" +
+                    ShapeSignature.ColumnText(preState, badPreStateColumn),
+                    preState,
+                    AngleWorkStepKind.Note));
+        }
 
         var steps = new List<AngleWorkStep>
         {
@@ -3426,6 +3659,24 @@ public static class AngleWorkOrderBuilder
         int rotation = Wrap(p - column, parts);
 
         var auxiliaryColumns = new[] { holderColumn, eColumn };
+
+        // 验收条件一（§6 第 1 条）：前态每一列都要过五项条件。
+        if (IsRejectedPreState(target, column, preState, out int badPreStateColumn))
+        {
+            return Incomplete(
+                column,
+                kind,
+                DescribeIllegalPreState(preState, badPreStateColumn),
+                limitations,
+                construction: AngleConstruction.FillBreak,
+                rotation: rotation,
+                auxiliaryColumns: auxiliaryColumns,
+                diagnostic: new AngleWorkStep(
+                    "非法前态（已作废）：" +
+                    ShapeSignature.ColumnText(preState, badPreStateColumn),
+                    preState,
+                    AngleWorkStepKind.Note));
+        }
 
         var steps = new List<AngleWorkStep>
         {
@@ -3692,6 +3943,26 @@ public static class AngleWorkOrderBuilder
         int p = half - 2;
 
         int rotation = Wrap(p - column, parts);
+
+        /*
+         * 验收条件一（§6 第 1 条）：G/F 的候选前态也必须每一列都过五项条件。
+         */
+        if (IsRejectedPreState(target, column, preState, out int badPreStateColumn))
+        {
+            return Incomplete(
+                column,
+                kind,
+                DescribeIllegalPreState(preState, badPreStateColumn),
+                limitations,
+                construction: construction,
+                rotation: rotation,
+                auxiliaryColumns: auxiliaryColumns,
+                diagnostic: new AngleWorkStep(
+                    "非法前态（已作废）：" +
+                    ShapeSignature.ColumnText(preState, badPreStateColumn),
+                    preState,
+                    AngleWorkStepKind.Note));
+        }
 
         var steps = new List<AngleWorkStep>
         {
@@ -4033,6 +4304,24 @@ public static class AngleWorkOrderBuilder
 
         var auxiliaryColumns = new[] { nColumn, bColumn, eColumn };
 
+        // 验收条件一（§6 第 1 条）：构造 H 的候选前态也必须每列合法。
+        if (IsRejectedPreState(target, column, preState, out int badPreStateColumn))
+        {
+            return Incomplete(
+                column,
+                kind,
+                DescribeIllegalPreState(preState, badPreStateColumn),
+                limitations,
+                construction: AngleConstruction.H,
+                rotation: 0,
+                auxiliaryColumns: auxiliaryColumns,
+                diagnostic: new AngleWorkStep(
+                    "非法前态（已作废）：" +
+                    ShapeSignature.ColumnText(preState, badPreStateColumn),
+                    preState,
+                    AngleWorkStepKind.Note));
+        }
+
         var steps = new List<AngleWorkStep>
         {
             new(
@@ -4222,6 +4511,26 @@ public static class AngleWorkOrderBuilder
             int eColumn = Wrap(column + 2, parts);
 
             var auxiliaryColumns = new[] { bColumn, eColumn };
+
+            // 验收条件一（§6 第 1 条）：第 k 轮的前态也必须每列合法。
+            if (IsRejectedPreState(target, column, preState, out int badPreStateColumn))
+            {
+                return Incomplete(
+                    column,
+                    kind,
+                    $"第 {round + 1} 轮" +
+                    DescribeIllegalPreState(preState, badPreStateColumn),
+                    limitations,
+                    steps,
+                    AngleConstruction.G,
+                    rotation,
+                    auxiliaryColumns,
+                    new AngleWorkStep(
+                        $"第 {round + 1} 轮非法前态（已作废）：" +
+                        ShapeSignature.ColumnText(preState, badPreStateColumn),
+                        preState,
+                        AngleWorkStepKind.Note));
+            }
 
             steps.Add(new AngleWorkStep(
                 rounds == 1
@@ -4610,6 +4919,24 @@ public static class AngleWorkOrderBuilder
         int rotation = Wrap(p - column, parts);
 
         var auxiliaryColumns = new[] { holderColumn, eColumn };
+
+        // 验收条件一（§6 第 1 条）：兜底填充+暴破的前态也必须每列合法。
+        if (IsRejectedPreState(target, column, preState, out int badPreStateColumn))
+        {
+            return Incomplete(
+                column,
+                kind,
+                DescribeIllegalPreState(preState, badPreStateColumn),
+                limitations,
+                construction: AngleConstruction.FillBreak,
+                rotation: rotation,
+                auxiliaryColumns: auxiliaryColumns,
+                diagnostic: new AngleWorkStep(
+                    "非法前态（已作废）：" +
+                    ShapeSignature.ColumnText(preState, badPreStateColumn),
+                    preState,
+                    AngleWorkStepKind.Note));
+        }
 
         var steps = new List<AngleWorkStep>
         {
