@@ -465,3 +465,60 @@ X 第 1 列 = .T.Tc.          ← 目标列「晶体下移一层、缺口封上�
 
 与 `T.T.c` / `P.T.c` / `.T..c` 同族：`BuildShiftedTowerColumn` 生成前态 → 一次 Pin → 构造 C。
 按 §7.6 的落地记录，这条路径已经存在，只需要把 `.T.T.c` 接进去并补上前态合法性检查。
+
+### 7.8 n ≥ 6 的角工序已落地（文档 §9 第 1 条）
+
+`TryBuildSixPlusOrder`（`ShapeEditor.Core/Analysis/AngleWorkOrder.cs`）接管
+`NeedsCrystalBreak ∧ n ≥ 6` 的全部形态，分档固定为
+
+```
+算法 1（提升）→ 算法 2（正规核心）→ 算法 3（构造 F 送回）
+```
+
+三条算法都输出同一种**列级步骤链**：
+
+```
+PreState → Cut → Collapse → Support → Target
+```
+
+| 档 | 实现 | 构造 |
+|---|---|---|
+| 算法 1 | `TryBuildFillBreak(..., LiftOnly, withHandover: true)` | 缺口下方的普通格抬到缺口顶端（§5 规则二），让出的位置填成晶体 |
+| 算法 2 | `TryBuildFillBreak(..., DirectOnly, withHandover: true)` | 把晶体塔下的缺口直接填成紧核心 |
+| 算法 3 | `TryBuildConstructF` | 构造 F：`N | A | B | E` 四连位受控下落到 d 层 |
+
+**构造 F 的布局**（层号全部由扫描得出，无常量）：
+
+```
+针槽柱 N | 目标 A | 辅助柱 B        | 碎晶桥柱 E
+第 s 层针 | 目标列 | 第 d..s−1 层晶体 | 第 d 层晶体
+其余 T   |        | 其余 T           | 其余 T
+```
+
+- `s`：某个晶体段的底端 `t` 减一（`target[s]` 必须是空位）；
+- `d`：`s` 以下最高的非空层（必须是普通格）；
+- 前态把 `d` 层那枚普通格**抬到** `s` 层、`d` 层让出（规则二 / 规则四）；
+- 半破轴 `p = half − 2`，保留侧正好是 `N | A | B`（规则三），E 落在刀口另一侧；
+- 切开后 B 的晶体通道整段碎掉，`A[s]` 与 `B[s]` 粘成双格下落，
+  `B[d−1]` 的普通格当刹车，双格停在 `d` 层；
+- `Support` 步 = 构造 C：装满高新支撑柱、拆掉 `N | B | E`，目标列逐格不变。
+
+`EnumerateDropWindows` 从最高晶体段往下枚举 (s, d)，所以「缺口不在最高晶体下方」
+的形态（例如 `.T.cTc`）也能走构造 F；扫描窗口里没有可用窗口时才退兜底链。
+
+**覆盖实测**（单角语料，`Build` 全量枚举）：
+
+| 语料 | 合法列 | 完成 | 未覆盖 |
+|---|---|---|---|
+| n=6、6 层、{空,T,晶体,顶针} | 1451 | 1451 | 0 |
+| n=6、7 层、{空,T,晶体,顶针} | 4328 | 4328 | 0 |
+| n=6、9 层、{空,T,晶体} | 7764 | 7764 | 0 |
+| n=8、6/7/8 层、{空,T,晶体,顶针} | 1451 / 4328 / 2984 | 全中 | 0 |
+
+这与文档 §1.3 的「n ≥ 6 时 S ⟺ 五项条件」一致：凡是五项条件通过的碎晶角都做得出。
+测试见 `SixPlusCornersFollowAlgorithmTiers` / `ConstructFLaysFourColumns` /
+`SixPlusLegalColumnsAreAllConstructible` / `SixPlusDistinguishesUncoveredFromNotProducible`。
+
+> 注意：`Cap` 小于目标层数时仍返回「未覆盖：」——那是画布不够，不是做不出来；
+> 五项条件不过才返回「不可制作：」。两条失败语义不可互换。
+
