@@ -142,10 +142,13 @@ internal static class Program
             ("角工序:构造 F 用户样例两列", AngleWorkOrderTests.ConstructionFHandlesUserSample),
             ("角工序:填充暴破多层缺口", AngleWorkOrderTests.FillBreakHandlesMultiLayerGap),
             ("角工序:用户前态切开目标列", AngleWorkOrderTests.UserPrestateCutsToTargetColumn),
-            ("角工序:填充暴破覆盖三个例子", AngleWorkOrderTests.FillBreakCoversUserExamples),
-            ("角工序:填充暴破优先与新回退", AngleWorkOrderTests.FillBreakIsPreferredOverLegacyConstructions),
-            ("角工序:构造 H 一次顶针批量下落", AngleWorkOrderTests.ConstructionHSinglePinBatchDrop),
-            ("角工序:填充暴破缺口不在塔下", AngleWorkOrderTests.ConstructionFillBreakHandlesGapNotUnderTower),
+            ("角工序:用户三个例子分档", AngleWorkOrderTests.FillBreakCoversUserExamples),
+            ("角工序:分档优先级与回退", AngleWorkOrderTests.FillBreakIsPreferredOverLegacyConstructions),
+            ("角工序:核心/尾部拆分接回尾部", AngleWorkOrderTests.CoreTailSplitAppendsTail),
+            ("角工序:族 A 尾部接回", AngleWorkOrderTests.CoreTailCoversFamilyA),
+            ("角工序:族 B 底块提升/底针分档", AngleWorkOrderTests.FamilyBIsConstructible),
+            ("角工序:族 C FillBreak 删层", AngleWorkOrderTests.FamilyCColumnIsConstructible),
+            ("角工序:缺口不在塔下走通用实现", AngleWorkOrderTests.ConstructionFillBreakHandlesGapNotUnderTower),
             ("角工序:填充暴破失败保留前缀", AngleWorkOrderTests.FillBreakKeepsVerifiedPrefixOnMismatch),
             ("角工序:多轮 G 多层缺口", AngleWorkOrderTests.FourQuadrantMultiLayerGapUsesRepeatedG),
             ("角工序:多层缺口诚实报未实现", AngleWorkOrderTests.ConstructionGDoesNotFakeMultiLayerGap),
@@ -168,7 +171,8 @@ internal static class Program
             ("角工序:n ≥ 6 区分未覆盖与不可制作", AngleWorkOrderTests.SixPlusDistinguishesUncoveredFromNotProducible),
             ("角工序:算法 5 底格是针", AngleWorkOrderTests.Algorithm5BuildsBottomPinAngle),
             ("角工序:不合法角不可制作", AngleWorkOrderTests.IllegalAngleIsNotProducible),
-            ("角工序:满高托柱不越权判定非 S", AngleWorkOrderTests.PillarHolderDoesNotClaimNonSCriterion),
+            ("角工序:合法非 S 判不可制作", AngleWorkOrderTests.PillarHolderDoesNotClaimNonSCriterion),
+            ("角工序:n=4 ≤6 层穷举审计", AngleAuditTests.ExhaustiveFourQuadrantAudit),
 
             // 交接规格 §5 的 9 组验收语料。
             ("语料1:角判据计数 4..12688", ProductionPathAcceptanceTests.AngleCriterionCounts),
@@ -205,6 +209,19 @@ internal static class Program
         int failed = 0;
 
         int expectedFailCount = 0;
+
+        /*
+         * 迭代调试用：SHAPE_TEST_FILTER 只跑名字里含该子串的用例。
+         * 不设置时行为与以前完全一致（全量跑）。
+         */
+        string? filter = Environment.GetEnvironmentVariable("SHAPE_TEST_FILTER");
+
+        if (!string.IsNullOrEmpty(filter))
+        {
+            tests = tests
+                .Where(test => test.Name.Contains(filter, StringComparison.Ordinal))
+                .ToArray();
+        }
 
         Stopwatch stopwatch = Stopwatch.StartNew();
 
