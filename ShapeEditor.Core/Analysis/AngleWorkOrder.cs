@@ -267,7 +267,7 @@ public sealed record AngleWorkOrder(
 /// → 再碎晶造缺口」，所以本工序不包含 Collapse 之后的 Crystallize 步。
 /// </para>
 /// </summary>
-public static class AngleWorkOrderBuilder
+public static partial class AngleWorkOrderBuilder
 {
     /// <summary>未覆盖说明的统一前缀。</summary>
     public const string UncoveredPrefix = "未覆盖：";
@@ -453,6 +453,28 @@ public static class AngleWorkOrderBuilder
                 return tierOrder.Algorithm == AngleAlgorithm.None
                     ? Label(tierOrder, algorithm, attempt: false)
                     : tierOrder;
+            }
+        }
+
+        /*
+         * 三·补、路线 F（n = 4、底格非针、D 不成立、F 成立）走 §11 的通用实现：
+         * CanonicalPlan（六个参数全部由扫描得出）→ 有界变体 V1–V5 → 真实物理回放。
+         * 只有这份通用实现回放失败时，才退回下面的兜底链（§2 第 2 条约定）。
+         */
+        if (algorithm == AngleAlgorithm.Algorithm4)
+        {
+            AngleWorkOrder? generic = TryBuildGenericFourQuadrantOrder(
+                target,
+                column,
+                cap,
+                kind);
+
+            if (generic is not null &&
+                generic.IsComplete &&
+                !HasCyclicPreState(generic, target) &&
+                !generic.HasIllegalPreState(out _, out _))
+            {
+                return generic;
             }
         }
 
