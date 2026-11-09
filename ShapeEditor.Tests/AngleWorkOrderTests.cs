@@ -341,40 +341,79 @@ internal static class AngleWorkOrderTests
     }
 
     /// <summary>
-    /// 算法 4 的长晶体段案例 <c>cT.T.ccc</c>（D 不成立、F 成立）：
-    /// 走 §11 的通用实现（规范计划 + 变体 + 回放），不再用手写的构造 G 前态。
+    /// 算法 4 的长晶体段案例 <c>cT.T.ccc</c>（D 不成立、F 成立）：走 <b>构造 G</b>（§15.9）。
     ///
     /// <para>
-    /// 规范计划给出：核心列 <c>cTccTccc</c>（把 T@3 抬到 4、让出的第 3 层填临时晶体）、
-    /// 托柱 <c>TTT.TTPT</c>、桥柱第 4 层一颗晶体；一刀之后目标列逐格等于
-    /// <c>cT.T.ccc</c>。
+    /// §15 的实测前态：核心列 <c>cTccTccc</c>（把 T@3 抬到 4、让出的第 3 层填临时晶体）、
+    /// 环伙伴 <c>TTT.TTPT</c>（第 6 层 T / 第 7 层针 / 第 8 层 T）、
+    /// 保险丝柱 <c>TTTcTTTT</c>（第 4 层一颗晶体）；一刀之后目标列逐格等于 <c>cT.T.ccc</c>。
     /// </para>
     /// <para>
-    /// <b>断言更新的原因</b>：旧实现让这一档落到兜底链的构造 G（前态 <c>cT..Tccc</c>）；
-    /// 按 §2 第 2 条，路线 F 现在必须先走 §11 通用实现，而通用实现的构造原语是
-    /// 定向碎晶（构造 D）。文档 §4.7 也注明「单格环下落（构造 G）」与「定向碎晶
-    /// （构造 D）」可以互换，因此这里改为断言 D。
+    /// <b>断言更新的原因</b>：构造 G 按 §15 实现之后成了路线 F 的首选恢复手段
+    /// （单孔环下落把下落锁成恰好一层），碎晶等价路线（构造 D）降为回退；
+    /// 因此这里从断言 D 改为断言 G，并逐条核对 §15.3 的四条不变量。
     /// </para>
     /// </summary>
     public static void ConstructionGMatchesSpecExample()
     {
         ShapeDocument target = FromColumns(4, 8, (0, "cT.T.ccc"));
 
+        // 预热 JIT：首调用包含 JIT，不能算进「单角耗时 < 50 ms」。
+        _ = AngleWorkOrderBuilder.Build(FromColumns(4, 8, (0, "T.ccc")), 0, 5);
+
+        var watch = Stopwatch.StartNew();
+
         AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, 8);
 
-        Assert.True(order.IsComplete, order.Note ?? "规格 §3 的 G 例子应验证通过");
+        watch.Stop();
+
+        Assert.True(order.IsComplete, order.Note ?? "规格 §15.9 的 G 例子应验证通过");
         Assert.Equal(AngleAlgorithm.Algorithm4, order.Algorithm);
-        Assert.Equal(AngleConstruction.D, order.Construction);
+        Assert.Equal(AngleConstruction.G, order.Construction);
         Assert.Equal(0, order.Rotation);
+        Assert.Equal(0, order.Rank);
+        Assert.True(
+            watch.ElapsedMilliseconds < 50,
+            $"cT.T.ccc 单角耗时 {watch.ElapsedMilliseconds} ms，应 < 50 ms");
+
+        AssertStepKinds(
+            order,
+            AngleWorkStepKind.PreState,
+            AngleWorkStepKind.Cut,
+            AngleWorkStepKind.Support,
+            AngleWorkStepKind.Target);
+
+        ShapeDocument preState = Step(order, AngleWorkStepKind.PreState).Shape!;
 
         Assert.Equal(
             "cTccTccc",
-            ShapeSignature.ColumnText(
-                Step(order, AngleWorkStepKind.PreState).Shape!,
-                0),
+            ShapeSignature.ColumnText(preState, 0),
             "规范核心列应为 cTccTccc（T@3 抬到 4，第 3 层填临时晶体）");
 
+        // §15.9 的实测辅助列：环伙伴第 7 层是针，保险丝柱第 4 层是晶体。
+        Assert.Equal(
+            "TTT.TTPT",
+            ShapeSignature.ColumnText(preState, order.AuxiliaryColumns[0]),
+            "环伙伴 B 应为 §15.9 的 TTT.TTPT（环内第 7 层放针）");
+        Assert.Equal(
+            CellType.Crystal,
+            preState[3, order.AuxiliaryColumns[2]].Type,
+            "保险丝柱 B′ 第 4 层应放晶体（与目标列第 4 层的临时晶体跨刀口相连）");
+
         ReplayGenericAlgorithm4(order, target, 0);
+
+        // 不变量三：目标原生晶体一颗不少，临时晶体全部消失。
+        Assert.Equal(
+            4,
+            CountCrystals(Step(order, AngleWorkStepKind.Cut).Shape!, 0),
+            "切割后目标列只应剩 4 颗原生晶体（第 1、6、7、8 层）");
+        Assert.Equal(
+            6,
+            CountCrystals(preState, 0),
+            "前态目标列 = 4 颗原生晶体 + 第 3、4 层的 2 颗临时晶体");
+        Assert.True(
+            CountTemporaryCrystals(preState, target) > 0,
+            "构造 G 的前态必须真有临时晶体（不是「先做出目标再切柱」）");
     }
 
     #endregion
@@ -1057,18 +1096,18 @@ internal static class AngleWorkOrderTests
     /// </summary>
     public static void FillBreakIsPreferredOverLegacyConstructions()
     {
-        // 单层缺口 T.ccc：D 不成立 ⇒ 路线 F ⇒ §11 通用实现（构造 D）。
+        // 单层缺口 T.ccc：D 不成立 ⇒ 路线 F ⇒ 首选构造 G（§15 单孔环下落）。
         ShapeDocument preferredTarget = FromColumns(4, 5, (3, "T.ccc"));
 
         AngleWorkOrder preferred = AngleWorkOrderBuilder.Build(preferredTarget, 3, 5);
 
-        Assert.True(preferred.IsComplete, preferred.Note ?? "算法 4 通用实现应验证通过");
+        Assert.True(preferred.IsComplete, preferred.Note ?? "算法 4 构造 G 应验证通过");
         Assert.Equal(AngleAlgorithm.Algorithm4, preferred.Algorithm);
-        Assert.Equal(AngleConstruction.D, preferred.Construction);
+        Assert.Equal(AngleConstruction.G, preferred.Construction);
 
-        // 缺口上下都是保留晶体：同样落在路线 F，由通用实现完成。
+        // 缺口上下都是保留晶体：同样落在路线 F，由构造 G 完成。
         Assert.Equal(
-            AngleConstruction.D,
+            AngleConstruction.G,
             BuildConstruction("cT.T.ccc", 4, 8));
 
         // 落点/针位只允许一次顶针：退回构造 H。
@@ -2313,16 +2352,15 @@ internal static class AngleWorkOrderTests
         Assert.Equal(AngleConstruction.F, f.Construction);
         Assert.True(f.IsComplete, f.Note ?? "算法 3 应验证通过");
 
-        // 算法 4（n = 4、D 不成立）：§11 通用实现（规范计划 + 变体 + 回放）。
-        // 旧实现落到兜底链的构造 G；按 §2 第 2 条，路线 F 先走 §11 通用实现，
-        // 构造原语是定向碎晶（构造 D），断言随之更新。
+        // 算法 4（n = 4、D 不成立）：路线 F 的首选是构造 G（§15 单孔环下落），
+        // 碎晶等价（构造 D）只在 G 不适用/回放失败时回退。
         AngleWorkOrder g = AngleWorkOrderBuilder.Build(
             FromColumns(4, 8, (0, "cT.T.ccc")),
             0,
             8);
 
         Assert.Equal(AngleAlgorithm.Algorithm4, g.Algorithm);
-        Assert.Equal(AngleConstruction.D, g.Construction);
+        Assert.Equal(AngleConstruction.G, g.Construction);
         Assert.True(g.IsComplete, g.Note ?? "算法 4 应验证通过");
     }
 
@@ -2331,14 +2369,15 @@ internal static class AngleWorkOrderTests
     #region 角工序：算法 4 的 §11 通用实现（六条验收语料）
 
     /// <summary>
-    /// §11 通用实现（路线 F）的验收语料，逐格比对：
+    /// 路线 F 的验收语料，逐格比对：
     /// <c>T.ccc</c>(5) / <c>cTT.cccT.T.ccc</c>(14) / <c>cT.T.T.T...ccc</c>(14) /
-    /// <c>cT.T....T..ccc</c>(14) / <c>cTT..T.c</c>(8) 必须完成；
+    /// <c>cT.T....T..ccc</c>(14) 走<b>构造 G</b>（§15 单孔环下落）；
+    /// <c>cTT..T.c</c>(8) 没有三连晶（G1 不成立）⇒ 回退碎晶等价路线（构造 D）；
     /// <c>cT.T.T.c</c>(8) 是 §4.10 的反例（F 不成立）⇒ 必须判「未覆盖」而不是完成。
     ///
     /// <para>每个通过案例都断言：</para>
     /// <list type="bullet">
-    /// <item><see cref="AngleWorkOrder.Algorithm"/> = 算法 4、<see cref="AngleWorkOrder.Construction"/> = 构造 D；</item>
+    /// <item><see cref="AngleWorkOrder.Algorithm"/> = 算法 4、<see cref="AngleWorkOrder.Construction"/> = 期望的构造；</item>
     /// <item><see cref="AngleWorkOrder.IsComplete"/> 且不带 Note；</item>
     /// <item>每条前态的每一列过五项条件、前态稳定、前态目标列 ≠ 目标；</item>
     /// <item>每一步用真实 <see cref="ShapePhysics"/> 逐格回放（§11.4 六条）；</item>
@@ -2352,19 +2391,20 @@ internal static class AngleWorkOrderTests
     /// </summary>
     public static void Algorithm4GenericPlanCoversAcceptanceCorpus()
     {
-        var cases = new (string Text, int Layers, string? PreStateAnchor)[]
+        var cases = new (string Text, int Layers, string? PreStateAnchor, AngleConstruction Construction)[]
         {
-            ("T.ccc", 5, "cTccc"),
-            ("cTT.cccT.T.ccc", 14, null),
-            ("cT.T.T.T...ccc", 14, null),
-            ("cT.T....T..ccc", 14, null),
-            ("cTT..T.c", 8, "cTccTcTc")
+            ("T.ccc", 5, "cTccc", AngleConstruction.G),
+            ("cTT.cccT.T.ccc", 14, null, AngleConstruction.G),
+            ("cT.T.T.T...ccc", 14, null, AngleConstruction.G),
+            ("cT.T....T..ccc", 14, null, AngleConstruction.G),
+            // G1 不成立（没有 ≥3 的晶体段）：回退构造 D 的碎晶等价路线。
+            ("cTT..T.c", 8, "cTccTcTc", AngleConstruction.D)
         };
 
         // 预热 JIT：首调用包含 JIT，不能算进「单角耗时 < 50 ms」。
         _ = AngleWorkOrderBuilder.Build(FromColumns(4, 5, (0, "T.ccc")), 0, 5);
 
-        foreach ((string text, int layers, string? preStateAnchor) in cases)
+        foreach ((string text, int layers, string? preStateAnchor, AngleConstruction construction) in cases)
         {
             ShapeDocument target = FromColumns(4, layers, (0, text));
 
@@ -2380,7 +2420,7 @@ internal static class AngleWorkOrderTests
             Assert.True(order.IsComplete, order.Note ?? $"{text} 未覆盖");
             Assert.True(order.Note is null, order.Note ?? $"{text} 通过时不应有 Note");
             Assert.Equal(AngleAlgorithm.Algorithm4, order.Algorithm, text);
-            Assert.Equal(AngleConstruction.D, order.Construction, text);
+            Assert.Equal(construction, order.Construction, text);
             Assert.Equal(0, order.Rank, text);
             Assert.True(
                 watch.ElapsedMilliseconds < 50,
@@ -2455,6 +2495,223 @@ internal static class AngleWorkOrderTests
                         AngleWorkStepKind.Target),
                 "未覆盖时不能伪造后续步骤");
         }
+    }
+
+    /// <summary>
+    /// 构造 G（§15 四象限单孔环下落）作为路线 F 的标准恢复路线：验收语料逐条核对。
+    ///
+    /// <para>表格（目标 / 层数 / 是否走 G / 依据）：</para>
+    /// <list type="bullet">
+    /// <item><c>cT.T.ccc</c>(8) ⇒ G，§15.9 实测实例；</item>
+    /// <item><c>T.ccc</c>(5) ⇒ G，§4.7 的长段恢复（三连晶）；</item>
+    /// <item><c>cTT.cccT.T.ccc</c>(14) ⇒ G，§4.8；</item>
+    /// <item><c>cT.T.T.T...ccc</c>(14) ⇒ G，§4.8.1 阶梯式抬升；</item>
+    /// <item><c>cTT..T.c</c>(8) ⇒ <b>不</b>走 G（G1 不成立：没有 ≥3 的晶体段）⇒ 回退构造 D；</item>
+    /// <item><c>cT.T.T.c</c>(8) ⇒ F 不成立 ⇒ 仍判「未覆盖」（见 <see cref="Algorithm4GenericPlanCoversAcceptanceCorpus"/>）。</item>
+    /// </list>
+    ///
+    /// <para>
+    /// 每个 G 案例都核对：<c>IsComplete</c>、步骤链 <c>PreState → Cut → Support → Target</c>、
+    /// 每条前态每列合法且稳定、前态目标列 ≠ 目标、每一步用真实 <c>ShapePhysics</c> 逐格回放、
+    /// 最终列逐格等于目标、前态四列与实测布局一致、耗时 &lt; 50 ms。
+    /// </para>
+    /// </summary>
+    public static void ConstructGIsStandardRouteForLongCrystalRuns()
+    {
+        var cases = new (string Text, int Layers, bool UsesG, string PreStateColumns)[]
+        {
+            (
+                "cT.T.ccc",
+                8,
+                true,
+                "cTccTccc|TTT.TTPT|TTTTTTTT|TTTcTTTT"),
+            (
+                "T.ccc",
+                5,
+                true,
+                "cTccc|.TTPT|TTTTT|cTTTT"),
+            (
+                "cTT.cccT.T.ccc",
+                14,
+                true,
+                "cTcTcccTccTccc|TT.TTPTTT.TTPT|TTTTTTTTTTTTTT|TTcTTTTTTcTTTT"),
+            (
+                "cT.T.T.T...ccc",
+                14,
+                true,
+                "cTccTccTccTccc|TTT.TT.TT.TTPT|TTTTTTTTTTTTTT|TTTcTTcTTcTTTT"),
+            (
+                "cTT..T.c",
+                8,
+                false,
+                "cTccTcTc|TTTPPTPT|TTTTTTTT|TTTTTcTT")
+        };
+
+        // 预热 JIT：首调用包含 JIT，不能算进「单角耗时 < 50 ms」。
+        _ = AngleWorkOrderBuilder.Build(FromColumns(4, 5, (0, "T.ccc")), 0, 5);
+        _ = AngleWorkOrderBuilder.Build(FromColumns(4, 8, (0, "cT.T.ccc")), 0, 8);
+
+        foreach ((string text, int layers, bool usesG, string preStateColumns) in cases)
+        {
+            ShapeDocument target = FromColumns(4, layers, (0, text));
+
+            var watch = Stopwatch.StartNew();
+
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers);
+
+            watch.Stop();
+
+            Assert.True(order.IsComplete, order.Note ?? $"{text} 应完成");
+            Assert.True(order.Note is null, order.Note ?? $"{text} 通过时不应有 Note");
+            Assert.Equal(AngleAlgorithm.Algorithm4, order.Algorithm, text);
+            Assert.Equal(
+                usesG ? AngleConstruction.G : AngleConstruction.D,
+                order.Construction,
+                text + " 的构造不符（长段应优先构造 G，G1 不成立才回退构造 D）");
+            Assert.Equal(0, order.Rank, text);
+            Assert.True(
+                watch.ElapsedMilliseconds < 50,
+                $"{text} 单角耗时 {watch.ElapsedMilliseconds} ms，应 < 50 ms");
+
+            if (usesG)
+            {
+                AssertStepKinds(
+                    order,
+                    AngleWorkStepKind.PreState,
+                    AngleWorkStepKind.Cut,
+                    AngleWorkStepKind.Support,
+                    AngleWorkStepKind.Target);
+            }
+
+            // 前态四列 = 实测布局（目标列 / 环伙伴 B / 满高柱 / 保险丝柱 B′）。
+            // 逐块各一刀时有两条前态，这里取第一条（规范核心列那条）。
+            ShapeDocument preState = NthStep(order, AngleWorkStepKind.PreState, 0).Shape!;
+
+            string actualColumns = string.Join(
+                "|",
+                Enumerable.Range(0, 4).Select(part =>
+                    ShapeSignature.ColumnText(preState, part)));
+
+            Assert.Equal(preStateColumns, actualColumns, text + " 的前态布局不符");
+
+            // §6 第 1–3 条：前态每列合法、稳定、目标列 ≠ 目标。
+            Assert.False(
+                order.HasIllegalPreState(out _, out _),
+                text + " 的前态存在非法列");
+            Assert.True(ShapeOps.IsStable(preState), text + " 的前态应稳定");
+            Assert.NotEqual(
+                text,
+                ShapeSignature.ColumnText(preState, 0),
+                text + " 的前态目标列必须与目标不同");
+
+            // §6 第 4–5 条：每一步真实回放、最终列逐格等于目标。
+            ReplayGenericAlgorithm4(order, target, 0);
+            AssertColumnCells(Step(order, AngleWorkStepKind.Target).Shape!, 0, text);
+
+            if (!usesG)
+            {
+                continue;
+            }
+
+            // 不变量三：切割只碎临时晶体与保险丝，目标列原生晶体一颗不少。
+            ShapeDocument cutStep = Step(order, AngleWorkStepKind.Cut).Shape!;
+
+            Assert.Equal(
+                text.Count(code => code == 'c'),
+                CountCrystals(cutStep, 0),
+                text + " 切割后目标列应只剩原生晶体");
+
+            Assert.True(
+                CountTemporaryCrystals(preState, target) > 0,
+                text + " 的构造 G 前态必须真有临时晶体");
+
+            Assert.True(
+                order.Limitations.Any(line => line.Contains("构造 G")),
+                text + " 的限制说明应写明用的是构造 G");
+        }
+
+        // cTT..T.c 不走 G 的**原因**是结构谓词 G1：没有 ≥3 的连续晶体段。
+        int longestRun = 0;
+        int run = 0;
+
+        foreach (char code in "cTT..T.c")
+        {
+            run = code == 'c' ? run + 1 : 0;
+            longestRun = Math.Max(longestRun, run);
+        }
+
+        Assert.Equal(1, longestRun, "cTT..T.c 没有三连晶 ⇒ 构造 G 不适用");
+    }
+
+    /// <summary>
+    /// 覆盖率闸门（文档 §10「禁止打表」的机器检查）：4 象限、4–9 层、<c>{.,T,c}</c>
+    /// 全枚举里，凡是**路线 F 且 F 成立**的合法列都必须完成，未覆盖数必须是 0。
+    ///
+    /// <para>
+    /// 「F ✘」的形态（<c>cT.T.c</c> 一族：五项 ✔ 但不是 n = 4 的 S）不算在内——
+    /// 它们本来就不该被路线 F 覆盖，与构造 G 的实现无关。
+    /// </para>
+    /// <para>
+    /// 这个数字在实现构造 G 之前是 0，实现之后仍然是 0：G 是**首选**路线，
+    /// 不适用时回退构造 D，所以覆盖率只增不减（见 TODO.md §7.9 的实测表）。
+    /// </para>
+    /// </summary>
+    public static void RouteFFullyCoveredForFourToNineLayers()
+    {
+        var palette = new[] { '.', 'T', 'c' };
+        var watch = Stopwatch.StartNew();
+
+        for (int layers = 4; layers <= 9; layers++)
+        {
+            long total = (long)Math.Pow(3, layers);
+            var buffer = new char[layers];
+            int routeF = 0;
+
+            for (long code = 0; code < total; code++)
+            {
+                long rest = code;
+
+                for (int layer = 0; layer < layers; layer++)
+                {
+                    buffer[layer] = palette[rest % 3];
+                    rest /= 3;
+                }
+
+                string text = new(buffer);
+
+                if (!ShapeSignature.CheckColumn(text).IsLegal ||
+                    !PillarSCriterion.RecursiveTerminalF(text) ||
+                    buffer[0] == 'P' ||
+                    PillarSCriterion.BottomResourceD(text))
+                {
+                    continue;
+                }
+
+                ShapeDocument target = FromColumns(4, layers, (0, text));
+
+                if (AngleClassifier.Classify(target, 0) != AngleBuildKind.NeedsCrystalBreak)
+                {
+                    continue;
+                }
+
+                routeF++;
+
+                AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers);
+
+                Assert.True(
+                    order.IsComplete,
+                    $"{layers} 层、路线 F 的 {text} 未覆盖：" + (order.Note ?? "?"));
+                Assert.Equal(AngleAlgorithm.Algorithm4, order.Algorithm, text);
+            }
+
+            Assert.True(routeF > 0, layers + " 层应存在「路线 F 且 F 成立」的合法列");
+        }
+
+        watch.Stop();
+
+        Assert.True(
+            watch.ElapsedMilliseconds < 60000,
+            "4–9 层全枚举耗时 " + watch.ElapsedMilliseconds + " ms，超过测试预算");
     }
 
     #endregion

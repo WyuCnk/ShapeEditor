@@ -457,12 +457,29 @@ public static partial class AngleWorkOrderBuilder
         }
 
         /*
-         * 三·补、路线 F（n = 4、底格非针、D 不成立、F 成立）走 §11 的通用实现：
-         * CanonicalPlan（六个参数全部由扫描得出）→ 有界变体 V1–V5 → 真实物理回放。
-         * 只有这份通用实现回放失败时，才退回下面的兜底链（§2 第 2 条约定）。
+         * 三·补、路线 F（n = 4、底格非针、D 不成立、F 成立）：
+         * 先试【构造 G】——§15 的四象限单孔环下落（环伙伴 B + 保险丝柱 B′ + 一刀），
+         * 它能把「长段（≥3）恢复」锁成恰好一层；
+         * 再试 §11 的通用实现：CanonicalPlan（六个参数全部由扫描得出）→
+         * 有界变体 V1–V5 → 真实物理回放，其恢复手段是【构造 D 的碎晶等价路线】。
+         * 只有这两条都没通过回放时，才退回下面的兜底链（§2 第 2 条约定）。
          */
         if (algorithm == AngleAlgorithm.Algorithm4)
         {
+            AngleWorkOrder? constructG = TryBuildConstructGOrder(
+                target,
+                column,
+                cap,
+                kind);
+
+            if (constructG is not null &&
+                constructG.IsComplete &&
+                !HasCyclicPreState(constructG, target) &&
+                !constructG.HasIllegalPreState(out _, out _))
+            {
+                return constructG;
+            }
+
             AngleWorkOrder? generic = TryBuildGenericFourQuadrantOrder(
                 target,
                 column,
@@ -480,7 +497,7 @@ public static partial class AngleWorkOrderBuilder
 
         /*
          * 四、算法 4 的「递归提升 + 构造 G 环下落」直接由兜底链承载
-         * （填充+暴破的抬升形态 + 单层/多轮构造 G），所以这里不再重复跑一遍。
+         * （填充+暴破的抬升形态 + 单轮/多轮构造 G），所以这里不再重复跑一遍。
          */
         AngleWorkOrder legacy = BuildLegacyChain(
             target,
