@@ -352,6 +352,229 @@ internal static class AngleAuditTests
             "仅辅助列有洞的个数必须为 0（修复前 7）：" + string.Join(" | ", auxCases));
     }
 
+    /// <summary>
+    /// 半边工序（候选 3）的外部审计：7–9 层、4 象限、字母表 <c>. T P c</c>。
+    ///
+    /// <para>
+    /// 只挑「五项 ✔ 且不属于 S」的合法列（≤6 层的审计口径不变，仍要求它们是「不可制作」；
+    /// 半边候选只覆盖 <c>s = 最高晶体 = 层数−3</c>、顶部 <c>c-P-T</c>、<c>s−1</c> 是洞、
+    /// <c>s−2</c> 是普通格的形态，≤6 层没有命中）。
+    /// </para>
+    /// <para>每一列都按 docs §6 的七条独立核对：</para>
+    /// <list type="number">
+    /// <item>完成（IsComplete）必须带 <see cref="HalfWorkOrder"/>，候选为
+    /// <see cref="HalfCandidate.TempCrystalFuse"/>，且 <c>Half.IsComplete</c>；</item>
+    /// <item>前态每一列过五项条件、全部是紧列（§17.7）、整体稳定；</item>
+    /// <item>前态目标列 ≠ 目标列（禁止循环）；</item>
+    /// <item>真实 <c>ShapePhysics.Cut</c> 回放后，两列逐格等于半边目标；</item>
+    /// <item>末步 Target 逐格等于目标；</item>
+    /// <item>未完成时 Note 必须分清「不可制作」与「未覆盖」，且未覆盖不得伪造 Target 步。</item>
+    /// </list>
+    /// </summary>
+    public static void HalfSideAudit()
+    {
+        int legalNonS = 0;
+        int halfComplete = 0;
+        int notProducible = 0;
+        int uncovered = 0;
+        var halfColumns = new List<string>();
+        var problems = new List<string>();
+
+        for (int layers = 7; layers <= 9; layers++)
+        {
+            int combinations = (int)Math.Pow(Alphabet.Length, layers);
+            var buffer = new char[layers];
+
+            for (int code = 0; code < combinations; code++)
+            {
+                int remaining = code;
+
+                for (int layer = 0; layer < layers; layer++)
+                {
+                    buffer[layer] = Alphabet[remaining % Alphabet.Length];
+                    remaining /= Alphabet.Length;
+                }
+
+                string text = new(buffer);
+
+                // 先用列字符串判掉不合法 / 属于 S 的列（S 走现有算法，见别的审计）。
+                if (!ShapeSignature.CheckColumn(text).IsLegal ||
+                    PillarSCriterion.IsPillarColumn(text))
+                {
+                    continue;
+                }
+
+                legalNonS++;
+
+                ShapeDocument target = BuildColumn(text);
+                AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers);
+
+                if (!order.IsComplete)
+                {
+                    if (order.Half is { IsComplete: true })
+                    {
+                        problems.Add(text + "：未完成却带已完成的 Half");
+                    }
+
+                    if (order.Note is null)
+                    {
+                        problems.Add(text + "：未完成但没有 Note");
+                    }
+                    else if (order.Note.StartsWith(
+                                 AngleWorkOrderBuilder.NotProduciblePrefix,
+                                 StringComparison.Ordinal))
+                    {
+                        notProducible++;
+                    }
+                    else if (order.Note.StartsWith(
+                                 AngleWorkOrderBuilder.UncoveredPrefix,
+                                 StringComparison.Ordinal))
+                    {
+                        uncovered++;
+
+                        if (order.Steps.Any(step =>
+                                step.Kind == AngleWorkStepKind.Target))
+                        {
+                            problems.Add(text + "：未覆盖却伪造了 Target 步");
+                        }
+                    }
+                    else
+                    {
+                        problems.Add(text + "：Note 前缀既不是不可制作也不是未覆盖：" +
+                                      order.Note);
+                    }
+
+                    continue;
+                }
+
+                halfComplete++;
+                halfColumns.Add(text);
+
+                HalfWorkOrder? half = order.Half;
+
+                if (half is null || !half.IsComplete)
+                {
+                    problems.Add(text + "：完成却没有已完成的 Half");
+                    continue;
+                }
+
+                if (half.Candidate != HalfCandidate.TempCrystalFuse)
+                {
+                    problems.Add(text + "：候选不是 TempCrystalFuse");
+                }
+
+                if (half.Target.PrimaryColumn != 0 ||
+                    half.Target.Columns.Count != 2 ||
+                    half.Target.Columns[0] != 0 ||
+                    half.Target.Columns[1] != 1)
+                {
+                    problems.Add(text + "：Half 的目标列不是第 1、2 象限");
+                }
+
+                AngleWorkStep? preStateStep = order.Steps.FirstOrDefault(
+                    step => step.Kind == AngleWorkStepKind.PreState &&
+                            step.Shape is not null);
+
+                if (preStateStep?.Shape is null)
+                {
+                    problems.Add(text + "：没有前态");
+                    continue;
+                }
+
+                ShapeDocument pre = preStateStep.Shape;
+
+                if (!ShapeOps.IsStable(pre))
+                {
+                    problems.Add(text + "：前态不稳定");
+                }
+
+                if (!ShapeSignature.AllColumnsLegal(pre, out int badColumn))
+                {
+                    problems.Add(
+                        text + $"：前态第 {badColumn + 1} 象限不是合法列");
+                }
+
+                for (int part = 0; part < pre.PartCount; part++)
+                {
+                    if (!ShapeSignature.IsTightColumn(pre, part))
+                    {
+                        problems.Add(
+                            text + $"：前态第 {part + 1} 象限不是紧列");
+                    }
+                }
+
+                if (ShapeSignature.ColumnText(pre, 0) == text)
+                {
+                    problems.Add(text + "：前态目标列等于目标（循环）");
+                }
+
+                if (order.HasIllegalPreState(out _, out _))
+                {
+                    problems.Add(text + "：HasIllegalPreState 判前态非法");
+                }
+
+                CutResult cut = ShapePhysics.Cut(
+                    ShapeOps.Rotate(pre, order.Rotation));
+
+                if (!cut.Success || cut.West is null)
+                {
+                    problems.Add(text + "：真实 Cut 失败");
+                    continue;
+                }
+
+                ShapeDocument replayed = ShapeOps.Rotate(
+                    cut.West!,
+                    -order.Rotation);
+
+                if (!ShapeOps.Same(replayed, half.Steps[^1].Shape))
+                {
+                    problems.Add(text + "：两列没有逐格等于半边目标");
+                }
+
+                if (ShapeSignature.ColumnText(replayed, 0) != text)
+                {
+                    problems.Add(text + "：半破后第 1 列不等于目标列");
+                }
+
+                AngleWorkStep? targetStep = order.Steps
+                    .LastOrDefault(step => step.Kind == AngleWorkStepKind.Target);
+
+                if (targetStep?.Shape is null ||
+                    !ShapeOps.Same(targetStep.Shape, target))
+                {
+                    problems.Add(text + "：末步没有逐格等于目标");
+                }
+            }
+        }
+
+        Console.WriteLine(
+            $"  HALFAUDIT legalNonS={legalNonS} halfComplete={halfComplete} " +
+            $"notProducible={notProducible} uncovered={uncovered} " +
+            $"problems={problems.Count}");
+
+        if (halfColumns.Count > 0)
+        {
+            Console.WriteLine("  半边完成的列：" + string.Join(" ", halfColumns));
+        }
+
+        if (problems.Count > 0)
+        {
+            Console.WriteLine("  半边审计问题：" + string.Join(" | ", problems));
+        }
+
+        Assert.True(
+            problems.Count == 0,
+            $"半边工序审计发现 {problems.Count} 个问题：" +
+            string.Join(" | ", problems));
+        Assert.True(
+            halfComplete >= 2,
+            "7–9 层至少应有 2 个半边可做的列（cT.T.cPT、cT..T.cPT），实际 " +
+            halfComplete);
+        Assert.True(
+            notProducible > 0,
+            "形态外的合法非 S 列仍应按原语义报不可制作");
+    }
+
     /// <summary>按列文本造 4 象限目标（其余列留空）。</summary>
     private static ShapeDocument BuildColumn(
         string text)

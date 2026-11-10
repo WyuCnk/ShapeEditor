@@ -174,8 +174,13 @@ internal static class Program
             ("角工序:算法 5 底格是针", AngleWorkOrderTests.Algorithm5BuildsBottomPinAngle),
             ("角工序:不合法角不可制作", AngleWorkOrderTests.IllegalAngleIsNotProducible),
             ("角工序:合法非 S 判不可制作", AngleWorkOrderTests.PillarHolderDoesNotClaimNonSCriterion),
+            ("角工序:半边工序候选 3 触发例", AngleWorkOrderTests.HalfSideTempCrystalFuseBuildsAnchor),
+            ("角工序:半边工序候选 3 同族变体", AngleWorkOrderTests.HalfSideTempCrystalFuseCoversVariants),
+            ("角工序:半边工序不误报形态外", AngleWorkOrderTests.HalfSideDoesNotClaimOutOfScopeCorners),
+            ("角工序:半边工序切割轴旋转", AngleWorkOrderTests.HalfSideHandlesRotation),
             ("角工序:n=4 ≤6 层穷举审计", AngleAuditTests.ExhaustiveFourQuadrantAudit),
             ("角工序:前态紧列审计（§17.7）", AngleAuditTests.PreStateTightnessAudit),
+            ("角工序:半边工序 7–9 层审计", AngleAuditTests.HalfSideAudit),
 
             // 交接规格 §5 的 9 组验收语料。
             ("语料1:角判据计数 4..12688", ProductionPathAcceptanceTests.AngleCriterionCounts),

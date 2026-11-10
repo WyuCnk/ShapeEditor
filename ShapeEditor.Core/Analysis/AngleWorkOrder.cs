@@ -77,7 +77,14 @@ public enum AngleConstruction
     D,
 
     /// <summary>填充+暴破：把塔下缺口填成晶体，再用切割打碎这一段晶体。</summary>
-    FillBreak
+    FillBreak,
+
+    /// <summary>
+    /// 半边工序：n = 4、五项 ✔ 但 S ✘ 的合法角，与相邻象限一起做。
+    /// 半边 = 连续 n/2 列；候选见 <see cref="HalfCandidate"/>，
+    /// 两列的逐格回放与目标定义见 <see cref="HalfWorkOrder"/>。
+    /// </summary>
+    Half
 }
 
 /// <summary>
@@ -183,6 +190,23 @@ public sealed record AngleWorkOrder(
     /// 可端到端重算。其它算法为 null。
     /// </summary>
     public Recipe? SubRecipe { get; init; }
+
+    /// <summary>
+    /// 半边工序（docs/half-side-work-order.md）：n = 4、五项 ✔ 但 S ✘ 的合法角
+    /// 不能单角做，必须与相邻象限一起做。
+    ///
+    /// <para>
+    /// 非 null 表示这份角工序走的是「两列一起做」的半边路径：
+    /// <see cref="Steps"/> 是目标角的单列视角（前态 → 一刀 → 目标），
+    /// <see cref="HalfWorkOrder.Steps"/> 才是两列的完整核对（两列逐格等于目标半边）。
+    /// </para>
+    /// <para>
+    /// 候选 3（<see cref="HalfCandidate.TempCrystalFuse"/>）已实现；
+    /// 候选 1 / 2（算法 8）留给 P2。回放没通过时 <see cref="IsComplete"/> 仍为 false，
+    /// <see cref="Note"/> 以「未覆盖：」开头。
+    /// </para>
+    /// </summary>
+    public HalfWorkOrder? Half { get; init; }
 
     /// <summary>
     /// 验收条件七（docs §6 第 7 条 / §17.7）：<b>前态目标列（带洞时）是否附带子配方</b>。
@@ -520,11 +544,28 @@ public static partial class AngleWorkOrderBuilder
          * 三、n = 4 的判定收尾（docs §17.3 / §6 第 6 条）：
          * S 判据（五项 ∧ (D∨F)）不成立 ⇒ 这个角不可制作。
          * 不能再落到「未覆盖」（那是「还没实现」的语义）。
+         *
+         * 例外（docs/half-side-work-order.md §4.1）：
+         * 五项 ✔ 但 S ✘ 的合法角不能单角做，却可能「两列一起做」——
+         * 先试半边工序的候选 3（临时晶体 + 保险丝 + 一刀）。
+         * 候选命中并回放通过 ⇒ 返回角工序 + Half 字段；
+         * 候选不适用或回放没通过 ⇒ 仍按原语义报 NotProducible / 未覆盖。
          */
         if (parts == 4 &&
             enforceFiveConditions &&
             !PillarSCriterion.IsPillarColumn(target, column))
         {
+            AngleWorkOrder? halfOrder = TryBuildHalfOrder(
+                target,
+                column,
+                cap,
+                kind);
+
+            if (halfOrder is not null)
+            {
+                return halfOrder;
+            }
+
             return NotProducibleBySCriterion(target, column, kind);
         }
 

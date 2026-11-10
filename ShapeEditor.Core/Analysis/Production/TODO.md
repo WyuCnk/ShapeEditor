@@ -685,5 +685,90 @@ Build → SelectAlgorithm = Algorithm4
 5. §5 规则六第 562 行「辅助列一律按紧列生成」：可补「闸门层放晶体而不是洞」的实例
    （`T.ccc` 的 `cTTPT`）。
 
+### 7.11 半边工序（候选 3：临时晶体 + 保险丝 + 一刀，2026-11）
+
+**背景**：`cT.T.cPT`（8 层）五项 ✔、D ✘、F ✘ ⇒ 合法但非 S（论文定理 3 判单角不可做），
+但它确实可得——必须与相邻象限一起做。论文算法 8 的两条候选都拒绝这一格，
+所以新增第三候选（`docs/half-side-work-order.md` §2 / §4.2）。
+
+**实现位置**：`ShapeEditor.Core/Analysis/AngleWorkOrderHalfSide.cs`
+（`AngleWorkOrderBuilder` 的新 partial；`Build` 里只在 n = 4 非 S 分支多一次分派）。
+`AngleWorkOrder` 增加可空字段 `Half`；`AngleConstruction` 增加 `Half`。角工序 API 不破坏。
+
+**数据结构**：
+
+```
+HalfCandidate { Algo8Self, Algo8Uplift, TempCrystalFuse }   // 候选 1/2 留给 P2
+WorkOrderTarget(Columns, PrimaryColumn)                     // 半边 = 连续 n/2 列
+HalfWorkOrder(Target, Candidate, Steps, IsComplete, Note, Limitations, Rank)
+AngleWorkOrder.Half : HalfWorkOrder?                        // 默认 null
+```
+
+**路由**（`Build` 的 `parts == 4 && enforceFiveConditions && !IsPillarColumn` 分支）：
+
+```
+五项 ✘                 → NotProducible
+n ≥ 6                  → 现有算法（不变）
+n = 4 且 S ✔           → 现有角工序（不变）
+n = 4 且 S ✘ 但五项 ✔  → TryBuildHalfOrder(候选 3)
+                         ├ 形态命中且两列回放通过 → 角工序 + Half（Construction = Half）
+                         ├ 形态命中但回放没过     → IsComplete = false + Note「未覆盖：」
+                         └ 形态不命中             → 原语义 NotProducible
+```
+
+**候选 3 的前态（层号全部扫描得出，s = 最高晶体层）**：
+
+| 列 | 规则 |
+|---|---|
+| Q1 目标列 | 目标在 s−1 必须是洞、s−2 必须是普通格；把 s−2 的普通格提到 s−1，低于 s 的洞全部填临时晶体（整段连续） |
+| Q2 环伙伴 | 0…s−3 普通格（s−3 是双格下落的刹车）、s−2 晶体（闸门，碎掉腾出落点）、s−1 普通格（与 Q1 配对）、s…s+2 三连晶（咬合 Q1 的 c-P-T） |
+| Q3 | 空 |
+| Q4 保险丝 | 0…s−2 普通格 + s−2 一颗晶体（与 Q1 临时晶体同层、跨刀口），其余空 |
+
+**切割轴**：`rotation = Wrap(−column, 4)`，让保留侧（西 = 第 0、1 位）正好是
+「目标列 + 环伙伴」，保险丝柱 / 空象限落在被丢弃的一侧（第 2、3 位）。
+`Cut` 只碎跨刀口晶体块（临时晶体 + Q2 闸门晶体 + Q4 保险丝），
+目标原生晶体不跨刀口、一颗不少；抬升的普通格与 Q2 同层普通格配对只落一层。
+
+**`cT.T.cPT` 的逐步回放（8 层 × 4 象限）**：
+
+```
+前态  Q1 cTccTcPT | Q2 TTTcTccc | Q3 ........ | Q4 TTTc....
+一刀  Q1 cT.T.cPT ✔ | Q2 TTTT.ccc ✔        （逐格核对类型 / 形状码 / 颜色）
+步骤  PreState → Cut → Target（外层）；
+      Half.Steps = 前态 → 一刀 → 半边目标（两列）
+```
+
+**其它案例**：7–9 层审计里候选 3 命中 4 个合法非 S 列：
+`cT.T.cPT`、`cT..T.cPT`、`TcT.T.cPT`、`ccT.T.cPT`（全部逐格通过）。
+测试另覆盖 9 / 10 层的 `cT..T.cPT`、`cT...T.cPT`；形态外的 `cT.T.c`、`cT.T.cT`
+仍报「不可制作」且不带 `Half`。非 `HalfCandidate.TempCrystalFuse` 的列不伪造 `Half`。
+
+**验收数字（本仓库口径）**：
+
+| 测试 | 结果 |
+|---|---|
+| 全量测试 | 149/149 通过（其中 2 项 XFAIL：claw / 二择，保持不变） |
+| `AUDIT`（≤6 层 S） | `total=5440 legal=2126 s=2125 success=2125 legalNonS=1 failures=0 falsePositives=0`（未退化） |
+| `TIGHT`（§17.7） | `totalS=2125 success=2125 steps=446 tight=382 onlyTarget=64 onlyAux=0 both=0`（未退化） |
+| `HALFAUDIT`（7–9 层非 S） | `legalNonS=229 halfComplete=4 notProducible=225 uncovered=0 problems=0` |
+
+`HALFAUDIT` 对每个半边完成的列独立核对：`Half` 非空且 `IsComplete`、候选正确、
+前态每列合法 / 紧列 / 稳定、前态≠目标、真实 `Cut` 后两列逐格等于半边目标、末步等于目标。
+
+**文档待更新**（`docs/` 由开发者本人维护，本次未动；行号按本次阅读时的版本）：
+
+1. `docs/half-side-work-order.md` 第 18–19 行（§1 末尾「缺口：算法里没有『两列一起做』的入口」）
+   → 已实现（候选 3），候选 1/2 仍在 P2；
+2. 同文件 §6 第 181–183 行（落地清单第 3–5 条）：第 3 条「实现三个候选 + 回放验证」→
+   候选 3 已完成、候选 1/2 未做；第 4 条「返回类型扩展」→ 已实现（`AngleWorkOrder.Half`）；
+   第 5 条（与交换链对接）→ 仍未做；
+3. 同文件 §7 结论第 189–194 行 → 改为「候选 3 已落地，`cT.T.cPT` 通过」；
+4. `docs/angle-work-order-algorithm.md` 第 691 行（§9 第 4 条「循环支撑结构：本次范围外」）
+   → 半边候选 3 已使用「针 ↔ 晶体段」的循环支撑；
+5. 同文件 §17.5 第 4 条（第 1451 行）与 §17.6 表「判定收尾」行（第 1465 行）→
+   补一句「n = 4 非 S 且五项 ✔ 时先试半边工序；候选不命中才报 NotProducible」；
+6. 同文件 §13.3 第 961 行（算法 8「属整图层」）→ 可注明「其候选 3 已由角工序的半边实现」。
+
 
 
