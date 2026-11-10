@@ -20,8 +20,8 @@ namespace ShapeEditor.Core.Analysis;
 /// 它的<b>闸门</b> <c>g = q − 1</c> 必须是临时晶体（切掉它，q 层的普通格才落得下来）；</item>
 /// <item>最高的那条下落记录正上方必须是<b>连续三颗目标晶体</b>，其最下层记为 <c>s</c>
 /// （这就是环锁定的晶体段，也是 G1）；</item>
-/// <item>环伙伴 B 的第 <c>s+1</c> 层放<b>针</b>（环内），环下方每个闸门放一个<b>洞</b>，
-/// 其余层实心（T）；</item>
+/// <item>环伙伴 B 的第 <c>s+1</c> 层放<b>针</b>（环内），环下方每个闸门放一颗<b>晶体</b>
+/// （辅助列必须是紧列，半破时与临时晶体一起碎掉），其余层实心（T）；</item>
 /// <item>保险丝柱 B′ 在<b>每个闸门所在层</b>放一颗晶体（<c>k = g</c>，正是临时晶体块的顶层），
 /// 其余层实心；</item>
 /// <item>半破一刀：刀口跨过 B′ 与目标列闸门晶体的横向连接，闸门晶体与整块临时晶体一起碎掉，
@@ -29,7 +29,8 @@ namespace ShapeEditor.Core.Analysis;
 /// </list>
 ///
 /// <para>
-/// <b>G5 / G8 按 §15.10 的修正实现</b>：B 不必是满高连续列（闸门处可以留洞），
+/// <b>G5 / G8 按 §15.10 的修正实现</b>：B 的闸门层现在放晶体而不是洞
+/// （docs §5 规则六 / §6 第 7 条要求辅助列一律紧列），
 /// 保险丝也可以放在 B 以外的单独一列（本实现固定在刀口另一侧的 B′）。
 /// <b>G8a</b> 由「闸门层在目标里不是晶体、核心列里是临时晶体」两条扫描共同保证。
 /// </para>
@@ -269,16 +270,16 @@ public static partial class AngleWorkOrderBuilder
             bridge[anchor] = ShapeSignature.CrystalCode;
         }
 
-        // 闸门层若恰好也是针层，先试「针优先」，再试「洞优先」（有界两种）。
+        // 闸门层若恰好也是针层，先试「闸门晶体让位给针」，再试「针让位给晶体」（有界两种）。
         for (int variant = 0; variant < 2; variant++)
         {
-            // ── G5–G7：环伙伴 B 的针在环里（s+1），其余按闸门留洞 ──
+            // ── G5–G7：环伙伴 B 的针在环里（s+1），闸门层放晶体（紧列）──
             string? candidate = BuildRingPartnerColumn(
                 targetColumn,
                 cap,
                 gates,
                 s,
-                holesWin: variant == 1);
+                gatePinWins: variant == 1);
 
             if (candidate is null)
             {
@@ -309,12 +310,18 @@ public static partial class AngleWorkOrderBuilder
     }
 
     /// <summary>
-    /// 环伙伴 B：全实心，闸门层留洞，每个「≥3 的晶体段」底端上一层放针（§15.2 G5–G7）。
+    /// 环伙伴 B：全实心，闸门层放<b>晶体</b>（紧列），每个「≥3 的晶体段」底端上一层放针（§15.2 G5–G7）。
     ///
+    /// <para>
+    /// 辅助列一律是紧列（docs §5 规则六 / §6 第 7 条）：早先把闸门层留洞的写法已撤回。
+    /// 闸门晶体与目标列的临时晶体横向相连，半破时随整簇一起碎掉，
+    /// 目标列只降一层（实测 <c>T.ccc</c>：<c>.TTPT</c> → <c>cTTPT</c>）。
+    /// </para>
     /// <para>
     /// 针必须落在环里（<c>s+1</c>）：它不参与横向粘连 ⇒ 碎晶后上方晶体段靠
     /// 「针 ↔ 晶体段」的支撑环保持原位，下方的普通格则和 B 同层的实心格一起落到闸门层。
-    /// 闸门层与针层冲突时，<paramref name="holesWin"/> 决定谁让位。
+    /// 闸门层与针层冲突时，晶体不能与针并存：<paramref name="gatePinWins"/> 为 true
+    /// 时保留针（仍是紧列），为 false 时该候选作废（交给下一变体）。
     /// </para>
     /// </summary>
     private static string? BuildRingPartnerColumn(
@@ -322,7 +329,7 @@ public static partial class AngleWorkOrderBuilder
         int cap,
         HashSet<int> gates,
         int s,
-        bool holesWin = false)
+        bool gatePinWins = false)
     {
         var partner = new char[cap];
         Array.Fill(partner, ShapeSignature.SolidCode);
@@ -342,7 +349,7 @@ public static partial class AngleWorkOrderBuilder
                 return null;
             }
 
-            if (gates.Contains(pin) && holesWin)
+            if (gates.Contains(pin) && gatePinWins)
             {
                 continue;
             }
@@ -354,8 +361,8 @@ public static partial class AngleWorkOrderBuilder
         {
             if (partner[gate] == ShapeSignature.PinCode)
             {
-                // 针优先：闸门被针占住 ⇒ 这一条候选做不成（交给下一个变体）。
-                if (!holesWin)
+                // 针与晶体不能并存：针优先，保留针；否则交给下一个变体。
+                if (!gatePinWins)
                 {
                     return null;
                 }
@@ -363,7 +370,8 @@ public static partial class AngleWorkOrderBuilder
                 continue;
             }
 
-            partner[gate] = ShapeSignature.EmptyCode;
+            // 闸门层放晶体（不是洞）：辅助列必须紧列，半破时整簇碎掉。
+            partner[gate] = ShapeSignature.CrystalCode;
         }
 
         // 针必须有直接支撑（五项条件之一）。
@@ -629,8 +637,8 @@ public static partial class AngleWorkOrderBuilder
             $"第 {s + 2} 层针、第 {s + 3} 层 T（针在环里，锁住晶体段）。");
         limitations.Add(
             "闸门（每次只降一层）：" +
-            string.Join("、", drops.Select(drop => $"第 {drop.Core} 层留洞")) +
-            "。");
+            string.Join("、", drops.Select(drop => $"第 {drop.Core} 层在环伙伴放晶体")) +
+            "；辅助列全程紧列，闸门晶体与临时晶体同簇碎掉。");
         limitations.Add(
             "保险丝：每个临时晶体块的顶层 " +
             string.Join("、", anchors.Select(anchor => $"第 {anchor + 1} 层")) +
@@ -647,7 +655,7 @@ public static partial class AngleWorkOrderBuilder
         var steps = new List<AngleWorkStep>
         {
             new(
-                "构造 G 前态：提升 + 正规核心（临时晶体）+ 环伙伴 B（环内放针、环下方留洞）" +
+                "构造 G 前态：提升 + 正规核心（临时晶体）+ 环伙伴 B（环内放针、闸门放晶体）" +
                 " + 满高普通柱 + 保险丝柱 B′（锚层放晶体）",
                 preState,
                 AngleWorkStepKind.PreState),
@@ -679,6 +687,7 @@ public static partial class AngleWorkOrderBuilder
             null)
         {
             IsComplete = true,
+            TargetColumnHasSubRecipe = true,
             Construction = AngleConstruction.G,
             Algorithm = AngleAlgorithm.Algorithm4,
             Rotation = rotation,

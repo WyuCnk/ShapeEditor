@@ -345,7 +345,7 @@ internal static class AngleWorkOrderTests
     ///
     /// <para>
     /// §15 的实测前态：核心列 <c>cTccTccc</c>（把 T@3 抬到 4、让出的第 3 层填临时晶体）、
-    /// 环伙伴 <c>TTT.TTPT</c>（第 6 层 T / 第 7 层针 / 第 8 层 T）、
+    /// 环伙伴 <c>TTTcTTPT</c>（第 6 层 T / 第 7 层针 / 第 8 层 T，闸门层放晶体而不是洞）、
     /// 保险丝柱 <c>TTTcTTTT</c>（第 4 层一颗晶体）；一刀之后目标列逐格等于 <c>cT.T.ccc</c>。
     /// </para>
     /// <para>
@@ -392,9 +392,9 @@ internal static class AngleWorkOrderTests
 
         // §15.9 的实测辅助列：环伙伴第 7 层是针，保险丝柱第 4 层是晶体。
         Assert.Equal(
-            "TTT.TTPT",
+            "TTTcTTPT",
             ShapeSignature.ColumnText(preState, order.AuxiliaryColumns[0]),
-            "环伙伴 B 应为 §15.9 的 TTT.TTPT（环内第 7 层放针）");
+            "环伙伴 B 应为紧列 TTTcTTPT（环内第 7 层放针、闸门层放晶体）");
         Assert.Equal(
             CellType.Crystal,
             preState[3, order.AuxiliaryColumns[2]].Type,
@@ -2444,33 +2444,258 @@ internal static class AngleWorkOrderTests
     /// 最终列逐格等于目标、前态四列与实测布局一致、耗时 &lt; 50 ms。
     /// </para>
     /// </summary>
+    /// <summary>
+    /// 任务一（docs §17.7）：7 个「仅辅助列有洞」的案例，把洞换成同层晶体后
+    /// 仍然逐格回放等于目标，且所有辅助列都是紧列。
+    ///
+    /// <para>修复前的辅助列（洞用 <c>.</c> 表示）：</para>
+    /// <list type="bullet">
+    /// <item><c>T.ccc</c> ⇒ <c>.TTPT</c>；<c>T.ccc.</c> / <c>T.cccT</c> /
+    /// <c>T.cccP</c> / <c>T.cccc</c> ⇒ <c>.TTPTT</c>；</item>
+    /// <item><c>TT.ccc</c> ⇒ <c>T.TTPT</c>；<c>P.T..c</c> ⇒ <c>cT.T..</c>
+    /// （这一例走算法 5 的落块柱，不是构造 G）。</item>
+    /// </list>
+    /// </summary>
+    public static void AuxiliaryColumnHolesBecomeCrystals()
+    {
+        var cases = new (string Text, string ExpectedPillar, AngleConstruction Construction)[]
+        {
+            ("T.ccc", "cTTPT", AngleConstruction.G),
+            ("T.ccc.", "cTTPTT", AngleConstruction.G),
+            ("T.cccT", "cTTPTT", AngleConstruction.G),
+            ("T.cccP", "cTTPTT", AngleConstruction.G),
+            ("P.T..c", "cTcT..", AngleConstruction.C),
+            ("TT.ccc", "TcTTPT", AngleConstruction.G),
+            ("T.cccc", "cTTPTT", AngleConstruction.G)
+        };
+
+        foreach ((string text, string expectedPillar, AngleConstruction construction) in cases)
+        {
+            int layers = text.Length;
+            ShapeDocument target = FromColumns(4, layers, (0, text));
+
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers);
+
+            Assert.True(order.IsComplete, text + " 应完成：" + (order.Note ?? "?"));
+            Assert.Equal(construction, order.Construction, text + " 的构造不符");
+            Assert.False(
+                order.HasIllegalPreState(out int preIndex, out int badColumn),
+                $"{text} 的前态不应有非法列（第 {preIndex + 1} 条第 {badColumn + 1} 象限）");
+
+            // 每条前态：所有非空辅助列都必须是紧列。
+            foreach (AngleWorkStep step in order.Steps)
+            {
+                if (step.Kind != AngleWorkStepKind.PreState || step.Shape is null)
+                {
+                    continue;
+                }
+
+                for (int part = 0; part < step.Shape.PartCount; part++)
+                {
+                    if (part == order.Column)
+                    {
+                        continue;
+                    }
+
+                    string columnText = ShapeSignature.ColumnText(step.Shape, part);
+
+                    if (columnText.All(code => code == ShapeSignature.EmptyCode))
+                    {
+                        continue;
+                    }
+
+                    Assert.True(
+                        ShapeSignature.IsTightColumn(step.Shape, part),
+                        $"{text} 的第 {part + 1} 象限辅助列不是紧列：{columnText}");
+                }
+            }
+
+            // 辅助列的洞已换成同层晶体（首条前态的第 2 象限就是托柱/落块柱）。
+            ShapeDocument firstPreState =
+                NthStep(order, AngleWorkStepKind.PreState, 0).Shape!;
+
+            Assert.Equal(
+                expectedPillar,
+                ShapeSignature.ColumnText(firstPreState, 1),
+                text + " 的辅助列应为紧列");
+
+            // 逐格回放：构造 G 走 Cut；算法 5 的塔走一次真实 Pin。
+            if (order.Steps.Any(step => step.Kind == AngleWorkStepKind.Cut))
+            {
+                ShapeDocument rotated = ShapeOps.Rotate(firstPreState, order.Rotation);
+                CutResult cut = ShapePhysics.Cut(rotated);
+
+                Assert.True(cut.Success, cut.Error ?? text + " 的切割失败");
+
+                ShapeDocument replayed =
+                    ShapeOps.Rotate(cut.West!, -order.Rotation);
+
+                Assert.True(
+                    ShapeOps.Same(
+                        replayed,
+                        order.Steps.First(step =>
+                            step.Kind == AngleWorkStepKind.Cut).Shape),
+                    text + " 的 Cut 步应逐格等于真实 ShapePhysics.Cut 的西半边");
+            }
+            else
+            {
+                ShapeDocument pinned = ShapePhysics.Pin(firstPreState).Document!;
+
+                Assert.True(
+                    ShapeOps.Same(pinned, Step(order, AngleWorkStepKind.Pin).Shape),
+                    text + " 的一次顶针应逐格等于真实 ShapePhysics.Pin");
+            }
+
+            Assert.True(
+                ShapeOps.Same(target, Step(order, AngleWorkStepKind.Target).Shape),
+                text + " 的末步应逐格等于目标");
+        }
+    }
+
+    /// <summary>
+    /// 任务二（docs §6 第 7 条 / §17.7）：前态洞闸门必须区分辅助列与目标列。
+    ///
+    /// <list type="number">
+    /// <item>辅助列有洞 ⇒ 拒绝（无论目标列是否带子配方）；</item>
+    /// <item>目标列有洞、且带子配方（<c>.T.c</c> 的塔 <c>.Tc.</c>）⇒ 允许；</item>
+    /// <item>目标列有洞、但没有子配方 ⇒ 拒绝。</item>
+    /// </list>
+    /// </summary>
+    public static void PreStateHoleGateDistinguishesAuxiliaryAndTarget()
+    {
+        // ── 1. 辅助列有洞：拒绝 ──
+        ShapeDocument auxiliaryHole = FromColumns(
+            4,
+            5,
+            (0, "cTccc"),
+            (1, ".TTPT"));
+
+        Assert.True(
+            AngleWorkOrderBuilder.HasIllegalColumnHoles(
+                auxiliaryHole,
+                0,
+                targetColumnHasSubRecipe: true,
+                out int badAux),
+            "辅助列 .TTPT 有洞，应被拒绝");
+        Assert.Equal(1, badAux, "有洞的辅助列是第 2 象限");
+
+        var forgedAuxHole = new AngleWorkOrder(
+            0,
+            AngleBuildKind.NeedsCrystalBreak,
+            new[]
+            {
+                new AngleWorkStep(
+                    "旧前态：托柱留洞",
+                    auxiliaryHole,
+                    AngleWorkStepKind.PreState),
+                new AngleWorkStep(
+                    "目标角",
+                    FromColumns(4, 5, (0, "T.ccc")),
+                    AngleWorkStepKind.Target)
+            },
+            null)
+        {
+            IsComplete = true,
+            TargetColumnHasSubRecipe = true
+        };
+
+        Assert.True(
+            forgedAuxHole.HasIllegalPreState(out _, out int badForgedAux),
+            "辅助列有洞的工序应被判成假阳性");
+        Assert.Equal(1, badForgedAux, "被拒的应是第 2 象限（辅助列）");
+
+        // ── 2. 目标列有洞、且带子配方：允许 ──
+        ShapeDocument target = FromColumns(4, 4, (0, ".T.c"));
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, 4);
+
+        Assert.True(order.IsComplete, order.Note ?? ".T.c 应可制作");
+        Assert.True(order.SubRecipe is not null, "算法 6 的目标列应带造塔子配方");
+
+        ShapeDocument preState = Step(order, AngleWorkStepKind.PreState).Shape!;
+
+        Assert.False(
+            ShapeSignature.IsTightColumn(preState, 0),
+            "前态目标列 .Tc. 应带洞（这正是子配方要证明可造的情形）");
+        Assert.Equal(
+            ".Tc.",
+            ShapeSignature.ColumnText(preState, 0),
+            "前态目标列应是 .Tc.");
+
+        Assert.False(
+            order.HasIllegalPreState(out _, out int badTarget),
+            "目标列有洞但带子配方，应被接受：" + badTarget);
+
+        ShapeDocument targetHole = FromColumns(4, 4, (0, ".Tc."));
+
+        Assert.False(
+            AngleWorkOrderBuilder.HasIllegalColumnHoles(
+                targetHole,
+                0,
+                targetColumnHasSubRecipe: true,
+                out _),
+            "目标列有洞且带子配方，应通过闸门");
+
+        // ── 3. 目标列有洞、但没有子配方：拒绝 ──
+        Assert.True(
+            AngleWorkOrderBuilder.HasIllegalColumnHoles(
+                targetHole,
+                0,
+                targetColumnHasSubRecipe: false,
+                out int badNoSubRecipe),
+            "目标列有洞但没有子配方，应被拒绝");
+        Assert.Equal(0, badNoSubRecipe, "被拒的应是目标列");
+
+        AngleWorkOrder stripped = order with
+        {
+            SubRecipe = null,
+            TargetColumnHasSubRecipe = false
+        };
+
+        Assert.True(
+            stripped.HasIllegalPreState(out _, out int badStripped),
+            "剥掉子配方的工序应被判成假阳性");
+        Assert.Equal(0, badStripped, "被拒的应是目标列（第 1 象限）");
+    }
+
     public static void ConstructGIsStandardRouteForLongCrystalRuns()
     {
-        var cases = new (string Text, int Layers, bool UsesG, string PreStateColumns)[]
+        /*
+         * 闸门改晶体后，`cTT.cccT.T.ccc` 的双闸门前态（闸门 2、9）要求
+         * 环伙伴同时放下方针（第 6 层）和闸门晶体（第 9 层）——
+         * 针上方出现晶体 ⇒ 违反五项条件二，新构造 G 的候选因此作废；
+         * 但等价的单发 G（PreState → Cut → Collapse → Note → Target）仍然成立，
+         * 辅助列全紧、逐格回放等于目标，所以该案例保留为 G，只是步型不同。
+         */
+        var cases = new (string Text, int Layers, bool UsesG, bool NewStyleG, string PreStateColumns)[]
         {
             (
                 "cT.T.ccc",
                 8,
                 true,
-                "cTccTccc|TTT.TTPT|TTTTTTTT|TTTcTTTT"),
+                true,
+                "cTccTccc|TTTcTTPT|TTTTTTTT|TTTcTTTT"),
             (
                 "T.ccc",
                 5,
                 true,
-                "cTccc|.TTPT|TTTTT|cTTTT"),
+                true,
+                "cTccc|cTTPT|TTTTT|cTTTT"),
             (
                 "cTT.cccT.T.ccc",
                 14,
                 true,
-                "cTcTcccTccTccc|TT.TTPTTT.TTPT|TTTTTTTTTTTTTT|TTcTTTTTTcTTTT"),
+                false,
+                "cTT.cccT..Tccc|TTTTTTTTTcTTPT|TTTTTTTTTcTTTT|.............."),
             (
                 "cT.T.T.T...ccc",
                 14,
                 true,
-                "cTccTccTccTccc|TTT.TT.TT.TTPT|TTTTTTTTTTTTTT|TTTcTTcTTcTTTT"),
+                true,
+                "cTccTccTccTccc|TTTcTTcTTcTTPT|TTTTTTTTTTTTTT|TTTcTTcTTcTTTT"),
             (
                 "cTT..T.c",
                 8,
+                false,
                 false,
                 "cTccTcTc|TTTPPTPT|TTTTTTTT|TTTTTcTT")
         };
@@ -2479,7 +2704,7 @@ internal static class AngleWorkOrderTests
         _ = AngleWorkOrderBuilder.Build(FromColumns(4, 5, (0, "T.ccc")), 0, 5);
         _ = AngleWorkOrderBuilder.Build(FromColumns(4, 8, (0, "cT.T.ccc")), 0, 8);
 
-        foreach ((string text, int layers, bool usesG, string preStateColumns) in cases)
+        foreach ((string text, int layers, bool usesG, bool newStyleG, string preStateColumns) in cases)
         {
             ShapeDocument target = FromColumns(4, layers, (0, text));
 
@@ -2503,12 +2728,28 @@ internal static class AngleWorkOrderTests
 
             if (usesG)
             {
-                AssertStepKinds(
-                    order,
-                    AngleWorkStepKind.PreState,
-                    AngleWorkStepKind.Cut,
-                    AngleWorkStepKind.Support,
-                    AngleWorkStepKind.Target);
+                if (newStyleG)
+                {
+                    AssertStepKinds(
+                        order,
+                        AngleWorkStepKind.PreState,
+                        AngleWorkStepKind.Cut,
+                        AngleWorkStepKind.Support,
+                        AngleWorkStepKind.Target);
+                }
+                else
+                {
+                    // 双闸门 + 下方针的环伙伴不能放闸门晶体（针上方出现晶体会
+                    // 违反五项条件二），退回等价的单发 G：
+                    // PreState → Cut → Collapse → Note（不结晶）→ Target。
+                    AssertStepKinds(
+                        order,
+                        AngleWorkStepKind.PreState,
+                        AngleWorkStepKind.Cut,
+                        AngleWorkStepKind.Collapse,
+                        AngleWorkStepKind.Note,
+                        AngleWorkStepKind.Target);
+                }
             }
 
             // 前态四列 = 实测布局（目标列 / 环伙伴 B / 满高柱 / 保险丝柱 B′）。
@@ -2533,7 +2774,15 @@ internal static class AngleWorkOrderTests
                 text + " 的前态目标列必须与目标不同");
 
             // §6 第 4–5 条：每一步真实回放、最终列逐格等于目标。
-            ReplayGenericAlgorithm4(order, target, 0);
+            if (usesG && !newStyleG)
+            {
+                ReplaySingleRoundG(order, target, 0);
+            }
+            else
+            {
+                ReplayGenericAlgorithm4(order, target, 0);
+            }
+
             AssertColumnCells(Step(order, AngleWorkStepKind.Target).Shape!, 0, text);
 
             if (!usesG)
@@ -3256,6 +3505,58 @@ internal static class AngleWorkOrderTests
     }
 
     /// <summary>
+    /// 单轮构造 G 的逐格回放：<c>PreState → Cut（碎片前）→ Collapse → Target</c>。
+    ///
+    /// <para>
+    /// 与 <see cref="ReplayGenericAlgorithm4"/> 的区别：单轮 G 的 Cut 步是
+    /// <b>碎晶后、下落前</b>的快照，所以先做一次真实 <c>ShapePhysics.Cut</c>
+    /// 得到已下落的西半边，再用 <c>Collapse</c> 核对其与 Cut 步的关系。
+    /// </para>
+    /// </summary>
+    private static void ReplaySingleRoundG(
+        AngleWorkOrder order,
+        ShapeDocument target,
+        int column)
+    {
+        ShapeDocument preState = Step(order, AngleWorkStepKind.PreState).Shape!;
+
+        Assert.True(ShapeOps.IsStable(preState), "单轮 G 的前态应稳定");
+        Assert.True(
+            ShapeSignature.AllColumnsLegal(preState, out int badColumn),
+            $"单轮 G 的前态第 {badColumn + 1} 象限不是合法列");
+
+        ShapeDocument rotated = ShapeOps.Rotate(preState, order.Rotation);
+
+        CutResult cut = ShapePhysics.Cut(rotated);
+
+        Assert.True(cut.Success, cut.Error ?? "单轮 G 的切割失败");
+
+        ShapeDocument replayed = ShapeOps.Rotate(cut.West!, -order.Rotation);
+
+        ShapeDocument collapseStep = Step(order, AngleWorkStepKind.Collapse).Shape!;
+
+        Assert.True(
+            ShapeOps.Same(replayed, collapseStep),
+            "单轮 G 的 Collapse 步应等于真实 Cut 出来的西半边");
+
+        // Cut 步是「碎晶后、下落前」，再 Collapse 一次必须等于真实西半边。
+        Assert.True(
+            ShapeOps.Same(
+                ShapePhysics.Collapse(Step(order, AngleWorkStepKind.Cut).Shape!).Document!,
+                replayed),
+            "单轮 G 的 Cut 步再 Collapse 一次应等于真实西半边");
+
+        Assert.Equal(
+            ShapeSignature.ColumnText(target, column),
+            ShapeSignature.ColumnText(collapseStep, column),
+            "单轮 G 下落后目标列应逐格等于目标");
+
+        Assert.True(
+            ShapeOps.Same(target, Step(order, AngleWorkStepKind.Target).Shape),
+            "单轮 G 的末步应得到目标角");
+    }
+
+    /// <summary>
     /// 算法 4（§11 通用实现）步骤链的回放：PreState →（Cut → PreState?）…→ Support → Target。
     ///
     /// <para>逐条核对 §11.4 的六条验收：</para>
@@ -3263,7 +3564,8 @@ internal static class AngleWorkOrderTests
     /// <item>每条前态的每一列都过五项条件；</item>
     /// <item>每条前态的目标列 ≠ 目标列；</item>
     /// <item>前态与每个中间态都稳定；</item>
-    /// <item>每一刀都等于真实 <see cref="ShapePhysics.Cut"/> 的西半边（含 <c>Rotation</c>）；</item>
+    /// <item>每一刀都等于真实 <see cref="ShapePhysics.Cut"/> 的西半边（含 <c>Rotation</c>；
+    /// 单发 G 的 Cut 步允许是「下落前」快照，再 Collapse 一次核对）；</item>
     /// <item>构造 C 交接后与末步都逐格等于目标；</item>
     /// <item>失败语义由调用方另行断言（这里只验证已完成订单）。</item>
     /// </list>
@@ -3307,11 +3609,27 @@ internal static class AngleWorkOrderTests
                     ShapeOps.Rotate(preState!.Shape!, order.Rotation)).West!,
                 -order.Rotation);
 
-            Assert.True(
-                ShapeOps.Same(replayed, step.Shape),
-                $"第 {cuts + 1} 刀应逐格等于真实 Cut 出来的西半边");
+            /*
+             * 两种快照都接受：
+             *   ① 构造 G 的 Cut 步 = 碎晶后、已下落的西半边；
+             *   ② 单发 G 的 Cut 步 = 碎晶后、下落前（还要一步 Collapse）。
+             */
+            bool cutIsPostCollapse = ShapeOps.Same(replayed, step.Shape);
+            bool cutMatches =
+                cutIsPostCollapse ||
+                ShapeOps.Same(
+                    replayed,
+                    ShapePhysics.Collapse(step.Shape!).Document!);
 
-            Assert.True(ShapeOps.IsStable(step.Shape!), "切割后的中间态必须稳定");
+            Assert.True(
+                cutMatches,
+                $"第 {cuts + 1} 刀应逐格等于真实 Cut 出来的西半边（或再 Collapse 一次）");
+
+            // 「下落前」快照本来就不稳定（材料还没落位），稳定性在 Collapse 步再查。
+            if (cutIsPostCollapse)
+            {
+                Assert.True(ShapeOps.IsStable(step.Shape!), "切割后的中间态必须稳定");
+            }
 
             preState = step;
             cuts++;
@@ -3319,7 +3637,27 @@ internal static class AngleWorkOrderTests
 
         Assert.True(cuts >= 1, "算法 4 至少有一刀");
 
-        ShapeDocument handover = Step(order, AngleWorkStepKind.Support).Shape!;
+        ShapeDocument handover;
+
+        AngleWorkStep? collapse = order.Steps.LastOrDefault(step =>
+            step.Kind == AngleWorkStepKind.Collapse);
+
+        if (collapse?.Shape is not null)
+        {
+            Assert.True(
+                ShapeOps.Same(
+                    ShapePhysics.Collapse(preState!.Shape!).Document!,
+                    collapse.Shape),
+                "Collapse 步应等于真实 ShapePhysics.Collapse");
+
+            Assert.True(ShapeOps.IsStable(collapse.Shape), "下落后的中间态必须稳定");
+
+            handover = collapse.Shape;
+        }
+        else
+        {
+            handover = Step(order, AngleWorkStepKind.Support).Shape!;
+        }
 
         Assert.True(ShapeOps.IsStable(handover), "构造 C 交接后的图形应稳定");
         Assert.Equal(
@@ -3329,8 +3667,8 @@ internal static class AngleWorkOrderTests
 
         Assert.Equal(
             ShapeSignature.ColumnText(target, column),
-            ShapeSignature.ColumnText(preState!.Shape!, column),
-            "最后一刀后的目标列应逐格等于目标");
+            ShapeSignature.ColumnText(handover, column),
+            "最后一刀/下落之后的目标列应逐格等于目标");
 
         Assert.True(
             ShapeOps.Same(target, Step(order, AngleWorkStepKind.Target).Shape),

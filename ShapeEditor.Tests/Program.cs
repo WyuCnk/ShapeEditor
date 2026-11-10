@@ -157,6 +157,8 @@ internal static class Program
             ("角工序:算法 6 造塔出 .T.c", AngleWorkOrderTests.Algorithm6BuildsDotTcFromTower),
             ("角工序:算法 6 造塔出 .T.T.c", AngleWorkOrderTests.Algorithm6BuildsDotDotTcFromTower),
             ("角工序:非法前态候选被拒", AngleWorkOrderTests.IllegalPreStateIsRejected),
+            ("角工序:辅助列的洞换晶体", AngleWorkOrderTests.AuxiliaryColumnHolesBecomeCrystals),
+            ("角工序:前态洞闸门区分列", AngleWorkOrderTests.PreStateHoleGateDistinguishesAuxiliaryAndTarget),
             ("角工序:算法 6 侧向支撑角", AngleWorkOrderTests.Algorithm6BuildsSideSupportedAngles),
             ("角工序:§7 六个回归角", AngleWorkOrderTests.RegressionCornersAreConstructible),
             ("角工序:§7.2 用户正解塔顶针出目标", AngleWorkOrderTests.UserGivenTowersPinToTarget),
@@ -173,6 +175,7 @@ internal static class Program
             ("角工序:不合法角不可制作", AngleWorkOrderTests.IllegalAngleIsNotProducible),
             ("角工序:合法非 S 判不可制作", AngleWorkOrderTests.PillarHolderDoesNotClaimNonSCriterion),
             ("角工序:n=4 ≤6 层穷举审计", AngleAuditTests.ExhaustiveFourQuadrantAudit),
+            ("角工序:前态紧列审计（§17.7）", AngleAuditTests.PreStateTightnessAudit),
 
             // 交接规格 §5 的 9 组验收语料。
             ("语料1:角判据计数 4..12688", ProductionPathAcceptanceTests.AngleCriterionCounts),

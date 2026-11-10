@@ -547,7 +547,7 @@ Build → SelectAlgorithm = Algorithm4
 | G2 | 每条下落记录 `q → d` 的窗口 `d+1 … q−1` 里只有临时晶体 / 空（无针、无目标晶体） |
 | G3 | 落点层能腾空：核心列该层是临时晶体 / 本来是空 / 是另一条下落记录的源层（§4.8.1 的阶梯抬升） |
 | G4 | 每条记录的闸门 `g = q−1` 切掉后只降一层；多层位移由后续记录接力（§4.8.1 / §15.6） |
-| G5 | 环伙伴 B 只由 `T`/`P`/空构成（闸门处可留洞，按 §15.10 修正）；整列过五项条件 |
+| G5 | 环伙伴 B 只由 `T`/`P`/晶体构成（**闸门层放晶体**，辅助列必须是紧列，§17.7）；整列过五项条件 |
 | G6 | `B[s+1]` 是针、下方 `B[s]` 是 T（针有直接支撑） |
 | G7 | 针层 `s+1 ∈ [s, s+2]`：正是环里那层 |
 | G8 | 保险丝层 `k < s`（环下方）；G8a：`target[k]` 不是晶体，核心列该层是临时晶体 |
@@ -571,10 +571,10 @@ Build → SelectAlgorithm = Algorithm4
 
 | 目标 | 层数 | 走 G | 前态四列（col0 \| B \| 满高柱 \| B′） | 步骤链 | 耗时 |
 |---|---|---|---|---|---|---|
-| `cT.T.ccc` | 8 | ✔ | `cTccTccc` \| `TTT.TTPT` \| `TTTTTTTT` \| `TTTcTTTT` | PreState → Cut → Support → Target | 0.2 ms |
-| `T.ccc` | 5 | ✔ | `cTccc` \| `.TTPT` \| `TTTTT` \| `cTTTT` | 同上 | 0.1 ms |
-| `cTT.cccT.T.ccc` | 14 | ✔ | `cTcTcccTccTccc` \| `TT.TTPTTT.TTPT` \| 满 T \| `TTcTTTTTTcTTTT` | 同上 | 0.3 ms |
-| `cT.T.T.T...ccc` | 14 | ✔ | `cTccTccTccTccc` \| `TTT.TT.TT.TTPT` \| 满 T \| `TTTcTTcTTcTTTT` | 同上 | 0.3 ms |
+| `cT.T.ccc` | 8 | ✔ | `cTccTccc` \| `TTTcTTPT` \| `TTTTTTTT` \| `TTTcTTTT` | PreState → Cut → Support → Target | 0.2 ms |
+| `T.ccc` | 5 | ✔ | `cTccc` \| `cTTPT` \| `TTTTT` \| `cTTTT` | 同上 | 0.1 ms |
+| `cTT.cccT.T.ccc` | 14 | ✔ | `cTT.cccT..Tccc` \| `TTTTTTTTTcTTPT` \| `TTTTTTTTTcTTTT` \| 空 | PreState → Cut → Collapse → Note → Target | 0.3 ms |
+| `cT.T.T.T...ccc` | 14 | ✔ | `cTccTccTccTccc` \| `TTTcTTcTTcTTPT` \| 满 T \| `TTTcTTcTTcTTTT` | PreState → Cut → Support → Target | 0.3 ms |
 | `cTT..T.c` | 8 | ✘（G1 不成立） | `cTccTcTc` \| `TTTPPTPT` \| 满 T \| `TTTTTcTT` | PreState → Cut → PreState → Cut → Support → Target | 1.1 ms |
 | `cT.T.T.c` | 8 | ✘（F ✘） | —（未覆盖） | Note → Note | 0.5 ms |
 
@@ -615,5 +615,75 @@ Build → SelectAlgorithm = Algorithm4
 7. **§4.7 末尾的注**（第 252–254 行）：「G 与 D 可互换」→ 现在 G 是首选、D 是回退；
 8. 可选：§15.9 的保险丝柱写成短列 `TTTc....`，实现里用满高列 `TTTcTTTT`（等价，回放已验），
    若要逐字对齐可注明「保险丝柱的高度是自由度」。
+
+### 7.10 §17.7 辅助列的洞换晶体 + 前态洞闸门（2026-11）
+
+**任务一：7 个「仅辅助列有洞」案例（≤6 层审计口径）**
+
+洞一律换成**同层晶体**；辅助列全程紧列，半破/引爆时与临时晶体一起碎掉。
+
+| 目标 | 旧的辅助列 | 新的辅助列 | 说明 |
+|---|---|---|---|
+| `T.ccc` | `.TTPT` | `cTTPT` | 构造 G 的环伙伴 B，闸门在第 1 层 |
+| `T.ccc.` | `.TTPTT` | `cTTPTT` | 同上 |
+| `T.cccT` | `.TTPTT` | `cTTPTT` | 同上 |
+| `T.cccP` | `.TTPTT` | `cTTPTT` | 同上 |
+| `P.T..c` | `cT.T..` | `cTcT..` | **不是构造 G**：算法 5 / 构造 C 的落块柱，洞在第 3 层 |
+| `TT.ccc` | `T.TTPT` | `TcTTPT` | 构造 G，闸门在第 2 层 |
+| `T.cccc` | `.TTPTT` | `cTTPTT` | 构造 G（6 层，cap 必须取 6） |
+
+每个案例都断言：`IsComplete`、末步逐格等于目标、所有辅助列 `IsTightColumn`、
+辅助列文本等于上表；构造 G 走真实 `Cut`，`P.T..c` 走真实 `Pin`。
+
+**任务二：§6 第 7 条 / §17.7 的闸门**
+
+- `ShapeSignature.IsTightColumn(string / document, column)`：材料之间夹空层即为假；
+  末尾空层、整列为空都算紧列。
+- `AngleWorkOrderBuilder.HasIllegalColumnHoles(preState, targetColumn, targetColumnHasSubRecipe, out bad)`：
+  - 非目标列有洞 ⇒ **拒绝**（辅助列必须是紧列）；
+  - 目标列有洞且 `targetColumnHasSubRecipe == false` ⇒ **拒绝**；
+  - 目标列有洞且带子配方 ⇒ 允许。
+- `IsRejectedPreState`（候选生成）与 `HasIllegalPreState`（工序单自检）都接这条规则。
+- `AngleWorkOrder.TargetColumnHasSubRecipe`：目标列有洞时必须为 true（或 `SubRecipe != null`）。
+  生成器在装出前态时置 true（目标列由本工序的子构造给出）；外部伪造的工序单默认 false，
+  会被 `HasIllegalPreState` 判成假阳性。
+- 塔式构造（算法 5/6 的用户塔）在写辅助列后调用 `TightenAuxiliaryColumn`，
+  把候选里带洞的落块柱补成同层晶体，再跑真实 `Pin` 回放。
+
+**审计数字**（≤6 层、4 象限、`{.,T,P,c}`、2125 个 S 列；本仓库口径统计每条 PreState 步）：
+
+| 口径 | PreState 步数 | 全紧 | 仅目标列有洞 | 仅辅助列有洞 | 两者都有 | S 生成成功 |
+|---|---|---|---|---|---|---|
+| 修复前 | 446 | 375 | 64 | **7** | 0 | 2125 |
+| 修复后 | 446 | 382 | 64 | **0** | 0 | 2125 |
+
+> 文档 §17.7 写的是 441 / 375 / 66（59 + 7）；本仓库口径多 5 条 PreState 步
+> （`.TT.c`、`T.T..c`、`T..T.c`、`TT.T.c`、`.TTT.c` 这 5 个构造 D 案例各有两条 PreState），
+> 分类里的 7 个辅助列案例完全一致。
+> 现有测试：`AuxiliaryColumnHolesBecomeCrystals`、`PreStateHoleGateDistinguishesAuxiliaryAndTarget`、
+> `PreStateTightnessAudit`。
+
+**断言更新（原因）**：`cTT.cccT.T.ccc` 的双闸门前态（闸门第 3、10 层）若在环伙伴
+放闸门晶体，会同时要求第 6 层放针——针上方出现晶体 ⇒ 违反五项条件二，
+新构造 G 的候选因此作废；单发 G（`PreState → Cut → Collapse → Note → Target`）
+仍能逐格得到目标且辅助列全紧，所以该案例改断言单发 G 的前态布局与步型。
+`ReplayGenericAlgorithm4` 相应允许「下落前」的 Cut 快照（再 Collapse 一次核对）。
+
+**文档待更新**（`docs/` 由开发者本人维护，本次未动；行号按本次阅读时的版本）：
+
+1. §17.7 第 1510–1511 行：「全是构造 G，托柱写成 `.TTPT`，L1 留了个洞」→
+   实际是 6 个构造 G + 1 个算法 5/构造 C（`P.T..c` 的落块柱 `cT.T..`，洞在第 3 层），
+   且 `TT.ccc` 的洞在第 2 层；建议按上表逐例写清；
+2. §17.7 第 1474–1480、1502–1510 行的审计数字：441/375/66 与当前仓库口径
+   446/382/71（修复前）不同——差在 `.TT.c`、`T.T..c`、`T..T.c`、`TT.T.c`、`.TTT.c`
+   这 5 个构造 D 案例各有两条 PreState 步；建议统一口径（是否把多刀工序的第二条 PreState 计入）；
+3. §17.7「修法」第 1513–1529 行：改为「已落地」并链接
+   `ShapeSignature.IsTightColumn` / `AngleWorkOrderBuilder.HasIllegalColumnHoles` /
+   `AngleWorkOrder.TargetColumnHasSubRecipe`；
+4. §6 第 7 条的「实现检查」第 631–641 行：补一句「目标列有洞时由
+   `TargetColumnHasSubRecipe`（或 `SubRecipe`）判定子配方是否存在」；
+5. §5 规则六第 562 行「辅助列一律按紧列生成」：可补「闸门层放晶体而不是洞」的实例
+   （`T.ccc` 的 `cTTPT`）。
+
 
 

@@ -92,6 +92,45 @@ public static class ShapeSignature
     }
 
     /// <summary>
+    /// 一列是否是「紧列」（docs §5 规则六 / §6 第 7 条）：
+    /// **连续接地、材料之间没有空洞**。完全为空的列也算紧列
+    /// （「不参与产物的象限」允许整列为空）。
+    ///
+    /// <para>
+    /// 注意末尾的空层不算洞：<c>T.</c> 是紧列，<c>.T</c> 与 <c>T.T</c> 不是。
+    /// 前态的辅助列一律要求紧列；目标列允许有洞，但必须带子配方证明可造。
+    /// </para>
+    /// </summary>
+    public static bool IsTightColumn(
+        ShapeDocument document,
+        int column)
+    {
+        return IsTightColumn(ColumnText(document, column));
+    }
+
+    /// <summary>按列字符串判定「紧列」（连续接地、无空洞）。</summary>
+    public static bool IsTightColumn(
+        string column)
+    {
+        bool emptySeen = false;
+
+        foreach (char code in column)
+        {
+            if (code == EmptyCode)
+            {
+                emptySeen = true;
+            }
+            else if (emptySeen)
+            {
+                // 空洞上方仍有材料 ⇒ 不是紧列。
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// 按列字符串判定五项条件。
     /// </summary>
     public static ColumnCheck CheckColumn(

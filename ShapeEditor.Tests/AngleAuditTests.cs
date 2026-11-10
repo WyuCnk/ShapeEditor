@@ -236,6 +236,122 @@ internal static class AngleAuditTests
         Assert.True(worstMs < 50.0, $"最慢单列 {worstMs:F2} ms，应 < 50 ms");
     }
 
+    /// <summary>
+    /// §17.7 的审计口径：≤6 层的 2125 个 S 列，统计前态空洞落在哪一列。
+    ///
+    /// <para>
+    /// 「有空洞」= <see cref="ShapeSignature.IsTightColumn"/> 为 false（材料之间夹着空层）。
+    /// 目标列（被求解的角）允许有洞，但必须带子配方；辅助列一律紧列。
+    /// 修复前：仅辅助列有洞 7 个（<c>T.ccc</c> / <c>T.ccc.</c> / <c>T.cccT</c> /
+    /// <c>T.cccP</c> / <c>P.T..c</c> / <c>TT.ccc</c> / <c>T.cccc</c>）；
+    /// 修复后必须为 0，且 S 生成成功数仍是 2125。
+    /// </para>
+    /// </summary>
+    public static void PreStateTightnessAudit()
+    {
+        int s = 0;
+        int success = 0;
+        int steps = 0;
+        int tight = 0;
+        int onlyTarget = 0;
+        int onlyAux = 0;
+        int both = 0;
+        var auxCases = new List<string>();
+
+        for (int layers = 3; layers <= 6; layers++)
+        {
+            int combinations = (int)Math.Pow(Alphabet.Length, layers);
+            var buffer = new char[layers];
+
+            for (int code = 0; code < combinations; code++)
+            {
+                int remaining = code;
+
+                for (int layer = 0; layer < layers; layer++)
+                {
+                    buffer[layer] = Alphabet[remaining % Alphabet.Length];
+                    remaining /= Alphabet.Length;
+                }
+
+                string text = new(buffer);
+                ShapeDocument target = BuildColumn(text);
+
+                if (!ShapeSignature.CheckColumn(text).IsLegal ||
+                    !PillarSCriterion.IsPillarColumn(target, 0))
+                {
+                    continue;
+                }
+
+                s++;
+
+                AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers);
+
+                if (!order.IsComplete)
+                {
+                    continue;
+                }
+
+                success++;
+
+                foreach (AngleWorkStep step in order.Steps)
+                {
+                    if (step.Kind != AngleWorkStepKind.PreState || step.Shape is null)
+                    {
+                        continue;
+                    }
+
+                    steps++;
+
+                    bool targetHole = !ShapeSignature.IsTightColumn(step.Shape, order.Column);
+                    bool auxHole = false;
+
+                    for (int part = 0; part < step.Shape.PartCount; part++)
+                    {
+                        if (part == order.Column)
+                        {
+                            continue;
+                        }
+
+                        if (!ShapeSignature.IsTightColumn(step.Shape, part))
+                        {
+                            auxHole = true;
+                            auxCases.Add(
+                                text + "：第 " + (part + 1) + " 象限 = " +
+                                ShapeSignature.ColumnText(step.Shape, part));
+                        }
+                    }
+
+                    if (targetHole && auxHole)
+                    {
+                        both++;
+                    }
+                    else if (auxHole)
+                    {
+                        onlyAux++;
+                    }
+                    else if (targetHole)
+                    {
+                        onlyTarget++;
+                    }
+                    else
+                    {
+                        tight++;
+                    }
+                }
+            }
+        }
+
+        Console.WriteLine(
+            $"  TIGHT totalS={s} success={success} steps={steps} tight={tight} " +
+            $"onlyTarget={onlyTarget} onlyAux={onlyAux} both={both}");
+
+        Assert.Equal(2125, s, "≤6 层的 S 列应为 2125");
+        Assert.Equal(2125, success, "S 列生成成功数应仍为 2125");
+        Assert.True(
+            onlyAux == 0 && both == 0,
+            "仅辅助列有洞的个数必须为 0（修复前 7）：" + string.Join(" | ", auxCases));
+    }
+
     /// <summary>按列文本造 4 象限目标（其余列留空）。</summary>
     private static ShapeDocument BuildColumn(
         string text)

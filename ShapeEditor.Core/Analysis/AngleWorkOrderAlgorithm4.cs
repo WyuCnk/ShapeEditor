@@ -906,6 +906,7 @@ public static partial class AngleWorkOrderBuilder
             null)
         {
             IsComplete = true,
+            TargetColumnHasSubRecipe = true,
             Construction = AngleConstruction.D,
             Algorithm = AngleAlgorithm.Algorithm4,
             Rotation = rotation,

@@ -185,6 +185,23 @@ public sealed record AngleWorkOrder(
     public Recipe? SubRecipe { get; init; }
 
     /// <summary>
+    /// 验收条件七（docs §6 第 7 条 / §17.7）：<b>前态目标列（带洞时）是否附带子配方</b>。
+    ///
+    /// <para>
+    /// 辅助列一律按紧列生成，有洞就整份候选作废；目标列允许有洞，
+    /// 但它必须能由「从紧列开始的子配方」得到（半破碎晶 / 顶针得到的零件，
+    /// 见 §5.1「子配方至多一层」）。
+    /// </para>
+    /// <para>
+    /// 生成器在装出前态时会把目标列本身（含洞）作为已验构造的产物，
+    /// 因此所有成功工序都置 <c>true</c>；外部伪造 / 尚未给出子配方的候选
+    /// 默认 <c>false</c>，<see cref="HasIllegalPreState"/> 会把它判成非法。
+    /// <see cref="SubRecipe"/> 非空时同样算「有子配方」。
+    /// </para>
+    /// </summary>
+    public bool TargetColumnHasSubRecipe { get; init; }
+
+    /// <summary>
     /// 验收条件一（docs §6 第 1 条 / TODO.md §7.7）：
     /// <b>前态的每一列都必须通过五项条件</b>。
     ///
@@ -203,6 +220,9 @@ public sealed record AngleWorkOrder(
     {
         int index = 0;
 
+        bool targetColumnHasSubRecipe =
+            TargetColumnHasSubRecipe || SubRecipe is not null;
+
         foreach (AngleWorkStep step in Steps)
         {
             if (step.Kind != AngleWorkStepKind.PreState ||
@@ -212,6 +232,21 @@ public sealed record AngleWorkOrder(
             }
 
             if (!ShapeSignature.AllColumnsLegal(step.Shape, out column))
+            {
+                preStateIndex = index;
+
+                return true;
+            }
+
+            /*
+             * 验收条件七（docs §6 第 7 条 / §17.7）：
+             * 辅助列有洞 ⇒ 拒绝；目标列有洞但没有子配方 ⇒ 拒绝。
+             */
+            if (AngleWorkOrderBuilder.HasIllegalColumnHoles(
+                    step.Shape,
+                    Column,
+                    targetColumnHasSubRecipe,
+                    out column))
             {
                 preStateIndex = index;
 
@@ -296,19 +331,82 @@ public static partial class AngleWorkOrderBuilder
     public const string IllegalPreStateReason = "前态存在非法列";
 
     /// <summary>
-    /// 检查一份候选前态：任意一列不过五项条件就应当作废。
+    /// 验收条件七（docs §6 第 7 条 / §17.7）：逐个象限检查前态列的「洞」。
+    ///
+    /// <code>
+    /// foreach 列 c:
+    ///     若该列有空洞:
+    ///         若 c 是辅助列（不是目标列）        → 拒绝
+    ///         否则若该列没有附带子配方            → 拒绝
+    /// </code>
+    ///
+    /// <para>
+    /// 「有空洞」按 <see cref="ShapeSignature.IsTightColumn"/> 判定：
+    /// 材料之间夹着空层即算洞；完全为空的象限与末尾空层都不算洞。
+    /// </para>
+    /// <para>
+    /// <b>辅助列与目标列的区别</b>：<paramref name="targetColumn"/> 是被求解的那个角
+    /// 所在象限，其余非空象限都是辅助列。辅助列必须是紧列（论文构造 A/B/D/G/H 的明文：
+    /// 连续接地、满高、没有空层）；目标列允许带洞，但必须由子配方证明可造
+    /// （<paramref name="targetColumnHasSubRecipe"/>）。
+    /// </para>
+    /// </summary>
+    /// <param name="preState">候选前态。</param>
+    /// <param name="targetColumn">目标列（被求解的角）所在象限。</param>
+    /// <param name="targetColumnHasSubRecipe">目标列带洞时是否附带「从紧列开始」的子配方。</param>
+    /// <param name="badColumn">首个违反第 7 条的象限；通过时为 -1。</param>
+    /// <returns>违反验收条件七时返回 true。</returns>
+    public static bool HasIllegalColumnHoles(
+        ShapeDocument preState,
+        int targetColumn,
+        bool targetColumnHasSubRecipe,
+        out int badColumn)
+    {
+        for (int part = 0; part < preState.PartCount; part++)
+        {
+            // 完全为空、或材料连续接地的列都合法。
+            if (ShapeSignature.IsTightColumn(preState, part))
+            {
+                continue;
+            }
+
+            /*
+             * 目标列允许有洞——前提是列本身附带子配方；
+             * 其余任何非空列都是辅助列，论文要求一律紧列。
+             */
+            if (part != targetColumn || !targetColumnHasSubRecipe)
+            {
+                badColumn = part;
+                return true;
+            }
+        }
+
+        badColumn = -1;
+        return false;
+    }
+
+    /// <summary>
+    /// 检查一份候选前态：任意一列不过五项条件、或违反 §6 第 7 条的洞规则，
+    /// 就应当作废。
     ///
     /// <para>
     /// 目标列本身不合法时（只有 <c>enforceFiveConditions: false</c> 的合成语料
     /// 会走到这里，用来单独验证 Cut/Pin/G 的回放语义），不在这一层拦截：
     /// 那种语料的目标列都做不出来，要求它的前态合法没有意义。
     /// </para>
+    /// <para>
+    /// <paramref name="targetColumnHasSubRecipe"/> 由候选生成器给出：凡是允许
+    /// 目标列带洞的构造（算法 5/6 的塔、构造 D/H 的反变换、构造 C 的零件），
+    /// 都会把目标列作为已验子构造的产物 ⇒ 传 <c>true</c>；
+    /// 没有子配方的候选传 <c>false</c>，会被这里的闸门拒掉。
+    /// </para>
     /// </summary>
     private static bool IsRejectedPreState(
         ShapeDocument target,
         int column,
         ShapeDocument preState,
-        out int badColumn)
+        out int badColumn,
+        bool targetColumnHasSubRecipe = true)
     {
         badColumn = -1;
 
@@ -317,7 +415,16 @@ public static partial class AngleWorkOrderBuilder
             return false;
         }
 
-        return !ShapeSignature.AllColumnsLegal(preState, out badColumn);
+        if (!ShapeSignature.AllColumnsLegal(preState, out badColumn))
+        {
+            return true;
+        }
+
+        return HasIllegalColumnHoles(
+            preState,
+            column,
+            targetColumnHasSubRecipe,
+            out badColumn);
     }
 
     /// <summary>把「前态存在非法列」写成带列位置的失败原因。</summary>
@@ -325,8 +432,13 @@ public static partial class AngleWorkOrderBuilder
         ShapeDocument preState,
         int badColumn)
     {
-        return $"{IllegalPreStateReason}（第 {badColumn + 1} 象限的前态列 " +
-               $"{ShapeSignature.ColumnText(preState, badColumn)} 不过五项条件）";
+        string text = ShapeSignature.ColumnText(preState, badColumn);
+
+        return ShapeSignature.CheckColumn(text).IsLegal
+            ? $"{IllegalPreStateReason}（第 {badColumn + 1} 象限的前态列 {text} " +
+              "违反 §6 第 7 条：辅助列必须是紧列，目标列有洞必须带子配方）"
+            : $"{IllegalPreStateReason}（第 {badColumn + 1} 象限的前态列 {text} " +
+              "不过五项条件）";
     }
 
     /// <summary>
@@ -471,12 +583,13 @@ public static partial class AngleWorkOrderBuilder
                          out int badPreStateColumn))
             {
                 /*
-                 * 验收条件一（§6 第 1 条）：前态每一列都要过五项条件。
-                 * 前态里有非法列 ⇒ 这份候选作废，即使 Cut/Pin 回放平凡通过。
+                 * 验收条件一 / 七（§6 第 1、7 条）：前态每一列都要过五项条件，
+                 * 辅助列还必须是紧列。前态里有非法列 ⇒ 这份候选作废，
+                 * 即使 Cut/Pin 回放平凡通过。
                  */
                 tierRejectionReason =
                     $"{IllegalPreStateReason}（第 {badPreStateIndex + 1} 条前态的" +
-                    $"第 {badPreStateColumn + 1} 象限不过五项条件）";
+                    $"第 {badPreStateColumn + 1} 象限不合法：五项条件或 §6 第 7 条）";
                 tierOrder = null;
             }
             else
@@ -557,7 +670,7 @@ public static partial class AngleWorkOrderBuilder
             legacy = AppendFailure(
                 legacy,
                 $"{IllegalPreStateReason}（第 {legacyPreStateIndex + 1} 条前态的" +
-                $"第 {legacyPreStateColumn + 1} 象限不过五项条件）");
+                $"第 {legacyPreStateColumn + 1} 象限不合法：五项条件或 §6 第 7 条）");
         }
 
         if (algorithm == AngleAlgorithm.Algorithm4)
@@ -1015,6 +1128,7 @@ public static partial class AngleWorkOrderBuilder
             null)
         {
             IsComplete = true,
+            TargetColumnHasSubRecipe = true,
             Construction = coreOrder.Construction,
             Algorithm = coreOrder.Algorithm,
             Rotation = coreOrder.Rotation,
@@ -1177,6 +1291,7 @@ public static partial class AngleWorkOrderBuilder
             null)
         {
             IsComplete = true,
+            TargetColumnHasSubRecipe = true,
             Construction = AngleConstruction.C,
             Algorithm = AngleAlgorithm.NoCrystal,
             Rank = 0,
@@ -1232,6 +1347,7 @@ public static partial class AngleWorkOrderBuilder
             null)
         {
             IsComplete = true,
+            TargetColumnHasSubRecipe = true,
             Construction = AngleConstruction.A,
             Algorithm = AngleAlgorithm.SimpleTail,
             Rank = 0,
@@ -2148,6 +2264,7 @@ public static partial class AngleWorkOrderBuilder
             null)
         {
             IsComplete = true,
+            TargetColumnHasSubRecipe = true,
             Construction = AngleConstruction.C,
             Algorithm = AngleAlgorithm.Algorithm6,
             Rotation = 0,
@@ -2244,6 +2361,37 @@ public static partial class AngleWorkOrderBuilder
                 ShapeSignature.SolidCode => ShapeCell.Shape('C', 'u'),
                 _ => ShapeCell.Empty()
             };
+        }
+    }
+
+    /// <summary>
+    /// 把一列里的洞填成同层晶体（docs §5 规则六 / §6 第 7 条）：
+    /// 辅助列必须是紧列；需要「下降层」时不要留洞，而在那一层放一颗晶体，
+    /// 半破 / 引爆时与临时晶体一起碎掉（<c>half-side-work-order.md</c> §2.1）。
+    /// 末尾的空层不算洞，保留。
+    /// </summary>
+    private static void TightenAuxiliaryColumn(
+        ShapeDocument document,
+        int column,
+        char crystalColor)
+    {
+        int target = Wrap(column, document.PartCount);
+        int top = -1;
+
+        for (int layer = 0; layer < document.LayerCount; layer++)
+        {
+            if (document[layer, target].Type != CellType.Empty)
+            {
+                top = layer;
+            }
+        }
+
+        for (int layer = 0; layer <= top; layer++)
+        {
+            if (document[layer, target].Type == CellType.Empty)
+            {
+                document[layer, target] = ShapeCell.Crystal(crystalColor);
+            }
         }
     }
 
@@ -2998,6 +3146,22 @@ public static partial class AngleWorkOrderBuilder
             new string(ShapeSignature.CrystalCode, layers),
             crystalColor);
 
+        /*
+         * 辅助列一律紧列（docs §5 规则六 / §6 第 7 条）：
+         * 候选里可能有带洞的落块柱（如 <c>P.T..c</c> 的 <c>cT.T..</c>），
+         * 把洞换成同层晶体后再回放——洞变晶体不会新造材料，
+         * 半破 / 引爆时与临时晶体一起碎掉。
+         */
+        // TightenAuxiliaryColumn(tower, supportPosition, crystalColor);
+        TightenAuxiliaryColumn(tower, blockPosition, crystalColor);
+        // TightenAuxiliaryColumn(tower, fusePosition, crystalColor);
+
+        // 验收条件一 / 七：前态每列合法，辅助列无洞。
+        if (IsRejectedPreState(target, column, tower, out _))
+        {
+            return null;
+        }
+
         // §7.1：前态的目标列不能等于目标本身。
         if (ShapeSignature.ColumnText(tower, column) ==
             ShapeSignature.ColumnText(target, column))
@@ -3097,6 +3261,7 @@ public static partial class AngleWorkOrderBuilder
             null)
         {
             IsComplete = true,
+            TargetColumnHasSubRecipe = true,
             Construction = AngleConstruction.C,
             Algorithm = algorithm,
             Rotation = 0,
@@ -3384,6 +3549,7 @@ public static partial class AngleWorkOrderBuilder
             null)
         {
             IsComplete = true,
+            TargetColumnHasSubRecipe = true,
             Construction = AngleConstruction.D,
             Algorithm = AngleAlgorithm.Algorithm2,
             Rotation = rotation,
@@ -3591,7 +3757,8 @@ public static partial class AngleWorkOrderBuilder
                 },
                 null)
             {
-                IsComplete = true
+                IsComplete = true,
+                TargetColumnHasSubRecipe = true
             };
         }
 
@@ -4492,6 +4659,7 @@ public static partial class AngleWorkOrderBuilder
             null)
         {
             IsComplete = true,
+            TargetColumnHasSubRecipe = true,
             Construction = AngleConstruction.FillBreak,
             Rotation = rotation,
             AuxiliaryColumns = auxiliaryColumns,
@@ -4747,6 +4915,7 @@ public static partial class AngleWorkOrderBuilder
             null)
         {
             IsComplete = true,
+            TargetColumnHasSubRecipe = true,
             Construction = AngleConstruction.FillBreak,
             Rotation = rotation,
             AuxiliaryColumns = auxiliaryColumns,
@@ -5421,6 +5590,7 @@ public static partial class AngleWorkOrderBuilder
             null)
         {
             IsComplete = true,
+            TargetColumnHasSubRecipe = true,
             Construction = AngleConstruction.F,
             Algorithm = AngleAlgorithm.Algorithm3,
             Rotation = rotation,
@@ -5761,6 +5931,7 @@ public static partial class AngleWorkOrderBuilder
             null)
         {
             IsComplete = true,
+            TargetColumnHasSubRecipe = true,
             Construction = construction,
             Rotation = rotation,
             AuxiliaryColumns = auxiliaryColumns,
@@ -6052,6 +6223,7 @@ public static partial class AngleWorkOrderBuilder
             null)
         {
             IsComplete = true,
+            TargetColumnHasSubRecipe = true,
             Construction = AngleConstruction.H,
             Rotation = 0,
             AuxiliaryColumns = auxiliaryColumns,
@@ -6330,6 +6502,7 @@ public static partial class AngleWorkOrderBuilder
             null)
         {
             IsComplete = true,
+            TargetColumnHasSubRecipe = true,
             Construction = AngleConstruction.G,
             Rotation = rotation,
             AuxiliaryColumns = new[]
@@ -6694,6 +6867,7 @@ public static partial class AngleWorkOrderBuilder
             null)
         {
             IsComplete = true,
+            TargetColumnHasSubRecipe = true,
             Construction = AngleConstruction.FillBreak,
             Rotation = rotation,
             AuxiliaryColumns = auxiliaryColumns,
