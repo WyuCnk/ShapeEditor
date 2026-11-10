@@ -1,0 +1,94 @@
+@using System.Globalization
+@using ShapeEditor.Core.Analysis
+@using ShapeEditor.Web.Services
+
+@*
+    角工序的步骤节点链：主步骤链与「半边工序」链共用同一套渲染。
+
+    节点坐标由 AngleWorkColumnBuilder 排好（同一行从左到右，箭头位置留空），
+    这里只负责按绝对坐标摆放；箭头的最终几何由页面 OnAfterRenderAsync 里的
+    shapeGridLayoutEdges 按真实矩形校正，和交换工序的节点图完全一致。
+*@
+<div class="angle-work-graph" style="height:@Px(ViewportHeight)px">
+    <div class="graph-canvas angle-graph-canvas"
+         style="width:@Px(Width)px;height:@Px(Height)px">
+        <svg class="graph-arrows"
+             width="@Px(Width)"
+             height="@Px(Height)">
+            @foreach (AngleWorkEdge edge in Edges)
+            {
+                <path d="@edge.Path"
+                      class="path-edge"
+                      data-edge-from="@edge.FromId"
+                      data-edge-to="@edge.ToId" />
+
+                <polygon points="@edge.Arrow"
+                         class="path-arrow"
+                         data-edge-from="@edge.FromId"
+                         data-edge-to="@edge.ToId" />
+            }
+        </svg>
+
+        @foreach (AngleWorkNode node in Nodes)
+        {
+            <div class="graph-node path-node angle-node @node.KindClass"
+                 data-node-id="@node.Id"
+                 style="left:@Px(node.X)px;top:@Px(node.Y)px;width:@Px(node.Width)px;height:@Px(node.Height)px">
+                @if (node.IsNote && node.Shape is null)
+                {
+                    @* 纯说明步骤没有竖式图，正文直接展示说明文字。 *@
+                    <div class="angle-note-body">@node.Title</div>
+                }
+                else
+                {
+                    @if (node.KindTag.Length > 0)
+                    {
+                        <span class="path-node-kind">@node.KindTag</span>
+                    }
+
+                    <div class="path-node-head" title="@node.Title">@node.Title</div>
+
+                    <div class="graph-node-body path-node-body">
+                        @if (node.Shape is not null)
+                        {
+                            <PathNodePreview Document="node.Shape" />
+                        }
+                    </div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    /// <summary>节点链的节点（已排好绝对坐标）。</summary>
+    [Parameter]
+    public IReadOnlyList<AngleWorkNode> Nodes { get; set; } =
+        Array.Empty<AngleWorkNode>();
+
+    /// <summary>节点链的箭头。</summary>
+    [Parameter]
+    public IReadOnlyList<AngleWorkEdge> Edges { get; set; } =
+        Array.Empty<AngleWorkEdge>();
+
+    /// <summary>画布宽度（节点链内容宽度）。</summary>
+    [Parameter]
+    public double Width { get; set; }
+
+    /// <summary>画布高度（最高节点加内边距）。</summary>
+    [Parameter]
+    public double Height { get; set; }
+
+    /// <summary>
+    /// 节点链容器的可视高度：节点少时按内容自适应，节点多时固定高度并滚动，
+    /// 规则与制作路径节点图一致。
+    /// </summary>
+    private double ViewportHeight =>
+        // +2 补上容器 1px 上下边框（全局 box-sizing: border-box）。
+        Math.Min(560, Math.Max(160, Math.Ceiling(Height) + 2));
+
+    /// <summary>把坐标格式化成不带千分位分隔符的像素值。</summary>
+    private static string Px(
+        double value) =>
+        value.ToString("0.##", CultureInfo.InvariantCulture);
+}

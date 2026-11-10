@@ -430,6 +430,8 @@
                                         节点预览固定 30px 单元格、1:1 不缩放。
                                         工序前态按目标图形层数作为画布高度，需要更高脚手架才能成立的构造会标为尚未完全验证。
                                         造塔子配方（交换链，rank 0）可折叠展开，展开状态由标题栏的开关统一控制。
+                                        单列做不出来的角会带「半边工序」标签：候选名与配对列写在标题行，
+                                        卡片下方再单列一行 n/2 列一起做的步骤链（两列逐格核对），同样固定 30px 单元格预览。
                                     </p>
 
                                     <div class="angle-work-list">
@@ -445,12 +447,20 @@
                                                         <span class="angle-kind @(work.IsSimple ? "simple" : "break")">@work.KindText</span>
                                                     }
 
+                                                    @* 半边工序：紫色标签 + 候选名 + 配对列，与「碎晶角 / 简单角」并列。 *@
+                                                    @if (work.Half is not null)
+                                                    {
+                                                        <span class="angle-kind half">@work.Half.Title</span>
+                                                        <span class="angle-half-candidate">@work.Half.CandidateText</span>
+                                                        <span class="angle-half-columns">@work.Half.ColumnsText</span>
+                                                    }
+
                                                     @if (!string.IsNullOrEmpty(work.AlgorithmText))
                                                     {
                                                         <span class="angle-algorithm">@work.AlgorithmText</span>
                                                     }
 
-                                                    @if (!string.IsNullOrEmpty(work.ConstructionText))
+                                                    @if (work.ShowConstructionChip)
                                                     {
                                                         <span class="angle-construction">@work.ConstructionText</span>
                                                     }
@@ -475,57 +485,10 @@
                                                     @if (work.Nodes.Count > 0)
                                                     {
                                                         @* 一列一条节点链；箭头由 shapeGridLayoutEdges 按真实矩形绘制。 *@
-                                                        <div class="angle-work-graph"
-                                                             style="height:@Px(AngleGraphViewportHeight(work))px">
-                                                            <div class="graph-canvas angle-graph-canvas"
-                                                                 style="width:@Px(work.GraphWidth)px;height:@Px(work.GraphHeight)px">
-                                                                <svg class="graph-arrows"
-                                                                     width="@Px(work.GraphWidth)"
-                                                                     height="@Px(work.GraphHeight)">
-                                                                    @foreach (AngleWorkEdge edge in work.Edges)
-                                                                    {
-                                                                        <path d="@edge.Path"
-                                                                              class="path-edge"
-                                                                              data-edge-from="@edge.FromId"
-                                                                              data-edge-to="@edge.ToId" />
-
-                                                                        <polygon points="@edge.Arrow"
-                                                                                 class="path-arrow"
-                                                                                 data-edge-from="@edge.FromId"
-                                                                                 data-edge-to="@edge.ToId" />
-                                                                    }
-                                                                </svg>
-
-                                                                @foreach (AngleWorkNode node in work.Nodes)
-                                                                {
-                                                                    <div class="graph-node path-node angle-node @node.KindClass"
-                                                                         data-node-id="@node.Id"
-                                                                         style="left:@Px(node.X)px;top:@Px(node.Y)px;width:@Px(node.Width)px;height:@Px(node.Height)px">
-                                                                        @if (node.IsNote && node.Shape is null)
-                                                                        {
-                                                                            @* 纯说明步骤没有竖式图，正文直接展示说明文字。 *@
-                                                                            <div class="angle-note-body">@node.Title</div>
-                                                                        }
-                                                                        else
-                                                                        {
-                                                                            @if (node.KindTag.Length > 0)
-                                                                            {
-                                                                                <span class="path-node-kind">@node.KindTag</span>
-                                                                            }
-
-                                                                            <div class="path-node-head" title="@node.Title">@node.Title</div>
-
-                                                                            <div class="graph-node-body path-node-body">
-                                                                                @if (node.Shape is not null)
-                                                                                {
-                                                                                    <PathNodePreview Document="node.Shape!" />
-                                                                                }
-                                                                            </div>
-                                                                        }
-                                                                    </div>
-                                                                }
-                                                            </div>
-                                                        </div>
+                                                        <AngleWorkNodeChain Nodes="work.Nodes"
+                                                                            Edges="work.Edges"
+                                                                            Width="work.GraphWidth"
+                                                                            Height="work.GraphHeight" />
                                                     }
 
                                                     @if (!work.IsComplete)
@@ -551,6 +514,53 @@
                                                             }
                                                         </div>
                                                     }
+                                                }
+
+                                                @if (work.Half is not null)
+                                                {
+                                                    @*
+                                                        半边工序：n/2 列一起做的那一刀，单独成一行。
+                                                        主步骤链是目标角的单列视角，这里才是 k 列逐格核对用的步骤链；
+                                                        节点样式与主链完全一致（30px 单元格 1:1 竖式图）。
+                                                    *@
+                                                    <section class="angle-half" data-angle-half="@work.Column">
+                                                        <div class="angle-half-head">
+                                                            <h5>@(work.Half.Title)节点链</h5>
+                                                            <span class="angle-half-pair">配对列 @work.Half.PairColumnsText</span>
+                                                        </div>
+
+                                                        @if (work.Half.Nodes.Count > 0)
+                                                        {
+                                                            <AngleWorkNodeChain Nodes="work.Half.Nodes"
+                                                                                Edges="work.Half.Edges"
+                                                                                Width="work.Half.GraphWidth"
+                                                                                Height="work.Half.GraphHeight" />
+                                                        }
+
+                                                        @if (!work.Half.IsComplete)
+                                                        {
+                                                            @* 半边工序没验证完时同样如实标注，并给出 Note 与限制小字。 *@
+                                                            <div class="angle-work-warning angle-half-warning">
+                                                                <p class="angle-work-status">@work.Half.StatusText</p>
+
+                                                                @if (!string.IsNullOrWhiteSpace(work.Half.Note))
+                                                                {
+                                                                    <p class="angle-work-note">@work.Half.Note</p>
+                                                                }
+
+                                                                @if (work.Half.Limitations.Count > 0)
+                                                                {
+                                                                    <p class="angle-work-limitation-title">限制与前提</p>
+                                                                    <ul class="angle-work-limitations">
+                                                                        @foreach (string limitation in work.Half.Limitations)
+                                                                        {
+                                                                            <li>@limitation</li>
+                                                                        }
+                                                                    </ul>
+                                                                }
+                                                            </div>
+                                                        }
+                                                    </section>
                                                 }
 
                                                 @if (work.SubRecipe is not null)
@@ -805,12 +815,6 @@
             ? 240
             : Math.Min(560, Math.Max(220, Math.Ceiling(_pathGraph.Height)));
 
-    /// <summary>角工序节点链容器的可视高度，规则与制作路径节点图一致。</summary>
-    private static double AngleGraphViewportHeight(
-        AngleWorkColumn work) =>
-        // +2 补上容器 1px 上下边框（全局 box-sizing: border-box）。
-        Math.Min(560, Math.Max(160, Math.Ceiling(work.GraphHeight) + 2));
-
     /// <summary>把坐标格式化成不带千分位分隔符的像素值。</summary>
     private static string Px(double value) =>
         value.ToString("0.##", CultureInfo.InvariantCulture);
@@ -826,7 +830,10 @@
             _showPathAngles &&
             _analysis is not null &&
             _half is not null &&
-            AngleWorks.Any(work => work.Nodes.Count > 0);
+            // 半边工序的节点链也是图，同样要按真实矩形校正箭头。
+            AngleWorks.Any(work =>
+                work.Nodes.Count > 0 ||
+                (work.Half?.Nodes.Count ?? 0) > 0);
 
         if (!showExchange && !showAngles)
         {
@@ -1141,6 +1148,13 @@
                 "造塔子配方以文字步骤名列在卡片小字里，不导出零件预览（避免导出图过宽）。");
         }
 
+        if (works.Any(work => work.Half is not null))
+        {
+            section.Lines.Add(
+                "带「半边工序」标签的角要 n/2 列一起做：标题行写候选名与配对列，" +
+                "卡片下方单独一行是那几列逐格核对的步骤链（同样 30px 单元格 1:1）。");
+        }
+
         foreach (AngleWorkColumn work in works)
         {
             var column = new AnalysisExportAngleColumn
@@ -1149,7 +1163,10 @@
                 KindText = work.KindText,
                 ShowKindChip = work.ShowKindChip,
                 AlgorithmText = work.AlgorithmText ?? "",
-                ConstructionText = work.ConstructionText ?? "",
+                // 半边工序的构造由「半边工序」标签承载，与页面标题行保持一致。
+                ConstructionText = work.ShowConstructionChip
+                    ? work.ConstructionText ?? ""
+                    : "",
                 RankText = work.RankText ?? "",
                 IsSimple = work.IsSimple,
                 IsComplete = work.IsComplete,
@@ -1170,46 +1187,88 @@
 
             if (work.Nodes.Count > 0)
             {
-                var graph = new AnalysisExportGraph
-                {
-                    Width = work.GraphWidth,
-                    Height = work.GraphHeight
-                };
+                column.Graph = CreateExportGraph(
+                    work.Nodes,
+                    work.Edges,
+                    work.GraphWidth,
+                    work.GraphHeight);
+            }
 
-                foreach (AngleWorkNode node in work.Nodes)
+            /*
+             * 半边工序：标题、候选名、配对列与步骤节点链一起导出，
+             * 未验证完时再带上 Note 与限制小字，与页面卡片一一对应。
+             */
+            if (work.Half is not null)
+            {
+                column.HalfTitle = work.Half.Title;
+                column.HalfCandidateText = work.Half.CandidateText;
+                column.HalfColumnsText = work.Half.ColumnsText;
+                column.HalfPairColumnsText = work.Half.PairColumnsText;
+                column.HalfIsComplete = work.Half.IsComplete;
+                column.HalfStatusText = work.Half.StatusText ?? "";
+                column.HalfNote = work.Half.Note;
+                column.HalfLimitations = work.Half.Limitations.ToList();
+
+                if (work.Half.Nodes.Count > 0)
                 {
-                    graph.Nodes.Add(new AnalysisExportGraphNode
-                    {
-                        Id = node.Id,
-                        Title = node.Title,
-                        X = node.X,
-                        Y = node.Y,
-                        Width = node.Width,
-                        Height = node.Height,
-                        State = node.Shape is null
-                            ? null
-                            : ShapeCanvasState.Create(node.Shape),
-                        Kind = node.KindName,
-                        KindTag = node.KindTag
-                    });
+                    column.HalfGraph = CreateExportGraph(
+                        work.Half.Nodes,
+                        work.Half.Edges,
+                        work.Half.GraphWidth,
+                        work.Half.GraphHeight);
                 }
-
-                foreach (AngleWorkEdge edge in work.Edges)
-                {
-                    graph.Edges.Add(new AnalysisExportGraphEdge
-                    {
-                        FromId = edge.FromId,
-                        ToId = edge.ToId
-                    });
-                }
-
-                column.Graph = graph;
             }
 
             section.AngleColumns.Add(column);
         }
 
         return section;
+    }
+
+    /// <summary>
+    /// 把一条步骤节点链（主链或半边链）转成导出图。
+    /// 预览仍是 30px 单元格 1:1，导出图宽度由 JS 按节点链实际宽度撑开。
+    /// </summary>
+    private static AnalysisExportGraph CreateExportGraph(
+        IReadOnlyList<AngleWorkNode> nodes,
+        IReadOnlyList<AngleWorkEdge> edges,
+        double width,
+        double height)
+    {
+        var graph = new AnalysisExportGraph
+        {
+            Width = width,
+            Height = height
+        };
+
+        foreach (AngleWorkNode node in nodes)
+        {
+            graph.Nodes.Add(new AnalysisExportGraphNode
+            {
+                Id = node.Id,
+                Title = node.Title,
+                X = node.X,
+                Y = node.Y,
+                Width = node.Width,
+                Height = node.Height,
+                State = node.Shape is null
+                    ? null
+                    : ShapeCanvasState.Create(node.Shape),
+                Kind = node.KindName,
+                KindTag = node.KindTag
+            });
+        }
+
+        foreach (AngleWorkEdge edge in edges)
+        {
+            graph.Edges.Add(new AnalysisExportGraphEdge
+            {
+                FromId = edge.FromId,
+                ToId = edge.ToId
+            });
+        }
+
+        return graph;
     }
 
     private AnalysisExportSection BuildPropertiesSection()

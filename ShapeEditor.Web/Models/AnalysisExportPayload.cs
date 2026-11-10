@@ -111,6 +111,36 @@ public sealed class AnalysisExportAngleColumn
     /// </summary>
     public List<string> SubRecipeLines { get; set; } = new();
 
+    /// <summary>
+    /// 半边工序的标题（固定「半边工序」）。为空表示这一列没有半边工序，
+    /// 导出时不画半边区块。
+    /// </summary>
+    public string HalfTitle { get; set; } = "";
+
+    /// <summary>半边工序的候选名，例如「候选3·临时晶体+保险丝」；写进卡片标题行。</summary>
+    public string HalfCandidateText { get; set; } = "";
+
+    /// <summary>半边工序的配对列提示，例如「与列 2 一起做」；写进卡片标题行。</summary>
+    public string HalfColumnsText { get; set; } = "";
+
+    /// <summary>该半边覆盖的全部列，例如「列 1、列 2」；画在半边区块的小标题里。</summary>
+    public string HalfPairColumnsText { get; set; } = "";
+
+    /// <summary>半边工序是否逐格验证通过；false 时导出 StatusText、Note 与限制小字。</summary>
+    public bool HalfIsComplete { get; set; } = true;
+
+    /// <summary>半边未完全验证时的小字标题：「该半边工序尚未完全验证」。</summary>
+    public string HalfStatusText { get; set; } = "";
+
+    /// <summary>半边工序未完成的原因；已通过时为 null。</summary>
+    public string? HalfNote { get; set; }
+
+    /// <summary>半边工序的限制与前提，只在未完成时绘制。</summary>
+    public List<string> HalfLimitations { get; set; } = new();
+
+    /// <summary>半边步骤链（n/2 列一起做的步骤）；没有半边工序时为 null。</summary>
+    public AnalysisExportGraph? HalfGraph { get; set; }
+
     /// <summary>简单角只画一行说明，不画节点链。</summary>
     public bool IsSimple { get; set; }
 

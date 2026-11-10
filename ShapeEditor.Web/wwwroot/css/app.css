@@ -2648,6 +2648,74 @@ button {
     color: #c62828;
 }
 
+/* 半边工序：紫色系标签，与「碎晶角 / 简单角」并列 */
+.angle-kind.half {
+    background: #efe6fb;
+    color: #4527a0;
+}
+
+/*
+ * 半边工序的候选名与配对列：淡紫 / 淡蓝小标签，跟在「半边工序」标签后面，
+ * 让标题行一眼看出「用哪个候选、和哪几列一起做」。
+ */
+.angle-half-candidate,
+.angle-half-columns {
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 18px;
+}
+
+.angle-half-candidate {
+    background: #f3f0fc;
+    color: #5e35b1;
+}
+
+.angle-half-columns {
+    background: #eef1fc;
+    color: #3f51b5;
+}
+
+/*
+ * 半边工序区块：单独成行画在角卡片的主步骤链下方，
+ * 步骤节点与主链同款样式（30px 单元格 1:1 预览）。
+ */
+.angle-half {
+    margin-top: 10px;
+    padding: 8px 10px;
+    border: 1px dashed #b9a9ee;
+    border-radius: 10px;
+    background: #faf7ff;
+}
+
+.angle-half-head {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+    .angle-half-head h5 {
+        margin: 0;
+        font-size: 12px;
+        color: #4527a0;
+    }
+
+.angle-half-pair {
+    font-size: 11px;
+    color: #6b6b76;
+}
+
+.angle-half .angle-work-graph {
+    margin-top: 0;
+}
+
+.angle-half-warning {
+    margin-top: 8px;
+}
+
 .angle-work-simple {
     margin: 0;
     font-size: 13px;
@@ -2722,6 +2790,13 @@ button {
     background: #eef1fc;
 }
 
+/* 构造 C 的逐层堆叠步骤：与「堆」标签同一橙色，靠标签与「落」区分 */
+.angle-node.angle-kind-stack {
+    border-color: #b26a00;
+    border-width: 2px;
+    background: #fff8ee;
+}
+
 .angle-node.angle-kind-crystallize {
     border-color: #1565c0;
     border-width: 2px;
@@ -2758,6 +2833,10 @@ button {
 
 .angle-node.angle-kind-support .path-node-kind {
     background: #3f51b5;
+}
+
+.angle-node.angle-kind-stack .path-node-kind {
+    background: #b26a00;
 }
 
 .angle-node.angle-kind-crystallize .path-node-kind {

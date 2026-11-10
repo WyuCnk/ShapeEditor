@@ -2120,6 +2120,16 @@ window.shapeGrid.downloadAnalysis = async function (payload, fileName) {
                     (Number(angleGraph.width) || 0) +
                     ANALYSIS_ANGLE_CARD_PADDING * 2);
             }
+
+            // 半边工序的节点链单独成图，同样要把整张导出图撑到它的宽度。
+            const halfGraph = angleColumns[j] && angleColumns[j].halfGraph;
+
+            if (halfGraph) {
+                graphContentWidth = Math.max(
+                    graphContentWidth,
+                    (Number(halfGraph.width) || 0) +
+                    ANALYSIS_ANGLE_CARD_PADDING * 2);
+            }
         }
     }
 
@@ -2935,6 +2945,7 @@ function drawAnalysisNodeKindTag(ctx, rect, tag, kind) {
         "angle-cut": "#C62828",
         "angle-collapse": "#B26A00",
         "angle-pin": "#0E7C86",
+        "angle-stack": "#B26A00",
         "angle-support": "#3F51B5",
         "angle-crystallize": "#1565C0",
         "angle-target": "#2E7D32",
@@ -3093,6 +3104,12 @@ function drawAnalysisPathGraph(ctx, graph, left, top) {
             // 构造 C 的支柱交接步骤：紫蓝色边框，与其它步骤区分。
             fillColor = "#EEF1FC";
             strokeColor = "#3F51B5";
+            lineWidth = 2;
+        }
+        else if (node.kind === "angle-stack") {
+            // 构造 C 的逐层堆叠步骤：与「堆」标签同一橙色，靠标签与「落」区分。
+            fillColor = "#FFF8EE";
+            strokeColor = "#B26A00";
             lineWidth = 2;
         }
         else if (node.kind === "angle-crystallize") {
@@ -3827,6 +3844,18 @@ const ANALYSIS_ANGLE_SUBRECIPE_COLOR = "#3F51B5";
 
 const ANALYSIS_ANGLE_GRAPH_GAP = 10;
 
+/*
+ * 半边工序（n/2 列一起做的那一刀）：紫色系小标题 + 与主链同款的节点图。
+ * 标题行已经写了候选名与配对列，这里只画「半边工序 · 配对列 …」一行。
+ */
+const ANALYSIS_ANGLE_HALF_FONT = '700 13px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+
+const ANALYSIS_ANGLE_HALF_LINE_HEIGHT = 20;
+
+const ANALYSIS_ANGLE_HALF_GAP = 12;
+
+const ANALYSIS_ANGLE_HALF_COLOR = "#5E35B1";
+
 const ANALYSIS_ANGLE_TITLE_COLOR = "#4527A0";
 
 const ANALYSIS_ANGLE_SIMPLE_COLOR = "#2E9E5B";
@@ -3877,6 +3906,28 @@ function normalizeAnalysisAngleColumns(rawColumns) {
                 })
             : [];
 
+        /* 半边工序：标题为空表示这一列没有半边工序，整块跳过。 */
+        const halfGraph = raw.halfGraph &&
+            typeof raw.halfGraph === "object" &&
+            Array.isArray(raw.halfGraph.nodes) &&
+            raw.halfGraph.nodes.length > 0
+            ? raw.halfGraph
+            : null;
+
+        const halfLimitations = Array.isArray(raw.halfLimitations)
+            ? raw.halfLimitations
+                .map(function (value) {
+                    return value === null || value === undefined ? "" : String(value);
+                })
+                .filter(function (value) {
+                    return value !== "";
+                })
+            : [];
+
+        const halfTitle = raw.halfTitle === null || raw.halfTitle === undefined
+            ? ""
+            : String(raw.halfTitle);
+
         result.push({
             title: raw.title === null || raw.title === undefined ? "" : String(raw.title),
             kindText: raw.kindText === null || raw.kindText === undefined ? "" : String(raw.kindText),
@@ -3891,6 +3942,25 @@ function normalizeAnalysisAngleColumns(rawColumns) {
                 ? ""
                 : String(raw.rankText),
             subRecipeLines: subRecipeLines,
+            halfTitle: halfTitle,
+            halfCandidateText: raw.halfCandidateText === null || raw.halfCandidateText === undefined
+                ? ""
+                : String(raw.halfCandidateText),
+            halfColumnsText: raw.halfColumnsText === null || raw.halfColumnsText === undefined
+                ? ""
+                : String(raw.halfColumnsText),
+            halfPairColumnsText: raw.halfPairColumnsText === null || raw.halfPairColumnsText === undefined
+                ? ""
+                : String(raw.halfPairColumnsText),
+            halfIsComplete: raw.halfIsComplete === undefined ? true : !!raw.halfIsComplete,
+            halfStatusText: raw.halfStatusText === null || raw.halfStatusText === undefined
+                ? ""
+                : String(raw.halfStatusText),
+            halfNote: raw.halfNote === null || raw.halfNote === undefined
+                ? ""
+                : String(raw.halfNote),
+            halfLimitations: halfLimitations,
+            halfGraph: halfGraph,
             isSimple: !!raw.isSimple,
             isComplete: !!raw.isComplete,
             statusText: raw.statusText === null || raw.statusText === undefined
@@ -3933,6 +4003,22 @@ function layoutAnalysisAngleColumns(measure, rawColumns, maxWidth) {
 
         if (column.showKindChip) {
             headerParts.push(column.kindText);
+        }
+
+        /*
+         * 半边工序：与页面标题行一致，「半边工序」标签跟在分类后面，
+         * 再跟候选名与配对列提示（例如「候选3·临时晶体+保险丝」「与列 2 一起做」）。
+         */
+        if (column.halfTitle !== "") {
+            headerParts.push(column.halfTitle);
+
+            if (column.halfCandidateText !== "") {
+                headerParts.push(column.halfCandidateText);
+            }
+
+            if (column.halfColumnsText !== "") {
+                headerParts.push(column.halfColumnsText);
+            }
         }
 
         if (column.algorithmText !== "") {
@@ -3996,6 +4082,110 @@ function layoutAnalysisAngleColumns(measure, rawColumns, maxWidth) {
         let graphHeight = 0;
         let bodyHeight = 0;
 
+        /*
+         * 半边工序：一行小标题（「半边工序 · 配对列 列 1、列 2」）+ 步骤节点链
+         * + 未完成时的小字。候选名与配对列提示已经写进卡片标题行，这里不重复。
+         */
+        const halfTitleLines = [];
+        const halfStatusLines = [];
+        const halfNoteLines = [];
+        const halfLimitTitleLines = [];
+        const halfLimitLines = [];
+        let halfGraph = null;
+        let halfGraphHeight = 0;
+        let halfHeight = 0;
+
+        if (column.halfTitle !== "") {
+            const halfHeading = column.halfPairColumnsText === ""
+                ? column.halfTitle
+                : column.halfTitle + " · 配对列 " + column.halfPairColumnsText;
+
+            const halfWrapped = wrapAnalysisText(
+                measure,
+                halfHeading,
+                ANALYSIS_ANGLE_HALF_FONT,
+                innerWidth,
+                false);
+
+            for (let k = 0; k < halfWrapped.length; k++) {
+                halfTitleLines.push(halfWrapped[k]);
+            }
+
+            halfHeight =
+                ANALYSIS_ANGLE_HALF_GAP +
+                halfTitleLines.length * ANALYSIS_ANGLE_HALF_LINE_HEIGHT;
+
+            if (column.halfGraph) {
+                halfGraph = column.halfGraph;
+                halfGraphHeight = Number(halfGraph.height) || 0;
+                halfHeight += halfGraphHeight + ANALYSIS_ANGLE_GRAPH_GAP;
+            }
+
+            if (!column.halfIsComplete) {
+                const halfStatusText = column.halfStatusText || "该半边工序尚未完全验证";
+
+                const halfStatusWrapped = wrapAnalysisText(
+                    measure,
+                    halfStatusText,
+                    ANALYSIS_ANGLE_STATUS_FONT,
+                    innerWidth,
+                    false);
+
+                for (let k = 0; k < halfStatusWrapped.length; k++) {
+                    halfStatusLines.push(halfStatusWrapped[k]);
+                }
+
+                halfHeight += halfStatusLines.length * ANALYSIS_ANGLE_STATUS_LINE_HEIGHT;
+
+                if (column.halfNote !== "") {
+                    const halfNoteWrapped = wrapAnalysisText(
+                        measure,
+                        column.halfNote,
+                        ANALYSIS_ANGLE_NOTE_FONT,
+                        innerWidth,
+                        false);
+
+                    for (let k = 0; k < halfNoteWrapped.length; k++) {
+                        halfNoteLines.push(halfNoteWrapped[k]);
+                    }
+
+                    halfHeight += halfNoteLines.length * ANALYSIS_ANGLE_NOTE_LINE_HEIGHT;
+                }
+
+                if (column.halfLimitations.length > 0) {
+                    const halfLimitTitleWrapped = wrapAnalysisText(
+                        measure,
+                        "限制与前提",
+                        ANALYSIS_ANGLE_NOTE_FONT,
+                        innerWidth,
+                        false);
+
+                    for (let k = 0; k < halfLimitTitleWrapped.length; k++) {
+                        halfLimitTitleLines.push(halfLimitTitleWrapped[k]);
+                    }
+
+                    halfHeight +=
+                        halfLimitTitleLines.length * ANALYSIS_ANGLE_NOTE_LINE_HEIGHT;
+
+                    for (let k = 0; k < column.halfLimitations.length; k++) {
+                        const halfLimitWrapped = wrapAnalysisText(
+                            measure,
+                            "· " + column.halfLimitations[k],
+                            ANALYSIS_ANGLE_NOTE_FONT,
+                            innerWidth,
+                            false);
+
+                        for (let n = 0; n < halfLimitWrapped.length; n++) {
+                            halfLimitLines.push(halfLimitWrapped[n]);
+                        }
+
+                        halfHeight +=
+                            halfLimitWrapped.length * ANALYSIS_ANGLE_NOTE_LINE_HEIGHT;
+                    }
+                }
+            }
+        }
+
         if (column.isSimple) {
             const simpleText = column.simpleText || "最高晶体连续触地，无需工序";
 
@@ -4010,7 +4200,9 @@ function layoutAnalysisAngleColumns(measure, rawColumns, maxWidth) {
                 simpleLines.push(wrapped[k]);
             }
 
-            bodyHeight = simpleLines.length * ANALYSIS_ANGLE_BODY_LINE_HEIGHT;
+            bodyHeight =
+                simpleLines.length * ANALYSIS_ANGLE_BODY_LINE_HEIGHT +
+                halfHeight;
         }
         else {
             if (column.graph) {
@@ -4018,6 +4210,9 @@ function layoutAnalysisAngleColumns(measure, rawColumns, maxWidth) {
                 graphHeight = Number(graph.height) || 0;
                 bodyHeight += graphHeight + ANALYSIS_ANGLE_GRAPH_GAP;
             }
+
+            // 半边工序的步骤链画在主链之后、子配方步骤名之前，与页面卡片顺序一致。
+            bodyHeight += halfHeight;
 
             // 子配方步骤名跟在节点链之后，无论工序是否已验证都画。
             bodyHeight += subRecipeLines.length * ANALYSIS_ANGLE_SUBRECIPE_LINE_HEIGHT;
@@ -4102,6 +4297,14 @@ function layoutAnalysisAngleColumns(measure, rawColumns, maxWidth) {
             subRecipeLines: subRecipeLines,
             graph: graph,
             graphHeight: graphHeight,
+            halfTitleLines: halfTitleLines,
+            halfStatusLines: halfStatusLines,
+            halfNoteLines: halfNoteLines,
+            halfLimitTitleLines: halfLimitTitleLines,
+            halfLimitLines: halfLimitLines,
+            halfGraph: halfGraph,
+            halfGraphHeight: halfGraphHeight,
+            halfIsComplete: column.halfIsComplete,
             height: cardHeight
         });
 
@@ -4167,12 +4370,18 @@ function drawAnalysisAngleColumns(ctx, layout, left, top, cardWidth) {
                 ctx.fillText(card.simpleLines[j], innerLeft, cursorY);
                 cursorY += ANALYSIS_ANGLE_BODY_LINE_HEIGHT;
             }
+
+            // 简单角也可能带半边工序：说明之后照样画半边区块。
+            cursorY = drawAnalysisAngleHalf(ctx, card, innerLeft, cursorY);
         }
         else {
             if (card.graph) {
                 drawAnalysisPathGraph(ctx, card.graph, innerLeft, cursorY);
                 cursorY += card.graphHeight + ANALYSIS_ANGLE_GRAPH_GAP;
             }
+
+            // 半边工序的步骤链紧跟在主链下方，与页面卡片顺序一致。
+            cursorY = drawAnalysisAngleHalf(ctx, card, innerLeft, cursorY);
 
             if (card.subRecipeLines.length > 0) {
                 ctx.font = ANALYSIS_ANGLE_SUBRECIPE_FONT;
@@ -4236,6 +4445,82 @@ function drawAnalysisAngleColumns(ctx, layout, left, top, cardWidth) {
     }
 
     return top + layout.height;
+}
+
+/*
+ * 画角卡片里的「半边工序」区块：紫色小标题（含全部配对列）+ 步骤节点链
+ * + 未完成时的「该半边工序尚未完全验证」与 Note / 限制小字。
+ *
+ * 节点链复用 drawAnalysisPathGraph，与主链、交换工序同一套配色与 30px 预览。
+ * 返回画完后的纵坐标；这一列没有半边工序时原样返回。
+ */
+function drawAnalysisAngleHalf(ctx, card, left, top) {
+    if (!card ||
+        !Array.isArray(card.halfTitleLines) ||
+        card.halfTitleLines.length === 0) {
+        return top;
+    }
+
+    let cursorY = top + ANALYSIS_ANGLE_HALF_GAP;
+
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.font = ANALYSIS_ANGLE_HALF_FONT;
+    ctx.fillStyle = ANALYSIS_ANGLE_HALF_COLOR;
+
+    for (let j = 0; j < card.halfTitleLines.length; j++) {
+        ctx.fillText(card.halfTitleLines[j], left, cursorY);
+        cursorY += ANALYSIS_ANGLE_HALF_LINE_HEIGHT;
+    }
+
+    if (card.halfGraph) {
+        drawAnalysisPathGraph(ctx, card.halfGraph, left, cursorY);
+        cursorY += card.halfGraphHeight + ANALYSIS_ANGLE_GRAPH_GAP;
+    }
+
+    if (!card.halfIsComplete) {
+        if (card.halfStatusLines.length > 0) {
+            ctx.font = ANALYSIS_ANGLE_STATUS_FONT;
+            ctx.fillStyle = ANALYSIS_ANGLE_STATUS_COLOR;
+
+            for (let j = 0; j < card.halfStatusLines.length; j++) {
+                ctx.fillText(card.halfStatusLines[j], left, cursorY);
+                cursorY += ANALYSIS_ANGLE_STATUS_LINE_HEIGHT;
+            }
+        }
+
+        if (card.halfNoteLines.length > 0) {
+            ctx.font = ANALYSIS_ANGLE_NOTE_FONT;
+            ctx.fillStyle = ANALYSIS_ANGLE_NOTE_COLOR;
+
+            for (let j = 0; j < card.halfNoteLines.length; j++) {
+                ctx.fillText(card.halfNoteLines[j], left, cursorY);
+                cursorY += ANALYSIS_ANGLE_NOTE_LINE_HEIGHT;
+            }
+        }
+
+        if (card.halfLimitTitleLines.length > 0) {
+            ctx.font = '700 12px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+            ctx.fillStyle = ANALYSIS_ANGLE_NOTE_COLOR;
+
+            for (let j = 0; j < card.halfLimitTitleLines.length; j++) {
+                ctx.fillText(card.halfLimitTitleLines[j], left, cursorY);
+                cursorY += ANALYSIS_ANGLE_NOTE_LINE_HEIGHT;
+            }
+        }
+
+        if (card.halfLimitLines.length > 0) {
+            ctx.font = ANALYSIS_ANGLE_NOTE_FONT;
+            ctx.fillStyle = ANALYSIS_ANGLE_NOTE_COLOR;
+
+            for (let j = 0; j < card.halfLimitLines.length; j++) {
+                ctx.fillText(card.halfLimitLines[j], left, cursorY);
+                cursorY += ANALYSIS_ANGLE_NOTE_LINE_HEIGHT;
+            }
+        }
+    }
+
+    return cursorY;
 }
 
 /* 供 Blazor 回读节点的真实渲染尺寸，箭头锚点据此贴合边框 */

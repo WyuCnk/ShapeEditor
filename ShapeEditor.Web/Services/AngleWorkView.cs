@@ -56,6 +56,7 @@ public sealed class AngleWorkNode
         AngleWorkStepKind.Cut => "angle-kind-cut",
         AngleWorkStepKind.Collapse => "angle-kind-collapse",
         AngleWorkStepKind.Pin => "angle-kind-pin",
+        AngleWorkStepKind.Stack => "angle-kind-stack",
         AngleWorkStepKind.Support => "angle-kind-support",
         AngleWorkStepKind.Crystallize => "angle-kind-crystallize",
         AngleWorkStepKind.Target => "angle-kind-target",
@@ -69,6 +70,7 @@ public sealed class AngleWorkNode
         AngleWorkStepKind.Cut => "切",
         AngleWorkStepKind.Collapse => "落",
         AngleWorkStepKind.Pin => "顶",
+        AngleWorkStepKind.Stack => "堆",
         AngleWorkStepKind.Support => "撑",
         AngleWorkStepKind.Crystallize => "晶",
         AngleWorkStepKind.Target => "目标",
@@ -82,6 +84,7 @@ public sealed class AngleWorkNode
         AngleWorkStepKind.Cut => "angle-cut",
         AngleWorkStepKind.Collapse => "angle-collapse",
         AngleWorkStepKind.Pin => "angle-pin",
+        AngleWorkStepKind.Stack => "angle-stack",
         AngleWorkStepKind.Support => "angle-support",
         AngleWorkStepKind.Crystallize => "angle-crystallize",
         AngleWorkStepKind.Target => "angle-target",
@@ -95,6 +98,55 @@ public sealed record AngleWorkEdge(
     string ToId,
     string Path,
     string Arrow);
+
+/// <summary>
+/// 半边工序视图（Core 的 <see cref="HalfWorkOrder"/> 转成页面/导出用的字段）。
+///
+/// <para>
+/// 半边工序是「n/2 列一起做」的那一刀：<see cref="AngleWorkColumn.Nodes"/> 是目标角的
+/// 单列视角，<see cref="Nodes"/> 才是 k 列（n = 4 时两列）逐格核对用的步骤链，
+/// 所以它单独成一行、单独一套节点编号，画在角卡片内的主步骤链下方。
+/// </para>
+/// </summary>
+public sealed class AngleHalfWork
+{
+    /// <summary>区块标题，固定为「半边工序」。</summary>
+    public const string TitleText = "半边工序";
+
+    /// <summary>区块标题。</summary>
+    public string Title => TitleText;
+
+    /// <summary>候选名，例如「候选3·临时晶体+保险丝」；未知枚举值也有可读文案。</summary>
+    public string CandidateText { get; init; } = "";
+
+    /// <summary>配对列提示，例如「与列 2 一起做」（只列目标列之外的列）。</summary>
+    public string ColumnsText { get; init; } = "";
+
+    /// <summary>该半边覆盖的全部列，例如「列 1、列 2」（1 起，按环顺序）。</summary>
+    public string PairColumnsText { get; init; } = "";
+
+    /// <summary>半边工序是否逐格回放验证通过。</summary>
+    public bool IsComplete { get; init; }
+
+    /// <summary>未通过时的原因（Core 给出的「未覆盖：…」）；通过时为 null。</summary>
+    public string? Note { get; init; }
+
+    /// <summary>半边工序的限制与前提说明。</summary>
+    public IReadOnlyList<string> Limitations { get; init; } = Array.Empty<string>();
+
+    /// <summary>半边步骤链的节点（与主步骤链同款样式、30px 单元格 1:1 预览）。</summary>
+    public IReadOnlyList<AngleWorkNode> Nodes { get; init; } = Array.Empty<AngleWorkNode>();
+
+    /// <summary>半边步骤链的箭头。</summary>
+    public IReadOnlyList<AngleWorkEdge> Edges { get; init; } = Array.Empty<AngleWorkEdge>();
+
+    public double GraphWidth { get; init; }
+
+    public double GraphHeight { get; init; }
+
+    /// <summary>未完全验证时的小字标题；已通过为 null。</summary>
+    public string? StatusText => IsComplete ? null : "该半边工序尚未完全验证";
+}
 
 /// <summary>
 /// 一个角的工序卡片：分类、算法、构造、顶针次数、造塔子配方、
@@ -116,6 +168,12 @@ public sealed class AngleWorkColumn
 
     /// <summary>造塔子配方（交换链）；只有算法 6 等带子配方的列才有。</summary>
     public AngleSubRecipe? SubRecipe { get; init; }
+
+    /// <summary>
+    /// 半边工序；<see cref="AngleWorkOrder.Half"/> 为 null 时为 null，卡片不显示这一块。
+    /// 计算完全复用同一次 <see cref="AngleWorkOrderBuilder.Build"/>，没有额外开销。
+    /// </summary>
+    public AngleHalfWork? Half { get; init; }
 
     public bool IsComplete { get; init; }
 
@@ -179,6 +237,7 @@ public sealed class AngleWorkColumn
     /// <summary>
     /// 构造文案。未知枚举值回退成原始枚举名，绝不返回空字符串；
     /// Simple 档的枚举只记 A，但实际是「紧列 A + 尾部 C」，这里如实写全。
+    /// 半边工序的构造写成可读的「半边工序」，不泄露枚举名 Half。
     /// </summary>
     public string? ConstructionText =>
         Algorithm == AngleAlgorithm.SimpleTail
@@ -190,10 +249,18 @@ public sealed class AngleWorkColumn
                 AngleConstruction.G => "构造 G",
                 AngleConstruction.F => "构造 F",
                 AngleConstruction.H => "构造 H",
+                AngleConstruction.Half => AngleHalfWork.TitleText,
                 AngleConstruction.FillBreak => "填充 + 暴破",
                 AngleConstruction.None => null,
                 _ => Construction.ToString()
             };
+
+    /// <summary>
+    /// 构造芯片是否显示。半边工序的构造由紫色的「半边工序」标签承载，
+    /// 这里不重复渲染，避免标题行出现两个「半边工序」。
+    /// </summary>
+    public bool ShowConstructionChip =>
+        Half is null && !string.IsNullOrEmpty(ConstructionText);
 
     /// <summary>
     /// 顶针次数文案。简单角没有工序；没有分档的失败单（Algorithm 为 None）
@@ -320,6 +387,13 @@ public static class AngleWorkColumnBuilder
         // 子配方与节点链互不影响：简单角也一并带上（当前只有造塔档才有）。
         AngleSubRecipe? subRecipe = CreateSubRecipe(order);
 
+        /*
+         * 半边工序（docs/half-side-work-order.md）与主步骤链互相独立：
+         * 即便简单角不画主链，半边链也要在卡片里单独显示一行。
+         * 数据全部来自同一次 Build 的 order.Half，不增加任何计算。
+         */
+        AngleHalfWork? half = CreateHalf(order);
+
         // 简单角只显示一行说明，不生成节点预览。
         if (order.Kind == AngleBuildKind.Simple)
         {
@@ -331,17 +405,153 @@ public static class AngleWorkColumnBuilder
                 Algorithm = order.Algorithm,
                 Rank = order.Rank,
                 SubRecipe = subRecipe,
+                Half = half,
                 IsComplete = order.IsComplete,
                 Note = order.Note,
                 Limitations = order.Limitations
             };
         }
 
-        var nodes = new List<AngleWorkNode>(order.Steps.Count);
+        NodeChainLayout chain = BuildNodeChain(
+            order.Steps,
+            $"angle-{order.Column}");
+
+        return new AngleWorkColumn
+        {
+            Column = order.Column,
+            Kind = order.Kind,
+            Construction = order.Construction,
+            Algorithm = order.Algorithm,
+            Rank = order.Rank,
+            SubRecipe = subRecipe,
+            Half = half,
+            IsComplete = order.IsComplete,
+            Note = order.Note,
+            Limitations = order.Limitations,
+            Nodes = chain.Nodes,
+            Edges = chain.Edges,
+            GraphWidth = chain.Width,
+            GraphHeight = chain.Height
+        };
+    }
+
+    /// <summary>
+    /// 把 Core 的半边工序转成页面/导出用的视图；没有半边工序时返回 null。
+    ///
+    /// <para>
+    /// 半边步骤链与主链同款样式：每步标题 + 30px 单元格 1:1 竖式图，
+    /// 只是节点编号加 <c>-half</c> 后缀，避免与主链的 DOM id 冲突。
+    /// </para>
+    /// </summary>
+    private static AngleHalfWork? CreateHalf(
+        AngleWorkOrder order)
+    {
+        HalfWorkOrder? half = order.Half;
+
+        if (half is null)
+        {
+            return null;
+        }
+
+        NodeChainLayout chain = BuildNodeChain(
+            half.Steps,
+            $"angle-{order.Column}-half");
+
+        return new AngleHalfWork
+        {
+            CandidateText = DescribeCandidate(half.Candidate),
+            ColumnsText = DescribeHalfColumns(half.Target, partnersOnly: true),
+            PairColumnsText = DescribeHalfColumns(half.Target, partnersOnly: false),
+            IsComplete = half.IsComplete,
+            Note = half.Note,
+            Limitations = half.Limitations,
+            Nodes = chain.Nodes,
+            Edges = chain.Edges,
+            GraphWidth = chain.Width,
+            GraphHeight = chain.Height
+        };
+    }
+
+    /// <summary>
+    /// 候选名给 UI 的可读文案（论文顺序 1 → 2 → 3），未知枚举值也有话说，
+    /// 绝不给空字符串。
+    /// </summary>
+    private static string DescribeCandidate(
+        HalfCandidate candidate) =>
+        candidate switch
+        {
+            HalfCandidate.Algo8Self => "候选1·Q自身",
+            HalfCandidate.Algo8Uplift => "候选2·联合逆提升",
+            HalfCandidate.TempCrystalFuse => "候选3·临时晶体+保险丝",
+            _ => "半边候选"
+        };
+
+    /// <summary>
+    /// 配对列文案（列号 1 起）。
+    ///
+    /// <para>
+    /// <paramref name="partnersOnly"/> 为 true 时只列目标列之外的伙伴列，
+    /// 写成「与列 2 一起做」；为 false 时按环顺序列出整段半边「列 1、列 2」。
+    /// 目标列之外没有别的列时退回整段列号，避免出现「与 一起做」。
+    /// </para>
+    /// </summary>
+    private static string DescribeHalfColumns(
+        WorkOrderTarget target,
+        bool partnersOnly)
+    {
+        IReadOnlyList<int> columns = target.Columns ?? Array.Empty<int>();
+
+        int[] picked = partnersOnly
+            ? columns.Where(column => column != target.PrimaryColumn).ToArray()
+            : columns.ToArray();
+
+        if (picked.Length == 0)
+        {
+            picked = columns.ToArray();
+        }
+
+        string list = string.Join("、", picked.Select(column => $"列 {column + 1}"));
+
+        if (list.Length == 0)
+        {
+            // 防御：Columns 为空时也要给出可读文案，不留空字符串。
+            return partnersOnly ? "与相邻列一起做" : "";
+        }
+
+        return partnersOnly
+            ? $"与{list} 一起做"
+            : list;
+    }
+
+    /// <summary>一条步骤链（主链 / 半边链）的排版结果：节点、箭头与画布尺寸。</summary>
+    private sealed class NodeChainLayout
+    {
+        public IReadOnlyList<AngleWorkNode> Nodes { get; init; } =
+            Array.Empty<AngleWorkNode>();
+
+        public IReadOnlyList<AngleWorkEdge> Edges { get; init; } =
+            Array.Empty<AngleWorkEdge>();
+
+        public double Width { get; init; }
+
+        public double Height { get; init; }
+    }
+
+    /// <summary>
+    /// 把 Core 的步骤链排成一行节点：同一行从左到右，节点之间留出画箭头的间距。
+    ///
+    /// <paramref name="idPrefix"/> 用来拼节点 id（主链 <c>angle-3</c>、
+    /// 半边链 <c>angle-3-half</c>），同一张卡片里的两条链因此互不冲突。
+    /// </summary>
+    private static NodeChainLayout BuildNodeChain(
+        IReadOnlyList<AngleWorkStep> steps,
+        string idPrefix)
+    {
+        var nodes = new List<AngleWorkNode>(steps.Count);
         double x = GraphMargin;
         double graphHeight = 0;
 
-        foreach (AngleWorkStep step in order.Steps)
+        foreach (AngleWorkStep step in steps)
         {
             bool hasShape = step.Shape is not null;
 
@@ -357,7 +567,7 @@ public static class AngleWorkColumnBuilder
 
             nodes.Add(new AngleWorkNode
             {
-                Id = $"angle-{order.Column}-{nodes.Count}",
+                Id = $"{idPrefix}-{nodes.Count}",
                 Title = step.Title,
                 Kind = step.Kind,
                 Shape = step.Shape,
@@ -384,21 +594,12 @@ public static class AngleWorkColumnBuilder
             ? 0
             : x - ColumnGap + GraphMargin;
 
-        return new AngleWorkColumn
+        return new NodeChainLayout
         {
-            Column = order.Column,
-            Kind = order.Kind,
-            Construction = order.Construction,
-            Algorithm = order.Algorithm,
-            Rank = order.Rank,
-            SubRecipe = subRecipe,
-            IsComplete = order.IsComplete,
-            Note = order.Note,
-            Limitations = order.Limitations,
             Nodes = nodes,
             Edges = edges,
-            GraphWidth = graphWidth,
-            GraphHeight = nodes.Count == 0
+            Width = graphWidth,
+            Height = nodes.Count == 0
                 ? 0
                 : graphHeight + GraphMargin * 2
         };
