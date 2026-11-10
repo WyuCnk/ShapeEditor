@@ -698,7 +698,7 @@ Build → SelectAlgorithm = Algorithm4
 **数据结构**：
 
 ```
-HalfCandidate { Algo8Self, Algo8Uplift, TempCrystalFuse }   // 候选 1/2 留给 P2
+HalfCandidate { Algo8Self, Algo8Uplift, TempCrystalFuse }   // 候选 1/2 见 §7.12
 WorkOrderTarget(Columns, PrimaryColumn)                     // 半边 = 连续 n/2 列
 HalfWorkOrder(Target, Candidate, Steps, IsComplete, Note, Limitations, Rank)
 AngleWorkOrder.Half : HalfWorkOrder?                        // 默认 null
@@ -710,10 +710,9 @@ AngleWorkOrder.Half : HalfWorkOrder?                        // 默认 null
 五项 ✘                 → NotProducible
 n ≥ 6                  → 现有算法（不变）
 n = 4 且 S ✔           → 现有角工序（不变）
-n = 4 且 S ✘ 但五项 ✔  → TryBuildHalfOrder(候选 3)
-                         ├ 形态命中且两列回放通过 → 角工序 + Half（Construction = Half）
-                         ├ 形态命中但回放没过     → IsComplete = false + Note「未覆盖：」
-                         └ 形态不命中             → 原语义 NotProducible
+n = 4 且 S ✘ 但五项 ✔  → TryBuildHalfOrder(候选 1 → 2 → 3)
+                         ├ 任一候选两列回放通过 → 角工序 + Half（Construction = Half）
+                         └ 三个候选全失败       → NotProducible（不写成「未覆盖」）
 ```
 
 **候选 3 的前态（层号全部扫描得出，s = 最高晶体层）**：
@@ -744,7 +743,7 @@ n = 4 且 S ✘ 但五项 ✔  → TryBuildHalfOrder(候选 3)
 测试另覆盖 9 / 10 层的 `cT..T.cPT`、`cT...T.cPT`；形态外的 `cT.T.c`、`cT.T.cT`
 仍报「不可制作」且不带 `Half`。非 `HalfCandidate.TempCrystalFuse` 的列不伪造 `Half`。
 
-**验收数字（本仓库口径）**：
+**验收数字（P1 当时；P2 后见 §7.12）**：
 
 | 测试 | 结果 |
 |---|---|
@@ -769,6 +768,122 @@ n = 4 且 S ✘ 但五项 ✔  → TryBuildHalfOrder(候选 3)
 5. 同文件 §17.5 第 4 条（第 1451 行）与 §17.6 表「判定收尾」行（第 1465 行）→
    补一句「n = 4 非 S 且五项 ✔ 时先试半边工序；候选不命中才报 NotProducible」；
 6. 同文件 §13.3 第 961 行（算法 8「属整图层」）→ 可注明「其候选 3 已由角工序的半边实现」。
+
+### 7.12 半边工序候选 1 / 2（P2：论文算法 8，2026-11）
+
+**背景**：P1 只实现了候选 3（兜底）。P2 按论文优先补齐算法 8 的两条候选，
+顺序固定为 **候选 1 → 候选 2 → 候选 3**；每个候选都自己扫描判定、造前态、
+用真实 `ShapePhysics` 回放并逐格核对（类型 / 形状码 / 颜色），失败才试下一个。
+
+**实现位置**：`ShapeEditor.Core/Analysis/AngleWorkOrderHalfSide.cs`
+（候选派发 `TryBuildHalfOrder` + `TryBuildAlgo8Self` / `TryBuildAlgo8Uplift` /
+`TryBuildTempCrystalFuse`；半边装单 `BuildPaperHalfOrder` / `BuildHalfOrder`）。
+新公开入口 `AngleWorkOrderBuilder.BuildHalf(half, column, cap)`：不经过 S 闸门，
+直接对一段半边跑三个候选，返回第一个通过的 `HalfWorkOrder?`。
+
+**候选 1（`HalfCandidate.Algo8Self`，Q 自身）**：
+
+```
+① 第 column 列与 column+1 列都通过 n = 4 的 S 判据（PillarSCriterion：五项 ∧ (D∨F)）
+② Q 稳定：真实 Collapse(Q) 逐格等于 Q
+③ 通过 ⇒ 前态 = Q 本身；步骤链 PreState → Target（不切割、不下落）
+```
+
+两列都是 S ⇒ 各自能按单角工序（目标列 + 托柱）单独做出来再拼合，所以两列都算
+「带子配方」的目标列（`HalfWorkOrder.TargetColumnsHaveSubRecipe = true`，允许带洞），
+不是辅助列。**路由注意**：`Build` 只在目标列 S ✘ 时进入半边分支，而候选 1 要求
+目标列 S ✔，所以候选 1 只能由 `BuildHalf` 这个独立入口命中（定理 6 本身就直接
+讨论半边，不经过单角 S 闸门）；`Build` 里它必然失败、继续试候选 2/3。
+
+**候选 2（`HalfCandidate.Algo8Uplift`，联合逆提升）**：
+
+```
+① 两列各有晶体，且最高晶体不等高（没有晶体 / 等高 ⇒ 拒绝）
+② 取较低那枚，用 PhysicsGrid.BuildGroups 找最大粘连组 G，最低层 b
+③ 在 b 以下找最高非空层 a（任一列有材料就算）
+④ 要求 a 层两列都是普通格（水平 TT）、a < b−1、a+1…b−1 两列都空
+⑤ 把 a 层那对普通格整体提到 b−1，其他格子不动 ⇒ Q′
+⑥ Q′ 两列都属于 S，且真实 Collapse(Q′) 逐格等于 Q ⇒ 接受
+```
+
+层号全部扫描得出：最高晶体 = 沿列向下找第一个晶体；b = 粘连组最低层；
+a = b 以下最高非空层。没有按 `n × 层数` 的查表。前态 Q′ 是「两根 S 列拼合、
+即将整体下落」的状态，所以**候选 2 不要求 Q′ 稳定**——一次完整下落就是产物步骤
+（步骤链 `PreState(Q′) → Collapse → Target`），验收按「真实下落 == Q」判。
+
+**论文例 3 实测（12 层）**：
+
+```
+Q  = cT.T.cT.Tccc | TTTT.cccccPT
+Q′ = cT..TcT.Tccc | TTT.TcccccPT     ← 第 4 层 TT 提到第 5 层（b = 6，b−1 = 5）
+Collapse(Q′) = Q   ✔（两列逐格，含形状码 / 颜色）
+```
+
+**候选顺序与回退**：候选 1 → 候选 2 → 候选 3。三个候选都不适用或回放失败 ⇒
+`TryBuildHalfOrder` 返回 null（或候选 3 的未完成诊断），`Build` 统一转成
+`NotProducibleBySCriterion`：**全失败一律「不可制作」，不写成「未覆盖」**；
+候选 3 的最后一条诊断只放进 `Limitations`，不作为 Note 前缀。
+
+**实测案例表**（全量测试的实际命中）：
+
+| 目标半边 | 入口 | 命中候选 | 步骤链 | 耗时（预热后单次） |
+|---|---|---|---|---|
+| `cTcccccc` / `cTcccccc`（8 层） | `BuildHalf` | `Algo8Self` | PreState(Q) → Target(Q) | 0.02–0.05 ms |
+| `cT.T.cT.Tccc` / `TTTT.cccccPT`（12 层，论文例 3） | `Build` | `Algo8Uplift` | PreState(Q′) → Collapse → Target | 0.03–0.10 ms |
+| `cT.T.cPT`（8 层） | `Build` | `TempCrystalFuse`（未回归） | PreState → Cut → Target | 0.07–0.29 ms |
+| `cT..T.cPT` / `TcT.T.cPT` / `ccT.T.cPT` | `Build` | `TempCrystalFuse` | PreState → Cut → Target | 0.1–0.3 ms 量级 |
+
+**验收数字（P2 后，本仓库口径）**：
+
+| 测试 | 结果 |
+|---|---|
+| 全量测试 | **151/151** 通过（其中 2 项 XFAIL：claw / 二择，保持不变） |
+| `AUDIT`（≤6 层 S） | `total=5440 legal=2126 s=2125 success=2125 legalNonS=1 failures=0 falsePositives=0`（未退化） |
+| `TIGHT`（§17.7） | `totalS=2125 success=2125 steps=446 tight=382 onlyTarget=64 onlyAux=0 both=0`（未退化） |
+| `HALFAUDIT`（7–9 层非 S + 两条论文半边） | `legalNonS=229 halfTargets=2 halfComplete=6 notProducible=225 uncovered=0 problems=0`（P1 为 `halfComplete=4`） |
+
+`HALFAUDIT` 现在按候选分别核对：候选 1 检查 Q 稳定 / 一次下落恒等 / 步骤链
+`PreState → Target`；候选 2 检查前态确实由「提升一对普通格」得到、真实 `Collapse`
+等于 Q、步骤链含 `Collapse`；候选 3 保持真实 `Cut` 回放。三者都核对两列逐格等于
+半边目标、`Rank = 0`、外层 `HasIllegalPreState` 为 false。
+
+**七条验收的适用口径**：
+
+1. 前态每列五项 ✔：候选 1/2 的 S 蕴含五项；候选 3 原样；
+2. 前态目标列 ≠ 目标：候选 2/3 适用；候选 1 的前态就是 Q（不切割、不循环，
+   两列都由 S 单角工序得到），按定理 6 的「Q 自身」语义豁免；
+3. 稳定性：候选 1 要求 Q 稳定、候选 3 要求前态稳定；候选 2 的前态是「下落前」，
+   由真实 `Collapse` 回放负责（§2.7 的定义即如此）；
+4. 真实物理回放：候选 1/2 用 `Collapse`，候选 3 用 `Cut`；
+5. 末步逐格等于目标；
+6. 失败分级：三个候选全失败统一 `NotProducible`（P2 起不再把候选 3 的
+   「形态命中但回放失败」写成未覆盖；诊断移入 `Limitations`）；
+7. 前态可造：候选 1/2 两列都是带子配方的 S 列（允许带洞），没有辅助列；
+   候选 3 的辅助列仍一律紧列。
+
+**文档待更新**（`docs/` 由开发者本人维护，本次未动；行号按本次阅读时的版本）：
+
+1. `docs/half-side-work-order.md` §3 第 104–114 行：原文「对这一格逐条检查 ⇒ 两个候选
+   都拒绝」是 **P1 的事实**；P2 已实现候选 1/2，建议补一句「候选 1 由 `BuildHalf`
+   直接触发（`Build` 的非 S 分支命中不了），候选 2 已用论文例 3 实测」；
+2. 同文件 §3 第 115–116 行「算法 8 相对定理 6 不完备」保持不变，但补上
+   「P2 已按论文条文实现两条候选，不完备性仍由候选 3 兜底」；
+3. 同文件 §4.2 第 132–144 行：三个候选的状态从「候选 1/2 待做」改为「全部已实现」，
+   并注明候选 1 需要独立半边入口；
+4. 同文件 §6 第 177–183 行落地清单第 3 条 → 改为「候选 1/2/3 全部实现并有
+   `BuildHalf` 入口」；第 5 条（与交换链对接）仍未做；
+5. 同文件 §7 第 189–194 行结论 → 改为「算法 8 的两条候选已落地（候选 2 用论文例 3
+   实测），候选 3 继续覆盖 `cT.T.cPT`」；
+6. `docs/angle-work-order-algorithm.md` §6 第 614–642 行（七条验收）：第 2、3 条
+   需补「半边候选 1 的前态=Q（Q 自身）、候选 2 的前态=下落前的 Q′」这两个例外；
+   第 6 条需补「半边候选全失败统一 NotProducible」；
+7. 同文件 §7 第 645–661 行工序单结构：`HalfWorkOrder` 新增
+   `TargetColumnsHaveSubRecipe`（候选 1/2 两列都是带子配方的 S 列）；
+8. 同文件 §13.3 第 961 行（算法 8「属整图层」）→ 改为「算法 8 的候选 1/2 与
+   本仓库新增的候选 3 都已在半边工序中实现」；
+9. `docs/production-path-spec.md` §2.7 第 224–245 行：条文与实现一致；可补一句
+   「候选 1 的判定不经过 `Build` 的 S 闸门，需直接调用半边入口」。
+
 
 
 

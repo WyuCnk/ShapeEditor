@@ -201,9 +201,12 @@ public sealed record AngleWorkOrder(
     /// <see cref="HalfWorkOrder.Steps"/> 才是两列的完整核对（两列逐格等于目标半边）。
     /// </para>
     /// <para>
-    /// 候选 3（<see cref="HalfCandidate.TempCrystalFuse"/>）已实现；
-    /// 候选 1 / 2（算法 8）留给 P2。回放没通过时 <see cref="IsComplete"/> 仍为 false，
-    /// <see cref="Note"/> 以「未覆盖：」开头。
+    /// 候选 1（<see cref="HalfCandidate.Algo8Self"/>）、候选 2
+    /// （<see cref="HalfCandidate.Algo8Uplift"/>）、候选 3
+    /// （<see cref="HalfCandidate.TempCrystalFuse"/>）按论文顺序尝试；候选 1 / 2 的
+    /// 两列都是带子配方的 S 列（<see cref="HalfWorkOrder.TargetColumnsHaveSubRecipe"/>），
+    /// 候选 3 的环伙伴 / 保险丝仍是要求紧列的辅助列。回放没通过时
+    /// <see cref="IsComplete"/> 仍为 false，<see cref="Note"/> 以「未覆盖：」开头。
     /// </para>
     /// </summary>
     public HalfWorkOrder? Half { get; init; }
@@ -247,6 +250,23 @@ public sealed record AngleWorkOrder(
         bool targetColumnHasSubRecipe =
             TargetColumnHasSubRecipe || SubRecipe is not null;
 
+        /*
+         * 半边候选 1 / 2 的前态是「两根 S 列」：两列都能按单角工序单独做出来，
+         * 所以两列都算「带子配方」，允许带洞（docs §6 第 7 条）。
+         * 候选 3 的环伙伴 / 保险丝是真正的辅助列，不在这个豁免里。
+         */
+        var subRecipeColumns = new List<int>();
+
+        if (targetColumnHasSubRecipe)
+        {
+            subRecipeColumns.Add(Column);
+        }
+
+        if (Half is { TargetColumnsHaveSubRecipe: true })
+        {
+            subRecipeColumns.AddRange(Half.Target.Columns);
+        }
+
         foreach (AngleWorkStep step in Steps)
         {
             if (step.Kind != AngleWorkStepKind.PreState ||
@@ -264,12 +284,11 @@ public sealed record AngleWorkOrder(
 
             /*
              * 验收条件七（docs §6 第 7 条 / §17.7）：
-             * 辅助列有洞 ⇒ 拒绝；目标列有洞但没有子配方 ⇒ 拒绝。
+             * 辅助列有洞 ⇒ 拒绝；带子配方的目标列（含半边的两根 S 列）允许有洞。
              */
             if (AngleWorkOrderBuilder.HasIllegalColumnHoles(
                     step.Shape,
-                    Column,
-                    targetColumnHasSubRecipe,
+                    subRecipeColumns,
                     out column))
             {
                 preStateIndex = index;
@@ -386,6 +405,32 @@ public static partial class AngleWorkOrderBuilder
         bool targetColumnHasSubRecipe,
         out int badColumn)
     {
+        return HasIllegalColumnHoles(
+            preState,
+            targetColumnHasSubRecipe
+                ? new[] { targetColumn }
+                : Array.Empty<int>(),
+            out badColumn);
+    }
+
+    /// <summary>
+    /// 验收条件七的通用形式：<paramref name="columnsWithSubRecipe"/> 里的列
+    /// 视为「带子配方的目标列」（允许带洞），其余非空列一律要求紧列。
+    ///
+    /// <para>
+    /// 半边候选 1 / 2 的两根列都是 S 列（各自有单角子配方），所以两列都在
+    /// 豁免集合里；候选 3 只豁免 Q1，环伙伴 / 保险丝仍按辅助列要求紧列。
+    /// </para>
+    /// </summary>
+    /// <param name="preState">候选前态。</param>
+    /// <param name="columnsWithSubRecipe">允许带洞的列（带子配方的目标列）。</param>
+    /// <param name="badColumn">首个违反第 7 条的象限；通过时为 -1。</param>
+    /// <returns>违反验收条件七时返回 true。</returns>
+    public static bool HasIllegalColumnHoles(
+        ShapeDocument preState,
+        IReadOnlyCollection<int> columnsWithSubRecipe,
+        out int badColumn)
+    {
         for (int part = 0; part < preState.PartCount; part++)
         {
             // 完全为空、或材料连续接地的列都合法。
@@ -394,11 +439,22 @@ public static partial class AngleWorkOrderBuilder
                 continue;
             }
 
+            bool hasSubRecipe = false;
+
+            foreach (int candidate in columnsWithSubRecipe)
+            {
+                if (candidate == part)
+                {
+                    hasSubRecipe = true;
+                    break;
+                }
+            }
+
             /*
-             * 目标列允许有洞——前提是列本身附带子配方；
+             * 非紧列只有在「带子配方的目标列」集合里才允许；
              * 其余任何非空列都是辅助列，论文要求一律紧列。
              */
-            if (part != targetColumn || !targetColumnHasSubRecipe)
+            if (!hasSubRecipe)
             {
                 badColumn = part;
                 return true;
@@ -563,7 +619,21 @@ public static partial class AngleWorkOrderBuilder
 
             if (halfOrder is not null)
             {
-                return halfOrder;
+                if (halfOrder.IsComplete)
+                {
+                    return halfOrder;
+                }
+
+                /*
+                 * 三个候选（1 → 2 → 3）全部没通过：按本条要求统一报「不可制作」，
+                 * 不再把「候选形态命中但回放失败」写成「未覆盖」。
+                 * 候选 3 的最后一条诊断只保留在 Limitations 里。
+                 */
+                return NotProducibleBySCriterion(
+                    target,
+                    column,
+                    kind,
+                    halfOrder.Note);
             }
 
             return NotProducibleBySCriterion(target, column, kind);
@@ -1262,13 +1332,30 @@ public static partial class AngleWorkOrderBuilder
     private static AngleWorkOrder NotProducibleBySCriterion(
         ShapeDocument target,
         int column,
-        AngleBuildKind kind)
+        AngleBuildKind kind,
+        string? halfFailure = null)
     {
         string columnText = ShapeSignature.ColumnText(target, column);
 
         string reason =
             $"n = 4 的 S 判据不成立（D 与 F 都不成立）：列 {columnText} 虽然通过五项条件，" +
             "但论文定理 3 判它不可制作。";
+
+        var limitations = new List<string>
+        {
+            "S 判据（n = 4）：五项条件 ∧ (D∨F)，见论文定理 3。",
+            "这不是「未覆盖」：D 与 F 都不成立时，任何算法都做不出这个角。"
+        };
+
+        if (halfFailure is not null)
+        {
+            limitations.Add(
+                "半边候选（1 → 2 → 3）全部没通过；最后一条诊断：" +
+                halfFailure.Replace(
+                    UncoveredPrefix,
+                    string.Empty,
+                    StringComparison.Ordinal));
+        }
 
         return new AngleWorkOrder(
             column,
@@ -1286,11 +1373,7 @@ public static partial class AngleWorkOrderBuilder
             Construction = AngleConstruction.None,
             Algorithm = AngleAlgorithm.None,
             Rank = 0,
-            Limitations = new List<string>
-            {
-                "S 判据（n = 4）：五项条件 ∧ (D∨F)，见论文定理 3。",
-                "这不是「未覆盖」：D 与 F 都不成立时，任何算法都做不出这个角。"
-            }
+            Limitations = limitations
         };
     }
 

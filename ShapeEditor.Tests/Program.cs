@@ -178,6 +178,8 @@ internal static class Program
             ("角工序:半边工序候选 3 同族变体", AngleWorkOrderTests.HalfSideTempCrystalFuseCoversVariants),
             ("角工序:半边工序不误报形态外", AngleWorkOrderTests.HalfSideDoesNotClaimOutOfScopeCorners),
             ("角工序:半边工序切割轴旋转", AngleWorkOrderTests.HalfSideHandlesRotation),
+            ("角工序:半边候选 1（Q 自身）", AngleWorkOrderTests.HalfSideAlgo8SelfBuildsStableHalf),
+            ("角工序:半边候选 2（联合逆提升）", AngleWorkOrderTests.HalfSideAlgo8UpliftBuildsPaperExample),
             ("角工序:n=4 ≤6 层穷举审计", AngleAuditTests.ExhaustiveFourQuadrantAudit),
             ("角工序:前态紧列审计（§17.7）", AngleAuditTests.PreStateTightnessAudit),
             ("角工序:半边工序 7–9 层审计", AngleAuditTests.HalfSideAudit),

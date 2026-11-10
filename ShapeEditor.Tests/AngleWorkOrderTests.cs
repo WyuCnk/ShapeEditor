@@ -3409,7 +3409,17 @@ internal static class AngleWorkOrderTests
             PillarSCriterion.IsPillarColumn(target, 0),
             "cT.T.cPT 不属于 n = 4 的 S（D 与 F 都不成立）");
 
+        // 预热后再计时：候选 3 走 Build 的非 S 分支，首调用含 JIT。
+        _ = AngleWorkOrderBuilder.Build(target, 0, cap);
+
+        var watch = Stopwatch.StartNew();
+
         AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+
+        watch.Stop();
+
+        Console.WriteLine(
+            $"  候选 3（TempCrystalFuse）单次 {watch.Elapsed.TotalMilliseconds:F2} ms");
 
         Assert.True(order.IsComplete, order.Note ?? "cT.T.cPT 的半边工序应验证通过");
         Assert.True(order.Note is null, order.Note ?? "通过时不应有说明");
@@ -3699,6 +3709,224 @@ internal static class AngleWorkOrderTests
         Assert.True(
             ShapeOps.Same(replayed, half.Steps[^1].Shape),
             "旋转后两列仍应逐格等于半边目标");
+    }
+
+    #endregion
+
+    #region 半边工序（候选 1 / 2：论文算法 8）
+
+    /// <summary>
+    /// 候选 1（算法 8 第一候选：Q 自身）。
+    ///
+    /// <para>
+    /// 两列都取 <c>cTcccccc</c>：都通过 n = 4 的 S 判据（五项 ∧ (D∨F)），
+    /// 且 Q 稳定（一次下落后逐格仍是 Q）。条件全满足 ⇒ 前态就是 Q 本身，
+    /// 步骤链只有 <c>PreState → Target</c>，不切割、不下落。
+    /// </para>
+    /// <para>
+    /// 注意路由：目标列本身是 S 时 <see cref="AngleWorkOrderBuilder.Build"/> 走单角工序，
+    /// 不会进入半边分支；候选 1 由独立入口
+    /// <see cref="AngleWorkOrderBuilder.BuildHalf"/> 触发（定理 6 直接讨论半边）。
+    /// </para>
+    /// </summary>
+    public static void HalfSideAlgo8SelfBuildsStableHalf()
+    {
+        const int cap = 8;
+        const string text = "cTcccccc";
+
+        ShapeDocument target = FromColumns(
+            4,
+            cap,
+            (0, text),
+            (1, text));
+
+        Assert.True(
+            PillarSCriterion.IsPillarColumn(text),
+            text + " 应属于 n = 4 的 S");
+
+        ShapeDocument q = ShapeOps.Project(target, 0, 2);
+
+        Assert.True(ShapeOps.IsStable(q), "候选 1 要求 Q 稳定");
+
+        // 预热后再计时：BuildHalf 不在 AUDIT 的热路径里，首调用含 JIT。
+        _ = AngleWorkOrderBuilder.BuildHalf(target, 0, cap);
+
+        var watch = Stopwatch.StartNew();
+
+        HalfWorkOrder? half = AngleWorkOrderBuilder.BuildHalf(target, 0, cap);
+
+        watch.Stop();
+
+        Console.WriteLine(
+            $"  候选 1（Algo8Self）单次 {watch.Elapsed.TotalMilliseconds:F2} ms");
+
+        Assert.True(half is not null, "两列都在 S 且 Q 稳定的半边应由候选 1 命中");
+        Assert.True(half!.IsComplete);
+        Assert.Equal(HalfCandidate.Algo8Self, half.Candidate);
+        Assert.Equal(0, half.Rank);
+        Assert.Equal(0, half.Target.PrimaryColumn);
+        Assert.Equal("0,1", string.Join(",", half.Target.Columns));
+        Assert.True(
+            half.TargetColumnsHaveSubRecipe,
+            "候选 1 的两列都是带子配方的 S 列");
+
+        Assert.Equal(2, half.Steps.Count);
+        Assert.Equal(AngleWorkStepKind.PreState, half.Steps[0].Kind);
+        Assert.Equal(AngleWorkStepKind.Target, half.Steps[^1].Kind);
+
+        ShapeDocument preState = half.Steps[0].Shape
+            ?? throw new InvalidOperationException("候选 1 必须给出前态");
+
+        // 前态 = Q 本身；两列逐格等于目标半边（类型 / 形状码 / 颜色）。
+        Assert.True(ShapeOps.Same(preState, q), "候选 1 的前态应就是 Q 本身");
+        Assert.True(
+            ShapeOps.Same(half.Steps[^1].Shape, q),
+            "候选 1 的两列应逐格等于目标半边");
+        Assert.Equal(text, ShapeSignature.ColumnText(preState, 0));
+        Assert.Equal(text, ShapeSignature.ColumnText(preState, 1));
+
+        // 真实物理回放：一次下落仍是 Q（候选 1 的条件 2）。
+        Assert.True(
+            ShapeOps.Same(
+                ShapePhysics.Collapse(preState).Document,
+                preState),
+            "Q 一次下落后应仍逐格等于 Q");
+
+        // 走 Build 时目标列是 S ⇒ 单角算法，不是半边候选（防止路由回归）。
+        AngleWorkOrder single = AngleWorkOrderBuilder.Build(target, 0, cap);
+
+        Assert.True(single.IsComplete, single.Note ?? "S 列应能单角制作");
+        Assert.NotEqual(AngleConstruction.Half, single.Construction);
+        Assert.True(single.Half is null, "S 列不应被误路由到半边工序");
+    }
+
+    /// <summary>
+    /// 候选 2（算法 8 第二候选：联合逆提升），用规格 §6.4 的实例：
+    /// 左列 <c>cT.T.cT.Tccc</c> 不在 S、右列 <c>TTTT.cccccPT</c> 在 S。
+    /// 两列最高晶体不等高（左第 12 层、右第 10 层）；取右列第 10 层晶体的最大粘连组，
+    /// 最低层 b = 第 6 层；b 以下最高非空层 a = 第 4 层（两列都是普通格），
+    /// 把这对 <c>TT</c> 从第 4 层提到第 5 层（b−1）⇒ 前态 Q′。
+    /// Q′ 两列都在 S，真实一次下落恰好得到 Q。
+    /// </summary>
+    public static void HalfSideAlgo8UpliftBuildsPaperExample()
+    {
+        const int cap = 12;
+        const string leftQ = "cT.T.cT.Tccc";
+        const string rightQ = "TTTT.cccccPT";
+        const string leftPre = "cT..TcT.Tccc";
+        const string rightPre = "TTT.TcccccPT";
+
+        ShapeDocument target = FromColumns(
+            4,
+            cap,
+            (0, leftQ),
+            (1, rightQ));
+
+        Assert.False(
+            PillarSCriterion.IsPillarColumn(leftQ),
+            "Q 的左列不在 S（候选 1 必须失败）");
+        Assert.True(
+            PillarSCriterion.IsPillarColumn(rightQ),
+            "Q 的右列应在 S");
+        Assert.True(PillarSCriterion.IsPillarColumn(leftPre), "Q′ 左列应在 S");
+        Assert.True(PillarSCriterion.IsPillarColumn(rightPre), "Q′ 右列应在 S");
+
+        // 预热后再计时：候选 2 走 Build 的非 S 分支，首调用含 JIT。
+        _ = AngleWorkOrderBuilder.Build(target, 0, cap);
+
+        var watch = Stopwatch.StartNew();
+
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+
+        watch.Stop();
+
+        Console.WriteLine(
+            $"  候选 2（Algo8Uplift）单次 {watch.Elapsed.TotalMilliseconds:F2} ms");
+
+        Assert.True(order.IsComplete, order.Note ?? "论文例 3 的半边应验证通过");
+        Assert.True(order.Note is null);
+        Assert.Equal(AngleConstruction.Half, order.Construction);
+        Assert.Equal(0, order.Rotation);
+        Assert.Equal(0, order.Rank);
+        Assert.Equal(0, order.AuxiliaryColumns.Count);
+        Assert.False(
+            order.HasIllegalPreState(out _, out _),
+            "候选 2 的前态不应违反五项 / 第 7 条闸门");
+
+        HalfWorkOrder half = order.Half
+            ?? throw new InvalidOperationException("候选 2 必须带 Half 字段");
+
+        Assert.True(half.IsComplete);
+        Assert.True(half.Note is null);
+        Assert.Equal(HalfCandidate.Algo8Uplift, half.Candidate);
+        Assert.Equal(0, half.Rank);
+        Assert.Equal(0, half.Target.PrimaryColumn);
+        Assert.Equal("0,1", string.Join(",", half.Target.Columns));
+        Assert.True(
+            half.TargetColumnsHaveSubRecipe,
+            "候选 2 的两列都是带子配方的 S 列");
+
+        Assert.Equal(3, half.Steps.Count);
+        Assert.Equal(AngleWorkStepKind.PreState, half.Steps[0].Kind);
+        Assert.Equal(AngleWorkStepKind.Collapse, half.Steps[1].Kind);
+        Assert.Equal(AngleWorkStepKind.Target, half.Steps[^1].Kind);
+
+        ShapeDocument preState = half.Steps[0].Shape
+            ?? throw new InvalidOperationException("候选 2 必须给出前态 Q′");
+
+        Assert.Equal(leftPre, ShapeSignature.ColumnText(preState, 0));
+        Assert.Equal(rightPre, ShapeSignature.ColumnText(preState, 1));
+
+        // Q′ 由「提升一对 TT」得到：第 4 层的 TT → 第 5 层（1 起；0 起 3 → 4）。
+        Assert.Equal(CellType.Empty, preState[3, 0].Type);
+        Assert.Equal(CellType.Empty, preState[3, 1].Type);
+        Assert.Equal(CellType.Shape, preState[4, 0].Type);
+        Assert.Equal(CellType.Shape, preState[4, 1].Type);
+
+        ShapeDocument q = ShapeOps.Project(target, 0, 2);
+
+        Assert.Equal(CellType.Shape, q[3, 0].Type);
+        Assert.Equal(CellType.Shape, q[3, 1].Type);
+        Assert.Equal(CellType.Empty, q[4, 0].Type);
+        Assert.Equal(CellType.Empty, q[4, 1].Type);
+
+        // 除这一对普通格外，Q′ 与 Q 逐格相同。
+        for (int layer = 0; layer < cap; layer++)
+        {
+            if (layer is 3 or 4)
+            {
+                continue;
+            }
+
+            Assert.True(
+                ShapeOps.SameCell(preState[layer, 0], q[layer, 0]) &&
+                ShapeOps.SameCell(preState[layer, 1], q[layer, 1]),
+                $"第 {layer + 1} 层不应被逆提升改动");
+        }
+
+        // 真实一次下落：Q′ → Q（两列逐格，含形状码 / 颜色）。
+        ShapeDocument? collapsed = ShapePhysics.Collapse(preState).Document;
+
+        Assert.True(ShapeOps.Same(collapsed, q), "Q′ 一次下落应恰好得到 Q");
+        Assert.True(
+            ShapeOps.Same(half.Steps[1].Shape, collapsed),
+            "Collapse 步必须是真实下落结果");
+        Assert.True(
+            ShapeOps.Same(half.Steps[^1].Shape, q),
+            "候选 2 的两列应逐格等于目标半边");
+
+        // 外层步骤链：PreState → Collapse → Target（无切割）。
+        AssertStepKinds(
+            order,
+            AngleWorkStepKind.PreState,
+            AngleWorkStepKind.Collapse,
+            AngleWorkStepKind.Target);
+
+        Assert.True(
+            ShapeOps.Same(
+                Step(order, AngleWorkStepKind.Target).Shape,
+                target),
+            "末步应逐格等于目标角");
     }
 
     #endregion
