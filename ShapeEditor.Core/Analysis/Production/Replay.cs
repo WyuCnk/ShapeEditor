@@ -107,6 +107,26 @@ public static class Replay
                 break;
             }
 
+            case RecipeKind.HalfAssembly:
+            {
+                if (recipe.HalfAssembly is null)
+                {
+                    errors.Add("半边装配节点缺少明细。");
+                    break;
+                }
+
+                /*
+                 * k 列半边装配没有交换链叶子：整条路径由
+                 * HalfAssembly.Verify 用真实 Cut / Exchange / Collapse 重算。
+                 */
+                HalfAssembly.Verify(
+                    recipe.HalfAssembly,
+                    recipe.Shape,
+                    errors);
+
+                break;
+            }
+
             default:
                 errors.Add("未知的工序类型。");
                 break;
@@ -186,6 +206,10 @@ public static class Replay
                 steps.Add(new RecipeStep(
                     "堆叠",
                     recipe.Shape));
+                break;
+
+            case RecipeKind.HalfAssembly:
+                steps.AddRange(recipe.Steps);
                 break;
         }
     }

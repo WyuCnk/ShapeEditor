@@ -3931,6 +3931,233 @@ internal static class AngleWorkOrderTests
 
     #endregion
 
+    #region 半边工序（k = n/2 列推广，P3）
+
+    /// <summary>
+    /// k 列半边：n = 6 时半边是连续 3 列、n = 8 时是连续 4 列（<b>不再固定 2 列</b>）。
+    ///
+    /// <para>
+    /// 候选 1（Q 自身）在 n ≥ 6 时可命中：该 n 下 S ⟺ 五项条件，
+    /// 三段 / 四段连续列（<c>cT.T.cPT</c> + <c>TTTT.ccc</c> + 空列）都是合法列，
+    /// 且半边靠 c-P-T ↔ c-c-c 的循环支撑稳定。前态就是 Q 本身，步骤链
+    /// <c>PreState → Target</c>，不需要切割。
+    /// </para>
+    /// <para>
+    /// 断言半边目标覆盖目标里从 <c>Start</c> 起的<b>全部 k 列</b>（按原始象限索引），
+    /// 且逐格（类型 / 形状码 / 颜色）等于目标的那一段——这正是
+    /// <c>HalfAssembly</c> 用来拼整图的依据。
+    /// </para>
+    /// </summary>
+    public static void HalfSideGeneralizesToKColumns()
+    {
+        var cases = new (int Parts, int Layers, int Start)[]
+        {
+            // 目标放在第 3 象限，验证「半边 = 连续 3 列」的环顺序与列号。
+            (6, 8, 2),
+            // 目标放在第 6 象限，验证「半边 = 连续 4 列」跨环。
+            (8, 8, 5)
+        };
+
+        foreach ((int parts, int layers, int start) in cases)
+        {
+            int width = parts / 2;
+
+            var columns = new List<(int Column, string Text)>();
+
+            columns.Add((start, "cT.T.cPT"));
+            columns.Add(((start + 1) % parts, "TTTT.ccc"));
+
+            ShapeDocument target = FromColumns(
+                parts,
+                layers,
+                columns.ToArray());
+
+            ShapeDocument q = ShapeOps.Project(target, start, width);
+
+            HalfWorkOrder? half = AngleWorkOrderBuilder.BuildHalf(
+                target,
+                start,
+                layers);
+
+            Assert.True(
+                half is not null,
+                $"n = {parts} 的 {width} 列半边应可得（候选 1）");
+
+            Assert.True(half!.IsComplete);
+            Assert.Equal(HalfCandidate.Algo8Self, half.Candidate);
+            Assert.Equal(start, half.Target.PrimaryColumn);
+            Assert.Equal(width, half.Target.Columns.Count);
+
+            for (int index = 0; index < width; index++)
+            {
+                Assert.Equal(
+                    (start + index) % parts,
+                    half.Target.Columns[index],
+                    $"n = {parts} 的半边应覆盖从第 {start + 1} 象限起的连续 {width} 列");
+            }
+
+            Assert.Equal(2, half.Steps.Count);
+            Assert.Equal(AngleWorkStepKind.PreState, half.Steps[0].Kind);
+            Assert.Equal(AngleWorkStepKind.Target, half.Steps[^1].Kind);
+
+            Assert.True(
+                ShapeOps.Same(half.Steps[0].Shape, q),
+                $"n = {parts} 的候选 1 前态应就是 Q 本身");
+            Assert.True(
+                ShapeOps.Same(half.Steps[^1].Shape, q),
+                $"n = {parts} 的半边目标应逐格等于目标的那 {width} 列");
+
+            // 真实物理：Q 一次下落后仍是 Q（候选 1 的条件 2）。
+            Assert.True(
+                ShapeOps.Same(
+                    ShapePhysics.Collapse(q).Document,
+                    q),
+                $"n = {parts} 的 Q 应稳定");
+
+            Assert.Equal(0, half.Rotation);
+            Assert.Equal(0, half.Rank);
+            Assert.True(
+                half.TargetColumnsHaveSubRecipe,
+                "k 列都是带子配方的 S 列");
+
+            // 逐列核对（类型 / 形状码 / 颜色）：每列都可以按单角工序单独做。
+            for (int index = 0; index < width; index++)
+            {
+                int part = (start + index) % parts;
+
+                Assert.Equal(
+                    ShapeSignature.ColumnText(q, part),
+                    ShapeSignature.ColumnText(half.Steps[^1].Shape!, part),
+                    $"n = {parts} 第 {part + 1} 象限应逐格等于目标");
+            }
+
+            // 每个半边的列都必须是合法列（n ≥ 6 时 S ⟺ 五项条件）。
+            Assert.True(
+                ShapeSignature.AllColumnsLegal(target, out _),
+                $"n = {parts} 的目标应每列合法");
+        }
+    }
+
+    /// <summary>
+    /// k 列半边不做假阳性：半边的列合法但<b>不稳定</b>、或某列不合法时，
+    /// 三个候选都必须拒绝（返回 null），不能只靠判据就声称半边可得。
+    /// </summary>
+    public static void HalfSideKColumnsDoesNotFakeUnstableHalf()
+    {
+        const int parts = 6;
+        const int layers = 3;
+
+        // 第 1 列 ".T"：普通格悬空（五项条件不管普通格，所以列合法但不稳定）。
+        ShapeDocument unstable = FromColumns(
+            parts,
+            layers,
+            (0, ".T"),
+            (1, "T"));
+
+        Assert.True(
+            ShapeSignature.AllColumnsLegal(unstable, out _),
+            "合成列应每列合法（普通格不参与五项条件）");
+        Assert.False(ShapeOps.IsStable(unstable), "该合成半边应不稳定");
+        Assert.True(
+            AngleWorkOrderBuilder.BuildHalf(unstable, 0, layers) is null,
+            "不稳定的 {0} 列半边不能报可得");
+
+        // 第 2 列 ".c"：晶体下方有洞却没有普通资源 ⇒ 五项条件四失败。
+        ShapeDocument illegal = FromColumns(
+            parts,
+            8,
+            (0, "cT.T.cPT"),
+            (1, ".c"));
+
+        Assert.False(
+            ShapeSignature.IsLegalColumn(illegal, 1),
+            "第 2 象限应不合法");
+        Assert.True(
+            AngleWorkOrderBuilder.BuildHalf(illegal, 0, 8) is null,
+            "半边里有非法列时三个候选都必须拒绝");
+    }
+
+    /// <summary>
+    /// 候选 3 的多保险丝推广：一个目标列可能有多个临时晶体块（目标列的洞被原生材料
+    /// 隔开），保险丝柱要按<b>每块的顶层</b>各放一颗晶体，一刀才能把所有块一起碎掉。
+    ///
+    /// <para>
+    /// <c>cT.T.T.cPT</c>（10 层）的临时晶体块是 <c>{L3}</c> 与 <c>{L5,L6}</c>，
+    /// 前态保险丝柱 <c>TTcTTc....</c> 正好两颗晶体；<c>cT.T..T.cPT</c>（11 层）同理
+    /// （<c>TTcTTTc....</c>）。n = 4 只有一个块时退化成原来的一颗保险丝
+    /// （见 <see cref="HalfSideTempCrystalFuseBuildsAnchor"/>）。
+    /// </para>
+    /// </summary>
+    public static void HalfSideFuseHandlesMultipleTemporaryBlocks()
+    {
+        var cases = new (string Text, string PreState, string PartnerPre, string PartnerPost, string Fuse)[]
+        {
+            ("cT.T.T.cPT", "cTcTccTcPT", "TTTTTcTccc", "TTTTTT.ccc", "TTcTTc...."),
+            ("cT.T..T.cPT", "cTcTcccTcPT", "TTTTTTcTccc", "TTTTTTT.ccc", "TTcTTTc....")
+        };
+
+        foreach ((string text, string preStateText, string partnerPre, string partnerPost, string fuseText) in cases)
+        {
+            int cap = text.Length;
+
+            ShapeDocument target = FromColumns(4, cap, (0, text));
+
+            Assert.True(ShapeSignature.IsLegalColumn(target, 0), text + " 应是合法列");
+            Assert.False(
+                PillarSCriterion.IsPillarColumn(target, 0),
+                text + " 不应属于 n = 4 的 S");
+
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+
+            Assert.True(
+                order.IsComplete,
+                order.Note ?? text + " 的多块保险丝工序应验证通过");
+            Assert.Equal(AngleConstruction.Half, order.Construction);
+
+            HalfWorkOrder half = order.Half
+                ?? throw new InvalidOperationException(text + " 必须带 Half 字段");
+
+            Assert.Equal(HalfCandidate.TempCrystalFuse, half.Candidate);
+
+            ShapeDocument preState = Step(order, AngleWorkStepKind.PreState).Shape!;
+
+            Assert.Equal(preStateText, ShapeSignature.ColumnText(preState, 0));
+            Assert.Equal(partnerPre, ShapeSignature.ColumnText(preState, 1));
+
+            // 保险丝柱：AuxiliaryColumns = {环伙伴, 空象限, 保险丝}。
+            int fuseColumn = order.AuxiliaryColumns[2];
+
+            Assert.Equal(fuseText, ShapeSignature.ColumnText(preState, fuseColumn));
+            Assert.Equal(
+                2,
+                CountCrystals(preState, fuseColumn),
+                text + " 的保险丝柱应按两个临时晶体块各放一颗晶体");
+
+            // 真实回放：一刀半破后两列逐格等于半边目标。
+            CutResult cut = ShapePhysics.Cut(
+                ShapeOps.Rotate(preState, order.Rotation));
+
+            Assert.True(cut.Success, cut.Error ?? text + " 切割失败");
+
+            ShapeDocument replayed = ShapeOps.Rotate(
+                cut.West!,
+                -order.Rotation);
+
+            Assert.Equal(text, ShapeSignature.ColumnText(replayed, 0));
+            Assert.Equal(partnerPost, ShapeSignature.ColumnText(replayed, 1));
+            Assert.True(
+                ShapeOps.Same(replayed, half.Steps[^1].Shape),
+                text + " 的两列都应逐格等于半边目标");
+            Assert.True(
+                ShapeOps.Same(
+                    target,
+                    Step(order, AngleWorkStepKind.Target).Shape),
+                text + " 的末步应得到目标角");
+        }
+    }
+
+    #endregion
+
     #region 回放工具
 
     /// <summary>

@@ -302,6 +302,25 @@ public static class ProductionPipeline
                 notes);
         }
 
+        /*
+         * 落地清单第 5 条：交换链失败 ⇒ 用两条轴上的两个 k 列半边装配整图。
+         * 每一步都是真实 Cut / Exchange 回放（见 HalfAssembly.Verify），
+         * 只靠判据不算成功。
+         */
+        if (HalfAssembly.TryBuild(
+                shape,
+                shape.LayerCount,
+                out Recipe? halfAssembly,
+                out string halfNote))
+        {
+            notes.Add(halfNote);
+            return PipelineResult.Producible(
+                halfAssembly!,
+                notes);
+        }
+
+        notes.Add(halfNote);
+
         if (rankBudget > 0)
         {
             foreach (ShapeDocument candidate in TowerFill(shape))

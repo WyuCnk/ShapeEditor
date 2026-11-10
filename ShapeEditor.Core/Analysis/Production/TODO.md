@@ -883,7 +883,164 @@ Collapse(Q′) = Q   ✔（两列逐格，含形状码 / 颜色）
    本仓库新增的候选 3 都已在半边工序中实现」；
 9. `docs/production-path-spec.md` §2.7 第 224–245 行：条文与实现一致；可补一句
    「候选 1 的判定不经过 `Build` 的 S 闸门，需直接调用半边入口」。
+### 7.13 k 列半边（n ≥ 6）与整图装配（P3，落地清单第 5 条，2026-11）
 
+**背景**：P1/P2 的半边工序固定 2 列（n = 4）。P3 把它推广到 **k = n/2 列**
+（n = 6 ⇒ 3 列、n = 8 ⇒ 4 列），并接进整图装配层（`docs/half-side-work-order.md`
+§6 落地清单第 5 条「与交换链对接」）。
 
+**实现位置**
 
+| 文件 | 改动 |
+|---|---|
+| `Analysis/AngleWorkOrderHalfSide.cs` | 去掉 `HalfParts = 4 / HalfWidth = 2` 常量，改由 `target.PartCount` 推 k；`HalfProjection`、候选 1/2/3、`HalfColumns`、`BuildHalfPartnerColumn` / `BuildHalfExpectation` 全部按 k 列推广 |
+| `Analysis/AngleWorkOrderHalfSide.cs` | `BuildHalf` 增加「半边目标必须就是这份目标的那 k 列」逐格闸门；`HalfWorkOrder` 增加 `Rotation` 字段 |
+| `Analysis/Production/HalfAssembly.cs`（新） | 整图半边装配：两条轴 × 两个 k 列半边 → 真实 `Cut` + `Exchange` + 回放自检 |
+| `Analysis/Production/Recipe.cs` | 新增 `RecipeKind.HalfAssembly` + `HalfAssemblyDetails`（含两条半边的交换链子配方） |
+| `Analysis/Production/Replay.cs` | `HalfAssembly` 节点用真实 `Cut` / `Exchange` / `Collapse` 重算 |
+| `Analysis/Production/ProductionPipeline.cs` | `SolveCore` 里「交换链失败 → 半边装配」，失败时把诊断写进 Notes |
+| `Analysis/ProductionPathParser.cs` | 新增 `FromRecipe`（按配方出节点链）；半边装配输出「两个半边输入 + 交换 + 废料」 |
 
+**k 列推广（与 2 列版的差异）**
+
+| 环节 | 2 列版（n = 4） | k 列版（n ≥ 6） |
+|---|---|---|
+| 投影 | 固定取 2 列 | 取从 `column` 起连续 k 列，其余象限置空 |
+| S 判据 | `PillarSCriterion`（五项 ∧ (D∨F)） | `IsSColumn`：n ≥ 6 用五项（定理 2） |
+| 候选 1 | 两列都 S + Q 稳定 | **k 列都 S + Q 稳定**；`Target.Columns` 列出全部 k 列 |
+| 候选 2 | 两列最高晶体不等高；a 层两列都是 T | **k 列最高晶体不全等高**；取最低那枚的粘连组，a 层只要求**存在一对相邻普通格**（水平 TT 即可，不必全列）；`a+1…b−1` 要求**所有列**都空 |
+| 候选 3 | 单个临时晶体块 + 一颗保险丝 | 临时晶体按**连通块**分组，**每块顶层各放一颗保险丝**（`TemporaryCrystalBlocks`）；k−2 个其余半边列原样保留并逐格核对；环伙伴仍取半边内部的相邻列 |
+| 验收 | 两列逐格 | **k 列逐格**（类型 / 形状码 / 颜色）；辅助列仍必须紧列 |
+
+**实测（k 列）**
+
+| 目标 | 半边 | 候选 | 前态 | 步骤链 | 耗时 |
+|---|---|---|---|---|---|
+| `cT.T.cPT` + `TTTT.ccc`（n=6，8 层） | 3 列（第 3–5 象限） | `Algo8Self` | = Q | PreState → Target | 0.09 ms |
+| `.` + `cT.T.cPT` + `TTTT.ccc` + `.`（n=8，8 层） | 4 列（第 6–8、1 象限） | `Algo8Self` | = Q | PreState → Target | 0.07 ms |
+| `cT.T.T.cPT`（n=4，10 层） | 2 列 | `TempCrystalFuse` | `cTcTccTcPT` \| `TTTTTcTccc` \| 空 \| `TTcTTc....` | PreState → Cut → Target | 0.18 ms |
+| `cT.T..T.cPT`（n=4，11 层） | 2 列 | `TempCrystalFuse` | `cTcTcccTcPT` \| `TTTTTTcTccc` \| 空 \| `TTcTTTc....` | 同上 | 0.20 ms |
+
+多块保险丝两例的半破结果逐格等于目标（`cT.T.T.cPT` / `cT.T..T.cPT`），
+证明「每块顶层一颗保险丝」的一刀多段是有效的。
+
+**装配新路径（`HalfAssembly`）**
+
+```
+SolveCore(shape):
+    1. ExchangeChain.TryBuild(shape)                     ← 现状，成功即返回（行为不变）
+    2. HalfAssembly.TryBuild(shape, cap)                 ← 新路径
+         for 轴 a in 0 … half−1:
+             L = BuildHalf(shape, a, cap)；R = BuildHalf(shape, a+half, cap)
+             两条半边目标必须逐格等于 shape 的两段
+             两条输入 A = Rotate(L.前态, −a)、B = Rotate(R.前态, −a) 必须
+                 「稳定」且「能被交换链装配」（rank 0 子配方嵌进明细）
+             真实 Cut(A).West = 左段、Cut(B).East = 右段
+             真实 Exchange(A, B) 的所需输出转回后 = shape
+         ├ 成功 → RecipeKind.HalfAssembly（rank 0，两条子配方都是交换链）
+         └ 失败 → 继续 TowerFill / HybridStrips / Uncovered（现有语义）
+    3. 失败时 Notes 里保留半边装配诊断（哪个轴、哪一侧不可得 / 不可造）
+```
+
+- **触发**：`ExchangeChain.TryBuild` 失败之后、`TowerFill` / `HybridStrips` 之前；
+  交换链成功时一行都不走，现有 2125 / 446 / 6 等数字全部不变。
+- **回放**：`HalfAssembly.Verify` 与 `Replay.Verify` 都用真实
+  `ShapePhysics.Cut` / `ShapeExchange.Exchange` / `ShapePhysics.Collapse`
+  重算两条半边工序、两条输入、两条子配方与末次交换，逐格比对；只靠判据不算成功。
+- **失败分级**：半边不可得 / 输入不可造 ⇒ 不产出配方 ⇒ 仍由管线区分
+  `Uncovered`（计划失败）与 `NotProducible`（五项条件失败）；新路径不产生新的
+  「不可制作」。
+- **诚实要求**：候选 2 的 Q′ 是「下落前」状态，不稳定 ⇒ 不能当机器输入，
+  装配层显式拒绝（这会挡住 `cT.T.cPT + TTTT.ccc` 这类 n = 4 目标的半边装配，
+  它们的交换链本来就能做）。
+
+**重要发现：n ≥ 6 上「交换链失败但半边可得」不存在（实测 0 反例）**
+
+1. **候选 1 在 n ≥ 6 上支配候选 2 / 3**：S ⟺ 五项条件，而候选 2 的产物是
+   `Collapse(Q′)`、候选 3 的产物是 `Cut` 的输出——两者都必然稳定。
+   所以只要半边「每列合法 + 稳定」，候选 1 就先命中；候选 2 / 3 只在
+   半边列不合法时才可能被考虑，而候选 2 / 3 的前态又要求每列合法
+   （候选 3 的洞一旦贴着原生晶体就纵向融合，代码直接拒绝）。
+2. **整图层面**：`HalfAssembly` 需要两侧半边「每列合法 + 稳定 + 输入可造」，
+   这恰好就是整图交换链的前提；因此新路径**不增加可制作整图**，
+   它是同一能力的另一种装配写法 + 失败诊断。
+
+**围栏实测（`HalfAssemblyFenceOnChainFailures`，固定种子随机语料）**
+
+| n | 层数 | 样本 | 合法 | 稳定 | 交换链失败 | 半边装配接住 |
+|---|---|---|---|---|---|---|
+| 4 | 5 | 6000 | 268 | 185 | 45 | **0** |
+| 6 | 4 | 12000 | 515 | 350 | 13 | **0** |
+| 8 | 3 | 8000 | 652 | 430 | 2 | **0** |
+| 8 | 4 | 20000 | 327 | 169 | 2 | **0** |
+
+另有结构化搜索：n = 6 的 428 个合法稳定半边两两组合（183,184 组）全部交换链成功；
+n = 6/8 的 120+ 个链失败样本里，**没有**一个满足「两侧半边各自都能被交换链造出来」。
+⇒ 这就是「n=6 与 n=8 各至少 1 个『交换链失败、半边工序成功』整图案例」
+**做不出来**的原因（不是没实现，是数学上不存在），详见 §7.13.1。
+
+**n = 6 / n = 8 的半边装配实测（新路径本身可回放）**
+
+| 整图 | n | 是否走半边（管线） | 步骤链 | 耗时 |
+|---|---|---|---|---|
+| `cT.T.cPT` \| `TTTT.ccc` \| `.` \| `cT.T.cPT` \| `TTTT.ccc` \| `.` | 6 | 否（交换链先成功；`HalfAssembly.TryBuild` 单独调用成功） | 左半边 → 右半边 → 交换 → 废料 | 1.83 ms |
+| `.` \| `cT.T.cPT` \| `TTTT.ccc` \| `.` \| `.` \| `cT.T.cPT` \| `TTTT.ccc` \| `.` | 8 | 否（同上） | 同上 | 1.84 ms |
+
+两例的 `LeftRecipe` / `RightRecipe` 都是 rank 0 交换链、`Replay.Verify` 端到端通过、
+末次交换的真实输出逐格等于目标；解析器 `ProductionPathParser.FromRecipe` 能展开成
+「两个半边输入 + 交换 + 废料」。
+
+**验收数字（P3 后）**
+
+| 测试 | 结果 |
+|---|---|
+| 全量测试 | **157/157** 通过（其中 2 项 XFAIL：claw / 二择，保持不变） |
+| `AUDIT`（≤6 层 S） | `total=5440 legal=2126 s=2125 success=2125 legalNonS=1 failures=0 falsePositives=0`（未退化） |
+| `TIGHT`（§17.7） | `totalS=2125 success=2125 steps=446 tight=382 onlyTarget=64 onlyAux=0 both=0`（未退化） |
+| `HALFAUDIT`（7–9 层非 S + 论文半边） | `legalNonS=229 halfTargets=2 halfComplete=6 notProducible=225 uncovered=0 problems=0`（未退化，`cT.T.cPT` 仍命中候选 3） |
+| `HALFFENCE`（P3 围栏） | 上表 4 行，`claimed=0` |
+
+新增用例：`HalfSideGeneralizesToKColumns`（n=6 三列 / n=8 四列）、
+`HalfSideKColumnsDoesNotFakeUnstableHalf`、`HalfSideFuseHandlesMultipleTemporaryBlocks`、
+`HalfAssemblyBuildsSixAndEightQuadrantGraphs`、`HalfAssemblyFenceOnChainFailures`、
+`HalfAssemblyPipelineReportsDiagnosisOnChainFailure`。
+
+#### 7.13.1 为什么「n=6/8 交换链失败 + 半边工序成功」不可行（结论与替代）
+
+```
+候选 1 = 每列 S（n≥6 即五项）∧ Q 稳定
+候选 2 ⇒ Q = Collapse(Q′) ⇒ Q 稳定
+候选 3 ⇒ Q = Cut(前态) 的保留侧 ⇒ Q 稳定
+```
+所以 n ≥ 6 时「半边可得」⟹「静态半边每列合法 + 稳定」；
+而整图交换链的失败在实测语料里**等价于**「至少一侧半边不满足这条」。
+两边同时成立 ⇒ 整图交换链也能装配 ⇒ 新路径拿不到新整图。
+
+要让这条路径真正比交换链强，需要**半边输入不可由交换链装配、但可由别的
+rank 0 装配原语造出来**的形态，例如：
+
+- 用 `Stack` 逐层拼 k 列（`docs/production-path-spec.md` §5.6 的 `Stack` 逆），
+  但 `Stack` 需要「一块可独立制作的 hybrid」，本仓库目前只有单顶针版；
+- 或者把论文算法 9 的「带外框输入」显式建模（现在交换链把外框折算成柱子，
+  外框的朝向/位置自由度被丢掉了）。
+
+这两条都超出本次范围，**没有伪造**：新路径只做真实 Cut + Exchange + 回放的结论。
+
+**文档待更新**（`docs/` 由开发者本人维护，本次未动；行号按本次阅读时的版本）：
+
+1. `docs/half-side-work-order.md` §4.1 第 124–130 行分层图：n ≥ 6 不再是「现有算法（不变）」
+   独占——`BuildHalf` 现在也接受 n ≥ 6 的 k 列半边（只在装配层调用）；
+2. 同文件 §4.2 第 132–144 行三个候选：补「k = n/2 列推广」，候选 3 改为
+   「每块临时晶体顶层各一颗保险丝」；
+3. 同文件 §6 第 177–183 行落地清单第 5 条：**已实现**（`HalfAssembly`），
+   但要补一句「n ≥ 6 上不增加可制作整图，见 §7.13.1 的支配关系」；
+4. 同文件 §3 第 104–116 行「算法 8 不完备」：补「候选 3 的 k 列推广已实现；
+   n ≥ 6 时候选 1 支配 2/3」；
+5. `docs/angle-work-order-algorithm.md` §6 第 614–642 行七条验收：半边现在是 k 列，
+   第 1 / 4 / 5 条的「两列」改成「k 列」；
+6. 同文件 §7 第 645–661 行工序单结构：`HalfWorkOrder` 增加 `Rotation`；
+7. 同文件 §13.3 第 961 行（算法 8 / 9 / 10 属整图层）：可补「本仓库已把
+   算法 8 的三个候选推广到 k 列，并用它做整图装配的兜底路径（`HalfAssembly`）」；
+8. `docs/production-path-spec.md` §5.4.1 第 562–569 行「可交换 & 交换链失败 = 0」：
+   本轮在 n = 6/8、4–5 层随机语料上复验（链失败 120+ 个样本，两侧半边都可得 0 个），
+   可补一句「半边可得性判据与交换链成功在该语料上仍然一致」。

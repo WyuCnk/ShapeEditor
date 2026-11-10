@@ -1154,6 +1154,384 @@ internal static class ProductionPathAcceptanceTests
 
     #endregion
 
+    #region 语料 12：k 列半边装配（P3 落地清单第 5 条）
+
+    /// <summary>
+    /// n = 6 / n = 8 的整图半边装配：目标的两段半边各自都是「连续 n/2 列」，
+    /// 两个半边都能由 k 列半边工序做出来 ⇒ 直接把两条半边输入送进交换机。
+    ///
+    /// <para><b>验证口径（全部用真实物理）</b></para>
+    /// <list type="number">
+    /// <item><c>HalfAssembly.TryBuild</c> 成功，配方是 <see cref="RecipeKind.HalfAssembly"/>、
+    /// <c>Rank = 0</c>、产物逐格等于目标；</item>
+    /// <item><see cref="Replay.Verify"/> 端到端重算通过（内部再跑一次真实 Cut / Exchange / Collapse）；</item>
+    /// <item>两条输入各自真实 <see cref="ShapePhysics.Cut"/>：保留侧逐格等于目标的两段；</item>
+    /// <item>真实 <see cref="ShapeExchange.Exchange"/> 的所需输出逐格等于目标；</item>
+    /// <item><see cref="ProductionPathParser.FromRecipe"/> 能把这条新路径展开成节点链
+    /// （两个半边输入 + 一次交换 + 废料），不再要求「交换链叶子」。</item>
+    /// </list>
+    ///
+    /// <para>
+    /// <b>诚实记录</b>：这两个目标本身的交换链也能装配（最后一条断言）。原因见
+    /// <see cref="HalfAssemblyFenceOnChainFailures"/>：新路径要求两侧半边
+    /// 「每列合法 + 稳定」且两条输入各自能被交换链造出来（rank 0 子配方），
+    /// 这已经蕴含整图交换链可装配；随机语料里「交换链失败但半边装配成功」0 反例。
+    /// 本测试验证的是<b>新路径本身可回放、输入真可造</b>，不是「它比交换链更强」。
+    /// </para>
+    /// </summary>
+    public static void HalfAssemblyBuildsSixAndEightQuadrantGraphs()
+    {
+        var cases = new (int Parts, int Layers, string[] Columns)[]
+        {
+            (
+                6,
+                8,
+                new[] { "cT.T.cPT", "TTTT.ccc", ".", "cT.T.cPT", "TTTT.ccc", "." }),
+            (
+                8,
+                8,
+                new[] { ".", "cT.T.cPT", "TTTT.ccc", ".", ".", "cT.T.cPT", "TTTT.ccc", "." })
+        };
+
+        foreach ((int parts, int layers, string[] columns) in cases)
+        {
+            ShapeDocument target = FromColumns(parts, columns);
+            int width = parts / 2;
+
+            Assert.True(
+                ShapeSignature.AllColumnsLegal(target, out _),
+                $"n = {parts} 的目标每列都应合法");
+            Assert.True(ShapeOps.IsStable(target), $"n = {parts} 的目标应稳定");
+
+            HalfWorkOrder? left = AngleWorkOrderBuilder.BuildHalf(target, 0, layers);
+            HalfWorkOrder? right = AngleWorkOrderBuilder.BuildHalf(target, width, layers);
+
+            Assert.True(left is not null, $"n = {parts} 的左半边应可得");
+            Assert.True(right is not null, $"n = {parts} 的右半边应可得");
+            Assert.Equal(HalfCandidate.Algo8Self, left!.Candidate);
+            Assert.Equal(HalfCandidate.Algo8Self, right!.Candidate);
+            Assert.Equal(width, left.Target.Columns.Count);
+            Assert.Equal(width, right.Target.Columns.Count);
+
+            bool assembled = HalfAssembly.TryBuild(
+                target,
+                layers,
+                out Recipe? recipe,
+                out string note);
+
+            Assert.True(assembled, $"n = {parts} 的半边装配应成功：" + note);
+            Assert.True(recipe is not null);
+            Assert.Equal(RecipeKind.HalfAssembly, recipe!.Kind);
+            Assert.Equal(0, recipe.Rank);
+            Assert.Equal(parts, recipe.Shape.PartCount);
+            Assert.True(
+                ShapeOps.Same(recipe.Shape, target),
+                $"n = {parts} 的产物应逐格等于目标");
+
+            HalfAssemblyDetails details = recipe.HalfAssembly!;
+
+            Assert.Equal(width, details.HalfWidth);
+            Assert.Equal(0, details.Axis);
+            Assert.Equal(4, recipe.Steps.Count);
+            Assert.Equal("废料", recipe.Steps[^1].Title);
+
+            // 两条半边输入自身必须可造：交换链 rank 0 子配方嵌在明细里。
+            foreach ((Recipe subRecipe, ShapeDocument input, string side) in new[]
+                     {
+                         (details.LeftRecipe, details.LeftInput, "左"),
+                         (details.RightRecipe, details.RightInput, "右")
+                     })
+            {
+                Assert.Equal(RecipeKind.Exchange, subRecipe.Kind);
+                Assert.Equal(0, subRecipe.Rank);
+                Assert.True(
+                    ShapeOps.Same(subRecipe.Shape, input),
+                    $"n = {parts} 的{side}半边子配方产物必须就是该输入");
+                Assert.True(
+                    ShapeOps.IsStable(input),
+                    $"n = {parts} 的{side}半边输入必须稳定（机器输出都塌陷过）");
+                Assert.True(
+                    Replay.Verify(subRecipe, input, out IReadOnlyList<string> subErrors),
+                    $"n = {parts} 的{side}半边子配方回放失败：" + string.Join("；", subErrors));
+            }
+
+            // ── 真实回放：两个半边工序 + 真实 Cut + 真实 Exchange ──
+            var errors = new List<string>();
+
+            Assert.True(
+                HalfAssembly.Verify(details, target, errors),
+                $"n = {parts} 的半边装配自检失败：" + string.Join("；", errors));
+            Assert.True(
+                Replay.Verify(recipe, target, out IReadOnlyList<string> replayErrors),
+                $"n = {parts} 的配方回放失败：" + string.Join("；", replayErrors));
+
+            // ── 两条输入各自真实 Cut：保留侧逐格等于目标两段 ──
+            CutResult leftCut = ShapePhysics.Cut(details.LeftInput);
+
+            Assert.True(leftCut.Success, leftCut.Error ?? "左半边输入切割失败");
+            Assert.True(
+                ShapeOps.Same(
+                    leftCut.West!,
+                    ShapeOps.Project(target, 0, width)),
+                $"n = {parts} 左半边输入的真实 Cut 应逐格等于目标左段");
+
+            CutResult rightCut = ShapePhysics.Cut(details.RightInput);
+
+            Assert.True(rightCut.Success, rightCut.Error ?? "右半边输入切割失败");
+            Assert.True(
+                ShapeOps.Same(
+                    rightCut.East!,
+                    ShapeOps.Project(target, width, width)),
+                $"n = {parts} 右半边输入的真实 Cut 应逐格等于目标右段");
+
+            // ── 真实交换：所需输出逐格等于目标 ──
+            (ShapeDocument? waste, ShapeDocument? output, string? exchangeError) =
+                ShapeExchange.Exchange(details.LeftInput, details.RightInput);
+
+            Assert.True(output is not null, exchangeError ?? "交换失败");
+            Assert.True(
+                ShapeOps.Same(output, target),
+                $"n = {parts} 的真实交换应逐格得到目标");
+            Assert.True(waste is not null, "交换的另一路输出（废料）应保留");
+
+            // ── 节点链：半边装配的新路径不依赖「交换链叶子」 ──
+            ProductionPathResult parsed = ProductionPathParser.FromRecipe(recipe);
+
+            Assert.True(parsed.IsProducible, parsed.Error ?? "节点链应可展示");
+            Assert.True(parsed.Path is not null);
+            Assert.Equal(
+                $"(1-{width})+({width + 1}-{parts})",
+                parsed.Path!.Direction);
+            Assert.True(
+                parsed.Path.Steps.Any(step =>
+                    step.Kind == ProductionStepKind.PillarPiece &&
+                    step.Title.Contains("半边工序")),
+                "节点链应包含两个半边输入");
+            Assert.True(
+                parsed.Path.Steps.Any(step =>
+                    step.Kind == ProductionStepKind.Target),
+                "节点链应包含目标步");
+            Assert.True(
+                parsed.Path.Nodes.Any(node =>
+                    node.Kind == ProductionNodeKind.Waste),
+                "节点链应保留废料节点");
+
+            // 诚实记录：交换链本身也能装配这个目标。
+            Assert.True(
+                ExchangeChain.TryBuild(target, out _),
+                $"n = {parts} 的这个目标交换链也能装配（n ≥ 6 时半边可得 = 交换链前提）");
+        }
+    }
+
+    /// <summary>
+    /// 半边装配的<b>围栏</b>：不能让「交换链失败」的图形被新路径抢答成可制作。
+    ///
+    /// <para>
+    /// 随机语料（n = 4 / 6 / 8，<c>{., T, c, P}</c>，固定种子）里先筛「每列合法 + 稳定」，
+    /// 再挑交换链失败的样本；对这些样本断言 <see cref="HalfAssembly.TryBuild"/> 一律失败。
+    /// </para>
+    /// <para>
+    /// <b>为什么是 0</b>：<see cref="HalfAssembly"/> 要求两条输入「稳定 + 能被交换链
+    /// 装配」；而整图交换链正是用同样的四片零件装配这两半，
+    /// 所以「整图链失败、但两半各自都能造出来」在实测语料里 0 反例
+    /// （随机语料 120+ 个链失败样本、183k 组结构化半边组合）。这条围栏是该结论的
+    /// 可执行记录：它同时挡住两类假阳性——半边不可得、半边输入不可造。
+    /// </para>
+    /// </summary>
+    public static void HalfAssemblyFenceOnChainFailures()
+    {
+        var cases = new (int Parts, int Layers, int Samples, int Seed)[]
+        {
+            (4, 5, 6000, 20261110),
+            (6, 4, 12000, 20261111),
+            (8, 3, 8000, 20261112),
+            (8, 4, 20000, 20261114)
+        };
+
+        int totalChainFailures = 0;
+        int claimed = 0;
+
+        foreach ((int parts, int layers, int samples, int seed) in cases)
+        {
+            var random = new Random(seed);
+
+            int legal = 0;
+            int stable = 0;
+            int chainFailures = 0;
+            int claimedHere = 0;
+
+            for (int sample = 0; sample < samples; sample++)
+            {
+                ShapeDocument shape = RandomShape(random, parts, layers);
+
+                if (!ShapeSignature.AllColumnsLegal(shape, out _))
+                {
+                    continue;
+                }
+
+                legal++;
+
+                if (!ShapeOps.IsStable(shape))
+                {
+                    continue;
+                }
+
+                stable++;
+
+                if (ExchangeChain.TryBuild(shape, out _))
+                {
+                    continue;
+                }
+
+                chainFailures++;
+
+                if (HalfAssembly.TryBuild(shape, layers, out _, out string note))
+                {
+                    claimedHere++;
+
+                    Console.WriteLine(
+                        $"  HALFFENCE n={parts} 半边装配接住了交换链失败样本：" +
+                        string.Join(" | ", ColumnTexts(shape)) + " / " + note);
+                }
+            }
+
+            Console.WriteLine(
+                $"  HALFFENCE n={parts} L={layers} samples={samples} legal={legal} " +
+                $"stable={stable} chainFail={chainFailures} claimed={claimedHere}");
+
+            totalChainFailures += chainFailures;
+            claimed += claimedHere;
+        }
+
+        Assert.True(
+            totalChainFailures > 0,
+            "语料里应至少有一个交换链失败样本，否则这条围栏没有意义");
+        Assert.Equal(
+            0,
+            claimed,
+            "半边装配不得接住交换链失败的图形（否则是假阳性）");
+    }
+
+    /// <summary>
+    /// 管线接线：交换链失败后 <see cref="ProductionPipeline"/> 会调用半边装配；
+    /// 两边半边不全都可得时仍必须返回「未覆盖」，但要把半边装配的诊断写进 Notes
+    /// （哪个轴、哪一侧不可得），便于区分「未覆盖」与「不可制作」。
+    /// </summary>
+    public static void HalfAssemblyPipelineReportsDiagnosisOnChainFailure()
+    {
+        ShapeDocument target = FindChainFailingSample(
+            parts: 6,
+            layers: 4,
+            seed: 20261113);
+
+        Assert.False(
+            ExchangeChain.TryBuild(target, out _),
+            "挑选的样本交换链应失败");
+
+        PipelineResult solved = ProductionPipeline.Solve(target, 4);
+
+        Assert.Equal(PipelineOutcome.Uncovered, solved.Outcome);
+        Assert.True(solved.Recipe is null, "未覆盖时不应给出配方");
+        Assert.True(
+            solved.Notes.Any(note => note.Contains("半边装配")),
+            "Notes 应包含半边装配的诊断：" + string.Join(" / ", solved.Notes));
+
+        ProductionPathResult parsed = ProductionPathParser.Parse(target);
+
+        Assert.Equal(PipelineOutcome.Uncovered, parsed.Outcome);
+        Assert.True(
+            parsed.Error is not null && parsed.Error.Contains("未覆盖"),
+            "未覆盖必须明确标注");
+    }
+
+    /// <summary>按固定种子找一个「每列合法 + 稳定 + 交换链失败 + 管线未覆盖」的样本。</summary>
+    private static ShapeDocument FindChainFailingSample(
+        int parts,
+        int layers,
+        int seed)
+    {
+        var random = new Random(seed);
+
+        for (int sample = 0; sample < 200000; sample++)
+        {
+            ShapeDocument shape = RandomShape(random, parts, layers);
+
+            if (!ShapeSignature.AllColumnsLegal(shape, out _) ||
+                !ShapeOps.IsStable(shape))
+            {
+                continue;
+            }
+
+            if (ExchangeChain.TryBuild(shape, out _))
+            {
+                continue;
+            }
+
+            PipelineResult solved = ProductionPipeline.Solve(shape, layers);
+
+            if (solved.Outcome == PipelineOutcome.Uncovered &&
+                solved.Notes.Any(note => note.Contains("半边装配")))
+            {
+                return shape;
+            }
+        }
+
+        throw new InvalidOperationException("找不到满足条件的样本。");
+    }
+
+    private static ShapeDocument RandomShape(
+        Random random,
+        int parts,
+        int layers)
+    {
+        char[] alphabet =
+        {
+            ShapeSignature.EmptyCode,
+            ShapeSignature.SolidCode,
+            ShapeSignature.CrystalCode,
+            ShapeSignature.PinCode
+        };
+
+        var codes = new char[layers, parts];
+
+        for (int layer = 0; layer < layers; layer++)
+        {
+            for (int part = 0; part < parts; part++)
+            {
+                codes[layer, part] = alphabet[random.Next(alphabet.Length)];
+            }
+        }
+
+        var document = new ShapeDocument(layers, parts);
+
+        for (int layer = 0; layer < layers; layer++)
+        {
+            for (int part = 0; part < parts; part++)
+            {
+                document[layer, part] = codes[layer, part] switch
+                {
+                    'c' => ShapeCell.Crystal('r'),
+                    'P' => ShapeCell.Pin(),
+                    'T' => ShapeCell.Shape('C', 'u'),
+                    _ => ShapeCell.Empty()
+                };
+            }
+        }
+
+        return document;
+    }
+
+    private static IEnumerable<string> ColumnTexts(
+        ShapeDocument shape)
+    {
+        for (int part = 0; part < shape.PartCount; part++)
+        {
+            yield return ShapeSignature.ColumnText(shape, part);
+        }
+    }
+
+    #endregion
+
     #region 语料构造
 
     /// <summary>

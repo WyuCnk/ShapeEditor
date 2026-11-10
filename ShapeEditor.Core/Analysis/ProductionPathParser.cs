@@ -124,12 +124,37 @@ public static class ProductionPathParser
             };
         }
 
-        Recipe recipe = solved.Recipe;
+        return FromRecipe(solved.Recipe, mode);
+    }
 
+    /// <summary>
+    /// 按<b>已有配方</b>构造节点链（不再重新求解）。
+    ///
+    /// <para>
+    /// <see cref="Parse"/> 求解后走这里；测试与 UI 也可以直接拿
+    /// <see cref="ProductionPipeline"/> / <see cref="HalfAssembly"/> 给出的 Recipe 调用它，
+    /// 检查节点链是否与配方一致。
+    /// </para>
+    /// </summary>
+    public static ProductionPathResult FromRecipe(
+        Recipe recipe,
+        CollapseMode mode = CollapseMode.IncludeCycles)
+    {
         // n = 2：定理 5 的孤立列拼装没有交换切点，节点链单独输出。
         if (recipe.Shape.PartCount == 2)
         {
             return BuildTwoQuadrantPath(recipe);
+        }
+
+        /*
+         * k 列半边装配（落地清单第 5 条）：交换链失败时的新路径没有交换链叶子，
+         * 节点链按「两个半边输入 + 一次交换」输出。
+         */
+        Recipe? halfAssembly = FindHalfAssembly(recipe);
+
+        if (halfAssembly is not null)
+        {
+            return BuildHalfAssemblyPath(recipe, halfAssembly);
         }
 
         Recipe? exchange = FindExchange(recipe);
@@ -294,6 +319,75 @@ public static class ProductionPathParser
         return null;
     }
 
+    /// <summary>找到路径树里的 k 列半边装配节点（交换链失败时的新路径）。</summary>
+    private static Recipe? FindHalfAssembly(
+        Recipe recipe)
+    {
+        if (recipe.Kind == RecipeKind.HalfAssembly)
+        {
+            return recipe;
+        }
+
+        foreach (Recipe input in recipe.Inputs)
+        {
+            Recipe? found = FindHalfAssembly(input);
+
+            if (found is not null)
+            {
+                return found;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// k 列半边装配的节点链：两个半边输入 → 一次交换 → 目标（+ 废料）。
+    ///
+    /// <para>
+    /// 交换链失败时的路径没有「四个带柱半半边」，取而代之的是两个 k 列半边
+    /// （各自带一份半边工序的步骤链）。方向记法用 <c>(1-k)+(k+1-n)</c>：
+    /// 它描述的是「沿环把 k 列 / k 列作为两个半边」，合法性由真实
+    /// <see cref="ShapePhysics.Cut"/> + <see cref="ShapeExchange.Exchange"/> 回放保证。
+    /// </para>
+    /// </summary>
+    private static ProductionPathResult BuildHalfAssemblyPath(
+        Recipe recipe,
+        Recipe halfNode)
+    {
+        HalfAssemblyDetails details = halfNode.HalfAssembly
+            ?? throw new InvalidOperationException("半边装配节点缺少明细。");
+
+        int parts = halfNode.Shape.PartCount;
+        int half = parts / 2;
+
+        List<ProductionStep> steps = BuildSteps(recipe, isRoot: true);
+
+        ProductionGraph graph = BuildGraph(recipe, isRoot: true);
+
+        string direction = $"(1-{half})+({half + 1}-{parts})";
+
+        bool directionLegal = Replay.Verify(
+            recipe,
+            recipe.Shape,
+            out _);
+
+        return new ProductionPathResult(
+            true,
+            new ProductionPath(
+                details.Axis,
+                0,
+                0,
+                direction,
+                directionLegal,
+                steps,
+                graph),
+            null)
+        {
+            Outcome = PipelineOutcome.Producible
+        };
+    }
+
     #region 线性工序
 
     /// <summary>
@@ -380,11 +474,42 @@ public static class ProductionPathParser
                     0));
 
                 break;
+            case RecipeKind.HalfAssembly:
+            {
+                // k 列半边装配：两个半边输入 + 一次交换（没有四个带柱半半边）。
+                if (recipe.Steps.Count >= 2)
+                {
+                    steps.Add(new ProductionStep(
+                        recipe.Steps[0].Title,
+                        recipe.Steps[0].Shape,
+                        ProductionStepKind.PillarPiece,
+                        RotationDirection.None,
+                        0));
+
+                    steps.Add(new ProductionStep(
+                        recipe.Steps[1].Title,
+                        recipe.Steps[1].Shape,
+                        ProductionStepKind.PillarPiece,
+                        RotationDirection.None,
+                        0));
+                }
+
+                steps.Add(new ProductionStep(
+                    isRoot ? "交换得到目标图形" : "交换得到中间图形",
+                    recipe.Shape,
+                    isRoot
+                        ? ProductionStepKind.Target
+                        : ProductionStepKind.Exchange,
+                    RotationDirection.None,
+                    0));
+
+                break;
+            }
         }
 
         // 非交换的根节点补一个显式的目标标记，线性列表也能看到终点。
         if (isRoot &&
-            recipe.Kind != RecipeKind.Exchange)
+            recipe.Kind is not (RecipeKind.Exchange or RecipeKind.HalfAssembly))
         {
             steps.Add(new ProductionStep(
                 "完成目标图形",
@@ -684,6 +809,61 @@ public static class ProductionPathParser
                 }
 
                 return (stackId, innerNext + 1);
+            }
+
+            case RecipeKind.HalfAssembly:
+            {
+                /*
+                 * k 列半边装配：两个半边输入（各带一条半边工序步骤链）+ 一次交换。
+                 * 废料节点与交换叶子一样保留，UI 的「废料」标题不漂移。
+                 */
+                var inputs = new List<string>();
+
+                for (int index = 0; index < 2 && index < recipe.Steps.Count; index++)
+                {
+                    string inputId = prefix + "half-" + index;
+
+                    nodes.Add(new ProductionNode(
+                        inputId,
+                        recipe.Steps[index].Title,
+                        ProductionNodeKind.PillarPiece,
+                        row,
+                        recipe.Steps[index].Shape));
+
+                    inputs.Add(inputId);
+                }
+
+                string exchangeId = prefix + "exchange";
+
+                nodes.Add(new ProductionNode(
+                    exchangeId,
+                    isRoot ? "交换得到目标图形" : "交换得到中间图形",
+                    isRoot
+                        ? ProductionNodeKind.Target
+                        : ProductionNodeKind.Exchange,
+                    row + 1,
+                    recipe.Shape));
+
+                foreach (string inputId in inputs)
+                {
+                    edges.Add(new ProductionEdge(inputId, exchangeId));
+                }
+
+                if (recipe.Steps.Count >= 3)
+                {
+                    string wasteId = prefix + "waste-final";
+
+                    nodes.Add(new ProductionNode(
+                        wasteId,
+                        "废料",
+                        ProductionNodeKind.Waste,
+                        row + 1,
+                        recipe.Steps[^1].Shape));
+
+                    edges.Add(new ProductionEdge(exchangeId, wasteId));
+                }
+
+                return (exchangeId, row + 2);
             }
 
             default:

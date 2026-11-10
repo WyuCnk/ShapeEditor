@@ -180,6 +180,9 @@ internal static class Program
             ("角工序:半边工序切割轴旋转", AngleWorkOrderTests.HalfSideHandlesRotation),
             ("角工序:半边候选 1（Q 自身）", AngleWorkOrderTests.HalfSideAlgo8SelfBuildsStableHalf),
             ("角工序:半边候选 2（联合逆提升）", AngleWorkOrderTests.HalfSideAlgo8UpliftBuildsPaperExample),
+            ("角工序:k 列半边（n=6/8）", AngleWorkOrderTests.HalfSideGeneralizesToKColumns),
+            ("角工序:k 列半边不做假阳性", AngleWorkOrderTests.HalfSideKColumnsDoesNotFakeUnstableHalf),
+            ("角工序:半边候选 3 多保险丝", AngleWorkOrderTests.HalfSideFuseHandlesMultipleTemporaryBlocks),
             ("角工序:n=4 ≤6 层穷举审计", AngleAuditTests.ExhaustiveFourQuadrantAudit),
             ("角工序:前态紧列审计（§17.7）", AngleAuditTests.PreStateTightnessAudit),
             ("角工序:半边工序 7–9 层审计", AngleAuditTests.HalfSideAudit),
@@ -202,7 +205,12 @@ internal static class Program
             ("语料10:n=2 非孤立列返回未覆盖", ProductionPathAcceptanceTests.TwoQuadrantNonIsolatedIsUncovered),
             ("语料11:n=4 定理6 联合逆提升", ProductionPathAcceptanceTests.FourQuadrantTheorem6JointInverseLift),
             ("语料11:n=4 只在 axis=1 成功仍可回放", ProductionPathAcceptanceTests.FourQuadrantAxisOneOnlyStillReplays),
-            ("语料11:n=4 可交换判据与交换链一致", ProductionPathAcceptanceTests.FourQuadrantSwappableMatchesChain)
+            ("语料11:n=4 可交换判据与交换链一致", ProductionPathAcceptanceTests.FourQuadrantSwappableMatchesChain),
+
+            // 语料 12：k 列半边装配（P3 落地清单第 5 条）。
+            ("语料12:n=6/8 半边装配整图", ProductionPathAcceptanceTests.HalfAssemblyBuildsSixAndEightQuadrantGraphs),
+            ("语料12:半边装配不越权", ProductionPathAcceptanceTests.HalfAssemblyFenceOnChainFailures),
+            ("语料12:管线半边装配诊断", ProductionPathAcceptanceTests.HalfAssemblyPipelineReportsDiagnosisOnChainFailure)
         };
 
         /*

@@ -1,3 +1,4 @@
+using ShapeEditor.Core.Analysis;
 using ShapeEditor.Core.Models;
 
 namespace ShapeEditor.Core.Analysis.Production;
@@ -18,7 +19,8 @@ public sealed class Recipe
         Recipe? blockRecipe,
         IReadOnlyList<RecipeStep> steps,
         int rank,
-        ExchangeDetails? exchange)
+        ExchangeDetails? exchange,
+        HalfAssemblyDetails? halfAssembly)
     {
         Kind = kind;
         Shape = shape;
@@ -28,6 +30,7 @@ public sealed class Recipe
         Steps = steps;
         Rank = rank;
         Exchange = exchange;
+        HalfAssembly = halfAssembly;
     }
 
     public RecipeKind Kind { get; }
@@ -56,6 +59,12 @@ public sealed class Recipe
     /// </summary>
     public ExchangeDetails? Exchange { get; }
 
+    /// <summary>
+    /// k 列半边装配的完整明细（两个半边各自的 k 列半边工序 + 两条真实输入 + 一次交换）。
+    /// 只有 <see cref="RecipeKind.HalfAssembly"/> 节点会带。
+    /// </summary>
+    public HalfAssemblyDetails? HalfAssembly { get; }
+
     public static Recipe CreateExchange(
         ShapeDocument shape,
         IReadOnlyList<RecipeStep> steps,
@@ -69,7 +78,29 @@ public sealed class Recipe
             null,
             steps,
             0,
-            exchange);
+            exchange,
+            null);
+    }
+
+    /// <summary>
+    /// k 列半边装配（落地清单第 5 条）：两个半边各自用「k 列半边工序」做出来，
+    /// 再送进交换机合并成整图。没有顶针，所以 <c>Rank = 0</c>。
+    /// </summary>
+    public static Recipe CreateHalfAssembly(
+        ShapeDocument shape,
+        IReadOnlyList<RecipeStep> steps,
+        HalfAssemblyDetails details)
+    {
+        return new Recipe(
+            RecipeKind.HalfAssembly,
+            shape,
+            Array.Empty<Recipe>(),
+            null,
+            null,
+            steps,
+            0,
+            null,
+            details);
     }
 
     public static Recipe Pin(
@@ -84,6 +115,7 @@ public sealed class Recipe
             null,
             Array.Empty<RecipeStep>(),
             input.Rank + 1,
+            null,
             null);
     }
 
@@ -101,6 +133,7 @@ public sealed class Recipe
             blockRecipe,
             Array.Empty<RecipeStep>(),
             input.Rank,
+            null,
             null);
     }
 
@@ -133,7 +166,13 @@ public enum RecipeKind
     Pin,
 
     /// <summary>先造输入，再把一块 hybrid 堆上去。</summary>
-    Stack
+    Stack,
+
+    /// <summary>
+    /// k 列半边装配（落地清单第 5 条）：两个半边各自按半边工序做好，
+    /// 再送进交换机合并。交换链做不出来时才使用（见 <see cref="HalfAssembly"/>）。
+    /// </summary>
+    HalfAssembly
 }
 
 /// <summary>过程快照：给 UI 显示「这一步做完了长什么样」。</summary>
@@ -172,5 +211,29 @@ public sealed record ExchangeDetails(
     ExchangePiece P4,
     ExchangeHalf Left,
     ExchangeHalf Right,
+    ShapeDocument Product,
+    ShapeDocument? Waste);
+
+/// <summary>
+/// k 列半边装配的明细（落地清单第 5 条）。
+///
+/// <para>
+/// <see cref="LeftInput"/> / <see cref="RightInput"/> 是真正送进交换机的两个图形：
+/// 它们各自是「半球工序的前态」，旋转 <c>−Axis</c> 后半边落在固定刀口的一侧。
+/// 真实物理回放：<c>Cut(LeftInput).West</c> / <c>Cut(RightInput).East</c> 分别等于
+/// 目标的左 / 右半边，<c>Exchange(LeftInput, RightInput)</c> 的所需输出转回后等于目标。
+/// </para>
+/// </summary>
+public sealed record HalfAssemblyDetails(
+    int Axis,
+    int HalfWidth,
+    HalfWorkOrder Left,
+    HalfWorkOrder Right,
+    Recipe LeftRecipe,
+    Recipe RightRecipe,
+    ShapeDocument LeftInput,
+    ShapeDocument RightInput,
+    ShapeDocument LeftHalf,
+    ShapeDocument RightHalf,
     ShapeDocument Product,
     ShapeDocument? Waste);

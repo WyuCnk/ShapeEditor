@@ -11,19 +11,23 @@ namespace ShapeEditor.Core.Analysis;
 /// 论文算法 8 只给了两条候选（目标自身 / 联合逆提升），对 <c>cT.T.cPT</c>
 /// 这一格两条都拒绝，但半边确实可得 ⇒ 需要第三条候选。
 /// </para>
+/// <para>
+/// <b>k = n/2 列推广（P3）</b>：n ≥ 6 时半边是连续 3 列以上，三个候选的判定
+/// 与施工都按「半边宽度 = n/2」推广；n = 4（k = 2）的判定与布局保持原样。
+/// </para>
 /// </summary>
 public enum HalfCandidate
 {
-    /// <summary>算法 8 第一候选：Q 自身（两列都属 S 且 Q 稳定、一次下落仍是 Q）。</summary>
+    /// <summary>算法 8 第一候选：Q 自身（每列都属 S 且 Q 稳定、一次下落仍是 Q）。</summary>
     Algo8Self,
 
-    /// <summary>算法 8 第二候选：联合逆提升（把一对普通格整体抬高）。</summary>
+    /// <summary>算法 8 第二候选：联合逆提升（把一对相邻普通格整体抬高）。</summary>
     Algo8Uplift,
 
     /// <summary>
     /// 候选 3：临时晶体 + 保险丝 + 一刀。
     /// 目标列把 (s−2, s) 之间的普通格提到 s−1、洞填临时晶体；
-    /// 环伙伴在顶部三层与目标列咬合；保险丝柱在临时晶体那一层放一颗晶体跨刀口。
+    /// 环伙伴在顶部三层与目标列咬合；保险丝柱在临时晶体每一块的顶层各放一颗晶体跨刀口。
     /// </summary>
     TempCrystalFuse
 }
@@ -31,7 +35,7 @@ public enum HalfCandidate
 /// <summary>
 /// 半边工序的目标：一段<b>连续 n/2 列</b>（对齐交换链的轴划分）。
 ///
-/// <paramref name="Columns"/> 是原始象限索引，按环顺序排列；
+/// <paramref name="Columns"/> 是原始象限索引，按环顺序排列（k = n/2 列全部列入）；
 /// <paramref name="PrimaryColumn"/> 是本次求解的那个角所在象限
 /// （半边里第一个被核对的列）。
 /// </summary>
@@ -40,15 +44,16 @@ public sealed record WorkOrderTarget(
     int PrimaryColumn);
 
 /// <summary>
-/// 半边工序（两列一起做）。
+/// 半边工序（k 列一起做，k = n/2）。
 ///
 /// <para>
-/// 半边 = 连续 n/2 列；本记录只描述「两列一起做」的那一刀。
+/// 半边 = 连续 n/2 列（n = 4 时是 2 列，n = 6 时是 3 列，n = 8 时是 4 列）。
+/// 本记录描述「k 列一起做」的那一刀（或那次完整下落）。
 /// 子配方最多一层（docs/angle-work-order-algorithm.md §5.1），
-/// 所以这里<b>不递归</b>：<see cref="Steps"/> 的前态全是紧列。
+/// 所以这里<b>不递归</b>：<see cref="Steps"/> 的前态全是紧列 / S 列。
 /// </para>
 /// <para>
-/// <see cref="Note"/> 为 null 表示两列都逐格回放通过；非 null 时一律以
+/// <see cref="Note"/> 为 null 表示 k 列都逐格回放通过；非 null 时一律以
 /// <see cref="AngleWorkOrderBuilder.UncoveredPrefix"/> 开头（候选命中形态、
 /// 但回放没过），且 <see cref="IsComplete"/> 为 false。
 /// </para>
@@ -63,28 +68,41 @@ public sealed record HalfWorkOrder(
     int Rank)
 {
     /// <summary>
-    /// 两列是否都是「带子配方」的目标列（算法 8 的候选 1 / 2）。
+    /// k 列是否都是「带子配方」的目标列（算法 8 的候选 1 / 2）。
     ///
     /// <para>
-    /// 候选 1 / 2 的前态就是两根 <b>S 列</b>：每一列都能按单角工序（目标列 + 托柱）
-    /// 单独做出来，再直接拼合，所以两列都允许带洞（docs §6 第 7 条：
+    /// 候选 1 / 2 的前态就是 k 根 <b>S 列</b>：每一列都能按单角工序（目标列 + 托柱）
+    /// 单独做出来，再直接拼合，所以 k 列都允许带洞（docs §6 第 7 条：
     /// 带子配方的列不要求紧列）。
     /// </para>
     /// <para>
-    /// 候选 3 不同：只有 Q1 是目标列，环伙伴 Q2 与保险丝 Q4 是论文意义上的
-    /// 「辅助列」，必须紧列，因此该候选保持 <c>false</c>。
+    /// 候选 3 在 n = 4 时只有 Q1 是目标列，环伙伴 Q2 与保险丝 Q4 是论文意义上的
+    /// 「辅助列」，必须紧列，因此该候选保持 <c>false</c>；
+    /// n ≥ 6 时半边的每一列都是整图里真实存在的列（整图每列合法 ⇒ 每列都是 S），
+    /// 只有环伙伴 / 保险丝是施工出来的辅助列，所以该标记为 <c>true</c>。
     /// </para>
     /// </summary>
     public bool TargetColumnsHaveSubRecipe { get; init; }
+
+    /// <summary>
+    /// 候选 3 切割前需要顺转的象限数（顺时针为正，与 <see cref="ShapeOps.Rotate"/> 一致）；
+    /// 候选 1 / 2 不切割，恒为 0。
+    ///
+    /// <para>
+    /// 装配层要靠它把「前态」摆到固定刀口的一侧：
+    /// <c>Cut(Rotate(前态, Rotation)).West</c> 就是目标半边。
+    /// </para>
+    /// </summary>
+    public int Rotation { get; init; }
 }
 
 /// <summary>
 /// 角工序生成器（续）：<b>半边工序</b>（docs/half-side-work-order.md）。
 ///
-/// <para><b>分层</b>（§4.1 / 本仓库任务的 P1 + P2 路由）</para>
+/// <para><b>分层</b>（§4.1 / P1 + P2 + P3 的路由）</para>
 /// <code>
 /// 五项 ✘                         → NotProducible
-/// n ≥ 6                          → 现有算法（不变）
+/// n ≥ 6                          → 现有算法（不变；半边只在 BuildHalf / 装配层使用）
 /// n = 4 且 S ✔                   → 现有角工序（不变）
 /// n = 4 且 S ✘ 但五项 ✔          → 半边工序，按论文顺序试三个候选：
 ///                                   候选 1（Q 自身）→ 候选 2（联合逆提升）
@@ -93,17 +111,24 @@ public sealed record HalfWorkOrder(
 ///                                   └ 全失败   → NotProducible（保持现状语义）
 /// </code>
 ///
+/// <para><b>k = n/2 列推广（P3）</b>：半边宽度不再是常量 2，而是 <c>n/2</c>：
+/// <see cref="HalfProjection"/> 取从 <c>column</c> 起的连续 k 列，其余象限置空；
+/// 三个候选的判定与「半边目标」都按 k 列核对。n = 4 时 k = 2，所有布局与
+/// 判定退化成原来的两列版本（逐字一致）。</para>
+///
 /// <para><b>候选 1 / 2（论文算法 8，spec §2.7）</b></para>
 /// <list type="number">
-/// <item><b>候选 1 Q 自身</b>：半边两列都属于 n = 4 的 S，且 Q 稳定（一次下落后仍等于 Q）
-/// ⇒ 前态就是 Q，步骤链 <c>PreState → Target</c>，无需切割。</item>
-/// <item><b>候选 2 联合逆提升</b>：两列各有晶体且最高晶体不等高；取较低那枚的最大粘连组 G、
-/// 最低层 b；在 b 以下找最高的非空层 a，要求 a 层两列都是普通格、<c>a &lt; b−1</c>、
-/// <c>a+1 … b−1</c> 两列都空；把 a 层那对普通格整体提到 b−1 得 Q′；
-/// 再要求 Q′ 两列都属于 S 且<b>真实一次下落</b>恰好得到 Q。</item>
+/// <item><b>候选 1 Q 自身</b>：半边 k 列都属于该 n 的 S（n = 4 用五项 ∧ (D∨F)；
+/// n ≥ 6 时 S ⟺ 五项），且 Q 稳定（一次下落后仍等于 Q）⇒ 前态就是 Q，
+/// 步骤链 <c>PreState → Target</c>，无需切割。</item>
+/// <item><b>候选 2 联合逆提升</b>：k 列各有晶体且最高晶体<b>不全等高</b>；
+/// 取最低那枚的最大粘连组 G、最低层 b；在 b 以下找最高的非空层 a，
+/// 要求 a 层至少有一对<b>相邻</b>列都是普通格（水平 <c>TT</c>，不必全列）、
+/// <c>a &lt; b−1</c>、<c>a+1 … b−1</c> 所有列都空；把那对普通格整体提到 b−1 得 Q′；
+/// 再要求 Q′ 的 k 列都属于 S 且<b>真实一次下落</b>恰好得到 Q。</item>
 /// </list>
 ///
-/// <para><b>候选 3 的实测配方</b>（§2，目标 <c>cT.T.cPT</c>，8 层）</para>
+/// <para><b>候选 3 的实测配方</b>（n = 4，目标 <c>cT.T.cPT</c>，8 层）</para>
 /// <code>
 /// Q1 目标列   cTccTcPT   ← 把 s−2 的普通格提到 s−1，洞全填临时晶体
 /// Q2 环伙伴   TTTcTccc   ← 顶部三层 ccc 与 Q1 的 c-P-T 咬合成环
@@ -111,11 +136,17 @@ public sealed record HalfWorkOrder(
 /// Q4 保险丝柱 TTTc....   ← 只在临时晶体那一层（s−2）放一颗晶体，跨刀口
 /// 一刀半破 → Q1 = cT.T.cPT ✔，Q2 = TTTT.ccc
 /// </code>
+/// <para>
+/// <b>k ≥ 3 的推广</b>：环伙伴仍取半边内部与目标列相邻的那一列（<c>column+1</c>），
+/// 环因此完全落在同一半边内部；半边的其余列（<c>column+2 … column+k−1</c>）
+/// 原样保留，由真实回放核对；保险丝柱按<b>每个临时晶体块的顶层</b>各放一颗晶体
+/// （n = 4 只有一个块，退化成原来的一颗）。
+/// </para>
 ///
 /// <para><b>为什么这样能成</b></para>
 /// <list type="number">
-/// <item>Q1 的临时晶体与 Q2/Q4 在 s−2 的晶体同属一个跨刀口连通块，
-/// 半破时整块碎掉；Q1 的原生晶体都在西侧、不跨刀口，一颗不少。</item>
+/// <item>Q1 的临时晶体与 Q2 / Q4 的晶体同属跨刀口连通块，半破时整块碎掉；
+/// Q1 的原生晶体都在西侧、不跨刀口，一颗不少。</item>
 /// <item>Q1 抬到 s−1 的普通格与 Q2 同层普通格横向粘连，两格成一组整体下落一层；
 /// Q2 在 s−3 的普通格当刹车，双格恰好停在 s−2（即目标层）。</item>
 /// <item>环顶：Q1 的 s+1 是顶针（不参与横向粘连），Q2 在 s..s+2 的竖直三连晶
@@ -126,16 +157,13 @@ public sealed record HalfWorkOrder(
 /// <para>
 /// <b>禁止打表</b>：<c>s</c> 由沿列扫描得出（最高晶体层），其余层号都是相对
 /// <c>s</c> 的结构偏移；分支谓词只有「顶部三层是不是 c-P-T」「s−1 是不是洞」
-/// 「临时晶体段是否连续」这类扫描结论。
+/// 「临时晶体块是否与原生晶体纵向融合」这类扫描结论。
 /// </para>
 /// </summary>
 public static partial class AngleWorkOrderBuilder
 {
-    /// <summary>半边工序固定是 4 象限的一半（本候选只在 n = 4 启用）。</summary>
-    private const int HalfParts = 4;
-
-    /// <summary>保留侧（西半边）的列数：连续 n/2 列。</summary>
-    private const int HalfWidth = 2;
+    /// <summary>半边的最小象限数（n = 4 才有两列半边的特化；n ≥ 6 走 k 列推广）。</summary>
+    private const int HalfMinParts = 4;
 
     #region 候选派发（论文顺序：1 → 2 → 3）
 
@@ -153,7 +181,8 @@ public static partial class AngleWorkOrderBuilder
         int cap,
         AngleBuildKind kind)
     {
-        if (target.PartCount != HalfParts ||
+        if (target.PartCount < HalfMinParts ||
+            target.PartCount % 2 != 0 ||
             cap < target.LayerCount)
         {
             return null;
@@ -190,13 +219,14 @@ public static partial class AngleWorkOrderBuilder
     }
 
     /// <summary>
-    /// 独立入口：把一段半边（连续两列）按「候选 1 → 2 → 3」求解，返回第一个
-    /// 通过真实回放的半边工序。
+    /// 独立入口：把一段半边（连续 n/2 列）按「候选 1 → 2 → 3」求解，
+    /// 返回第一个通过真实回放的半边工序。
     ///
     /// <para>
     /// 角工序的 <see cref="Build"/> 只在「n = 4、五项 ✔ 但 S ✘」时进入半边分支，
-    /// 因此候选 1（要求两列都属于 S）不可能经由 <see cref="Build"/> 命中；
-    /// 它需要这个不经过 S 闸门的入口（交换链 / 整图判定也按定理 6 直接讨论半边）。
+    /// 因此候选 1（要求 k 列都属于 S）不可能经由 <see cref="Build"/> 命中；
+    /// 它需要这个不经过单角 S 闸门的入口（交换链 / 整图判定也按定理 6 直接讨论半边）。
+    /// n ≥ 6 时同样由这个入口给出 k 列半边（整图装配层使用）。
     /// </para>
     /// <para>
     /// 返回 null 表示三个候选都不适用或回放失败；不等于「半边不可得」。
@@ -223,36 +253,145 @@ public static partial class AngleWorkOrderBuilder
             cap,
             AngleClassifier.Classify(target, column));
 
-        return order is { IsComplete: true }
-            ? order.Half
-            : null;
+        if (order is not { IsComplete: true } || order.Half is null)
+        {
+            return null;
+        }
+
+        /*
+         * BuildHalf 的语义是「<b>这个目标</b>的那 k 列半边可得」：
+         * 候选 3 会把环伙伴列改写成构造形态（那是给单角 Build 用的），
+         * 若它给出的半边与目标的这 k 列不一致，就不能算这份目标的半边。
+         * 逐格比较（类型 / 形状码 / 颜色），层数不同时多出来的层必须为空。
+         */
+        if (!SameHalfColumns(
+                order.Half.Steps[^1].Shape,
+                target,
+                HalfColumns(column, target.PartCount),
+                target.PartCount))
+        {
+            return null;
+        }
+
+        return order.Half;
     }
 
     /// <summary>
-    /// 把目标里的半边（从 <paramref name="column"/> 起连续两列）投影成独立图形，
+    /// 逐格比较「某 k 列」：类型 / 形状码 / 颜色都要一致；
+    /// 两侧层数不同时，多出来的层必须为空。
+    /// </summary>
+    private static bool SameHalfColumns(
+        ShapeDocument? shape,
+        ShapeDocument? other,
+        int[] columns,
+        int parts)
+    {
+        if (shape is null || other is null)
+        {
+            return false;
+        }
+
+        int layers = Math.Max(shape.LayerCount, other.LayerCount);
+
+        for (int layer = 0; layer < layers; layer++)
+        {
+            foreach (int column in columns)
+            {
+                ShapeCell left = layer < shape.LayerCount
+                    ? shape[layer, Wrap(column, parts)]
+                    : ShapeCell.Empty();
+
+                ShapeCell right = layer < other.LayerCount
+                    ? other[layer, Wrap(column, parts)]
+                    : ShapeCell.Empty();
+
+                if (!ShapeOps.SameCell(left, right))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// 把目标里的半边（从 <paramref name="column"/> 起连续 n/2 列）投影成独立图形，
     /// 并补足到 <paramref name="cap"/> 层（其余象限整列为空）。
-    /// 题设的半边 Q 只讨论这两列，目标其余象限不属于本次半边工序。
+    /// 题设的半边 Q 只讨论这 k 列，目标其余象限不属于本次半边工序。
     /// </summary>
     private static ShapeDocument HalfProjection(
         ShapeDocument target,
         int column,
         int cap)
     {
-        var half = new ShapeDocument(cap, HalfParts);
+        int parts = target.PartCount;
+        int width = parts / 2;
+        var half = new ShapeDocument(cap, parts);
 
         for (int layer = 0;
              layer < target.LayerCount && layer < cap;
              layer++)
         {
-            for (int index = 0; index < HalfWidth; index++)
+            for (int index = 0; index < width; index++)
             {
-                int part = Wrap(column + index, HalfParts);
+                int part = Wrap(column + index, parts);
 
                 half[layer, part] = target[layer, part].Clone();
             }
         }
 
         return half;
+    }
+
+    /// <summary>半边覆盖的 k 个象限索引（按环顺序）。</summary>
+    private static int[] HalfColumns(
+        int column,
+        int parts)
+    {
+        int width = parts / 2;
+        var columns = new int[width];
+
+        for (int index = 0; index < width; index++)
+        {
+            columns[index] = Wrap(column + index, parts);
+        }
+
+        return columns;
+    }
+
+    /// <summary>
+    /// 某个 n 下的「带柱列 S」判据：
+    /// n = 4 用论文定理 3（五项 ∧ (D∨F)）；n ≥ 6 用定理 2（S ⟺ 五项）。
+    /// </summary>
+    private static bool IsSColumn(
+        string text,
+        int parts)
+    {
+        return parts >= 6
+            ? ShapeSignature.CheckColumn(text).IsLegal
+            : PillarSCriterion.IsPillarColumn(text);
+    }
+
+    /// <summary>k 列是否全部都属于该 n 的 S。</summary>
+    private static bool AllHalfColumnsAreS(
+        ShapeDocument half,
+        int column,
+        int parts)
+    {
+        int width = parts / 2;
+
+        for (int index = 0; index < width; index++)
+        {
+            int part = Wrap(column + index, parts);
+
+            if (!IsSColumn(ShapeSignature.ColumnText(half, part), parts))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>某一列最高晶体的层号（0 起），没有晶体返回 −1。层号由沿列扫描得出。</summary>
@@ -322,15 +461,15 @@ public static partial class AngleWorkOrderBuilder
     ///
     /// <para><b>逐条扫描判定</b></para>
     /// <list type="number">
-    /// <item>第 <paramref name="column"/> 列与环上的下一列都通过 n = 4 的 S 判据
-    /// （<see cref="PillarSCriterion"/>：五项 ∧ (D∨F)）；</item>
+    /// <item>半边的 k 列（从 <paramref name="column"/> 起的连续 n/2 列）都属于该 n 的 S
+    /// （n = 4：<see cref="PillarSCriterion"/> 五项 ∧ (D∨F)；n ≥ 6：五项）；</item>
     /// <item>Q 稳定：一次 <see cref="ShapePhysics.Collapse"/> 后仍逐格等于 Q；</item>
     /// <item>都通过 ⇒ 前态 = Q 本身，步骤链 <c>PreState → Target</c>，不切割、不下落。</item>
     /// </list>
     ///
     /// <para>
-    /// 两列都是 S ⇒ 每一列都能按单角工序（目标列 + 托柱）单独做出来，
-    /// 再直接拼合成这一段半边；所以两列都按「带子配方」处理，允许带洞。
+    /// k 列都是 S ⇒ 每一列都能按单角工序（目标列 + 托柱）单独做出来，
+    /// 再直接拼合成这 k 列半边；所以 k 列都按「带子配方」处理，允许带洞。
     /// </para>
     /// </summary>
     private static AngleWorkOrder? TryBuildAlgo8Self(
@@ -339,15 +478,12 @@ public static partial class AngleWorkOrderBuilder
         int cap,
         AngleBuildKind kind)
     {
-        int partnerColumn = Wrap(column + 1, HalfParts);
+        int parts = target.PartCount;
+        int width = parts / 2;
         ShapeDocument half = HalfProjection(target, column, cap);
 
-        string columnText = ShapeSignature.ColumnText(half, column);
-        string partnerText = ShapeSignature.ColumnText(half, partnerColumn);
-
-        // 第一候选 ①：两列都属于 n = 4 的 S。
-        if (!PillarSCriterion.IsPillarColumn(columnText) ||
-            !PillarSCriterion.IsPillarColumn(partnerText))
+        // 第一候选 ①：k 列都属于该 n 的 S。
+        if (!AllHalfColumnsAreS(half, column, parts))
         {
             return null;
         }
@@ -362,20 +498,23 @@ public static partial class AngleWorkOrderBuilder
 
         // 第一候选 ③：前态 = Q 本身，无需切割。
         var limitations = BaseLimitations(
-            "半边工序（候选 1：算法 8 第一候选 Q 自身）：半边 = 连续 2 列（n/2）。" +
-            "两列都属于 n = 4 的 S，且 Q 一次下落后仍是 Q，所以前态就是目标半边本身；" +
-            "两列各自按单角工序做好后直接拼合，不需要碎晶、不需要切割。");
+            $"半边工序（候选 1：算法 8 第一候选 Q 自身）：半边 = 连续 {width} 列（n/2 = {width}）。" +
+            "k 列都属于该象限数下的 S，且 Q 一次下落后仍是 Q，所以前态就是目标半边本身；" +
+            "每列各自按单角工序做好后直接拼合，不需要碎晶、不需要切割。");
+
+        var columns = HalfColumns(column, parts);
 
         limitations.Add(
-            $"扫描结果：第 {column + 1} 象限 = {Trim(columnText)}，" +
-            $"第 {partnerColumn + 1} 象限 = {Trim(partnerText)}；" +
-            "两列都通过 n = 4 的 S 判据（五项 ∧ (D∨F)）。");
+            "扫描结果：" + DescribeColumns(half, columns, parts) +
+            $"；{width} 列都通过该 n 的 S 判据（" +
+            (parts >= 6 ? "n ≥ 6：五项条件" : "n = 4：五项 ∧ (D∨F)") + "）。");
         limitations.Add(
             "前态即目标半边：一次完整下落逐格核对无变化（Q 稳定）；" +
-            "两列都是带子配方的目标列，允许带洞。");
+            "k 列都是带子配方的目标列，允许带洞。");
         limitations.Add(
-            "没有辅助列：另外两个象限整列为空（不参与产物的象限允许留空）；" +
-            "这两列不是辅助列，而是各自可独立制作的目标列。");
+            "没有辅助列：另外 " + (parts - width) +
+            " 个象限整列为空（不参与产物的象限允许留空）；" +
+            "这 k 列不是辅助列，而是各自可独立制作的目标列。");
 
         return BuildPaperHalfOrder(
             target,
@@ -385,6 +524,7 @@ public static partial class AngleWorkOrderBuilder
             half,
             half,
             collapseStep: null,
+            columns,
             limitations);
     }
 
@@ -393,17 +533,17 @@ public static partial class AngleWorkOrderBuilder
     #region 候选 2：算法 8 第二候选（联合逆提升）
 
     /// <summary>
-    /// 候选 2：联合逆提升（论文算法 8 第二候选，spec §2.7）。
+    /// 候选 2：联合逆提升（论文算法 8 第二候选，spec §2.7；k 列推广）。
     ///
     /// <para><b>逐条扫描判定</b></para>
     /// <list type="number">
-    /// <item>两列各有晶体，且两枚最高晶体<b>不等高</b>（有一列没有晶体、或等高 ⇒ 拒绝）；</item>
+    /// <item>k 列各有晶体，且 k 枚最高晶体<b>不全等高</b>（有列没有晶体、或全部等高 ⇒ 拒绝）；</item>
     /// <item>取较低的那一枚，按规格 §1.2 找它的最大粘连组 G，其最低层记为 b；</item>
     /// <item>在 b 以下找<b>最高非空层</b> a（任一列有材料就算）；</item>
-    /// <item>要求：a 层两列都是普通格（水平 <c>TT</c>）、<c>a &lt; b−1</c>、
-    /// <c>a+1 … b−1</c> 两列都为空；</item>
-    /// <item>把 a 层那对普通格整体提到 b−1，其余格子不动 ⇒ 候选前态 Q′；</item>
-    /// <item>Q′ 两列都属 S，且真实一次下落恰好得到 Q ⇒ 接受。</item>
+    /// <item>要求：a 层<b>至少一对相邻列都是普通格</b>（水平 <c>TT</c>，不必全列）、
+    /// <c>a &lt; b−1</c>、<c>a+1 … b−1</c> 所有列都为空；</item>
+    /// <item>把那对普通格整体提到 b−1，其余格子不动 ⇒ 候选前态 Q′；</item>
+    /// <item>Q′ 的 k 列都属 S，且真实一次下落恰好得到 Q ⇒ 接受。</item>
     /// </list>
     ///
     /// <para>
@@ -417,25 +557,83 @@ public static partial class AngleWorkOrderBuilder
         int cap,
         AngleBuildKind kind)
     {
-        int partnerColumn = Wrap(column + 1, HalfParts);
+        int parts = target.PartCount;
+        int width = parts / 2;
         ShapeDocument half = HalfProjection(target, column, cap);
+        int[] columns = HalfColumns(column, parts);
 
-        // 第二候选 1：两列各有晶体，且最高晶体不等高。
-        int columnCrystal = HighestCrystal(half, column);
-        int partnerCrystal = HighestCrystal(half, partnerColumn);
+        // 第二候选 1：k 列各有晶体，且最高晶体不全等高。
+        var highest = new int[width];
+        int lowest = int.MaxValue;
 
-        if (columnCrystal < 0 || partnerCrystal < 0)
+        for (int index = 0; index < width; index++)
+        {
+            highest[index] = HighestCrystal(half, columns[index]);
+
+            if (highest[index] < 0)
+            {
+                return null;
+            }
+
+            lowest = Math.Min(lowest, highest[index]);
+        }
+
+        bool allEqual = true;
+
+        for (int index = 0; index < width; index++)
+        {
+            if (highest[index] != lowest)
+            {
+                allEqual = false;
+                break;
+            }
+        }
+
+        if (allEqual)
         {
             return null;
         }
 
-        if (columnCrystal == partnerCrystal)
+        // 第二候选 2 / 3 / 4 / 5 / 6：对每一枚「最低的最高晶体」各试一次。
+        for (int lowerIndex = 0; lowerIndex < width; lowerIndex++)
         {
-            return null;
+            if (highest[lowerIndex] != lowest)
+            {
+                continue;
+            }
+
+            AngleWorkOrder? order = TryLiftHalf(
+                target,
+                column,
+                cap,
+                kind,
+                half,
+                columns,
+                lowest,
+                columns[lowerIndex]);
+
+            if (order is not null)
+            {
+                return order;
+            }
         }
 
-        int lowerLayer = Math.Min(columnCrystal, partnerCrystal);
-        int lowerColumn = columnCrystal < partnerCrystal ? column : partnerColumn;
+        return null;
+    }
+
+    /// <summary>候选 2：以 <paramref name="lowerColumn"/> 那枚较低晶体为起点尝试联合逆提升。</summary>
+    private static AngleWorkOrder? TryLiftHalf(
+        ShapeDocument target,
+        int column,
+        int cap,
+        AngleBuildKind kind,
+        ShapeDocument half,
+        int[] columns,
+        int lowerLayer,
+        int lowerColumn)
+    {
+        int parts = target.PartCount;
+        int width = parts / 2;
 
         // 第二候选 2：较低那枚的最大粘连组 G 的最低层 b。
         int bottom = GroupBottom(half, lowerLayer, lowerColumn);
@@ -452,8 +650,18 @@ public static partial class AngleWorkOrderBuilder
              layer >= 0;
              layer--)
         {
-            if (half[layer, column].Type != CellType.Empty ||
-                half[layer, partnerColumn].Type != CellType.Empty)
+            bool nonEmpty = false;
+
+            foreach (int part in columns)
+            {
+                if (half[layer, part].Type != CellType.Empty)
+                {
+                    nonEmpty = true;
+                    break;
+                }
+            }
+
+            if (nonEmpty)
             {
                 liftFrom = layer;
                 break;
@@ -465,13 +673,7 @@ public static partial class AngleWorkOrderBuilder
             return null;
         }
 
-        // 第二候选 4：a 层两列都是普通格、a < b−1、a+1 … b−1 两列都空。
-        if (half[liftFrom, column].Type != CellType.Shape ||
-            half[liftFrom, partnerColumn].Type != CellType.Shape)
-        {
-            return null;
-        }
-
+        // 第二候选 4：a < b−1，且 a+1 … b−1 所有列都空。
         if (liftFrom >= bottom - 1)
         {
             return null;
@@ -481,30 +683,55 @@ public static partial class AngleWorkOrderBuilder
              layer <= bottom - 1;
              layer++)
         {
-            if (half[layer, column].Type != CellType.Empty ||
-                half[layer, partnerColumn].Type != CellType.Empty)
+            foreach (int part in columns)
             {
-                return null;
+                if (half[layer, part].Type != CellType.Empty)
+                {
+                    return null;
+                }
             }
         }
 
-        // 第二候选 5：把这对普通格一起从 a 提到 b−1，其他格子不动 ⇒ Q′。
+        // 第二候选 5：a 层至少一对相邻列都是普通格（水平 TT），把它俩一起提到 b−1。
         int liftTo = bottom - 1;
+        int liftedPairFirst = -1;
+
+        for (int index = 0; index + 1 < width; index++)
+        {
+            int first = columns[index];
+            int second = columns[index + 1];
+
+            if (half[liftFrom, first].Type != CellType.Shape ||
+                half[liftFrom, second].Type != CellType.Shape)
+            {
+                continue;
+            }
+
+            liftedPairFirst = index;
+            break;
+        }
+
+        if (liftedPairFirst < 0)
+        {
+            return null;
+        }
+
+        int liftFirst = columns[liftedPairFirst];
+        int liftSecond = columns[liftedPairFirst + 1];
 
         ShapeDocument preState = half.Clone();
 
-        ShapeCell columnCell = half[liftFrom, column].Clone();
-        ShapeCell partnerCell = half[liftFrom, partnerColumn].Clone();
+        ShapeCell firstCell = half[liftFrom, liftFirst].Clone();
+        ShapeCell secondCell = half[liftFrom, liftSecond].Clone();
 
-        preState[liftFrom, column] = ShapeCell.Empty();
-        preState[liftFrom, partnerColumn] = ShapeCell.Empty();
+        preState[liftFrom, liftFirst] = ShapeCell.Empty();
+        preState[liftFrom, liftSecond] = ShapeCell.Empty();
 
-        preState[liftTo, column] = columnCell;
-        preState[liftTo, partnerColumn] = partnerCell;
+        preState[liftTo, liftFirst] = firstCell;
+        preState[liftTo, liftSecond] = secondCell;
 
-        // 第二候选 6：Q′ 两列都属 S，且真实一次下落恰好得到 Q。
-        if (!PillarSCriterion.IsPillarColumn(preState, column) ||
-            !PillarSCriterion.IsPillarColumn(preState, partnerColumn))
+        // 第二候选 6：Q′ 的 k 列都属 S，且真实一次下落恰好得到 Q。
+        if (!AllHalfColumnsAreS(preState, column, parts))
         {
             return null;
         }
@@ -517,25 +744,24 @@ public static partial class AngleWorkOrderBuilder
         }
 
         var limitations = BaseLimitations(
-            "半边工序（候选 2：算法 8 联合逆提升）：半边 = 连续 2 列（n/2）。" +
-            "把较低晶体粘连组下方那一对普通格整体抬高，使两根 S 列拼合后" +
-            "一次完整下落恰好得到目标半边；两列都按带子配方的目标列处理，允许带洞。");
+            $"半边工序（候选 2：算法 8 联合逆提升）：半边 = 连续 {width} 列（n/2 = {width}）。" +
+            "把较低晶体粘连组下方那一对相邻普通格整体抬高，使 k 根 S 列拼合后" +
+            "一次完整下落恰好得到目标半边；k 列都按带子配方的目标列处理，允许带洞。");
 
         limitations.Add(
-            $"扫描结果：第 {column + 1} 象限最高晶体 = 第 {columnCrystal + 1} 层，" +
-            $"第 {partnerColumn + 1} 象限最高晶体 = 第 {partnerCrystal + 1} 层" +
-            $"（取较低者）；粘连组最低层 b = 第 {bottom + 1} 层。");
+            "扫描结果：" + DescribeColumns(half, columns, parts) +
+            $"；粘连组最低层 b = 第 {bottom + 1} 层（起点：第 {lowerColumn + 1} 象限第 {lowerLayer + 1} 层）。");
         limitations.Add(
-            $"逆提升：a = 第 {liftFrom + 1} 层（b 以下最高非空层，两列都是普通格）→ " +
-            $"第 {liftTo + 1} 层；a+1 … b−1 两列都空。" +
-            $"前态 Q′：第 {column + 1} 象限 = {Trim(ShapeSignature.ColumnText(preState, column))}，" +
-            $"第 {partnerColumn + 1} 象限 = {Trim(ShapeSignature.ColumnText(preState, partnerColumn))}。");
+            $"逆提升：a = 第 {liftFrom + 1} 层（b 以下最高非空层，相邻普通格在第 " +
+            $"{liftFirst + 1}、{liftSecond + 1} 象限）→ 第 {liftTo + 1} 层；" +
+            $"a+1 … b−1 所有列都空。" + DescribeColumns(preState, columns, parts, "前态 Q′："));
         limitations.Add(
             "步骤链：前态 Q′ → 一次完整下落（真实 Collapse）→ 半边目标；" +
-            "没有切割，两个下落前的列都通过 n = 4 的 S 判据。");
+            "没有切割，k 列都通过该 n 的 S 判据。");
         limitations.Add(
-            "没有辅助列：另外两个象限整列为空（不参与产物的象限允许留空）；" +
-            "这两列不是辅助列，而是各自可独立制作的目标列。");
+            "没有辅助列：另外 " + (parts - width) +
+            " 个象限整列为空（不参与产物的象限允许留空）；" +
+            "这 k 列不是辅助列，而是各自可独立制作的目标列。");
 
         return BuildPaperHalfOrder(
             target,
@@ -545,6 +771,7 @@ public static partial class AngleWorkOrderBuilder
             preState,
             half,
             collapsed,
+            columns,
             limitations);
     }
 
@@ -553,11 +780,11 @@ public static partial class AngleWorkOrderBuilder
     #region 候选 3：临时晶体 + 保险丝 + 一刀
 
     /// <summary>
-    /// 候选 3：临时晶体 + 保险丝 + 一刀。
+    /// 候选 3：临时晶体 + 保险丝 + 一刀（k 列推广）。
     ///
     /// <para>
     /// 返回 null 表示目标列<b>不在候选 3 的形态范围</b>里（顶部三层不是 c-P-T、
-    /// s−1 不是洞、临时晶体段不连续……），调用方按原语义报「不可制作」。
+    /// s−1 不是洞、临时晶体块与原生晶体纵向融合……），调用方按原语义报「不可制作」。
     /// 返回非 null 时：要么是回放验证通过的完整工序（含 <see cref="HalfWorkOrder"/>），
     /// 要么是形态命中但回放没过的「未覆盖」工序（IsComplete = false，只保留已验证前缀）。
     /// </para>
@@ -568,7 +795,11 @@ public static partial class AngleWorkOrderBuilder
         int cap,
         AngleBuildKind kind)
     {
-        if (target.PartCount != HalfParts ||
+        int parts = target.PartCount;
+        int width = parts / 2;
+
+        if (parts < HalfMinParts ||
+            parts % 2 != 0 ||
             cap < target.LayerCount)
         {
             return null;
@@ -576,9 +807,18 @@ public static partial class AngleWorkOrderBuilder
 
         string text = ShapeSignature.ColumnText(target, column);
 
-        // 只处理「五项 ✔ 且不属于 S」的合法角（S 由调用方先判掉）。
-        if (!ShapeSignature.CheckColumn(text).IsLegal ||
-            PillarSCriterion.IsPillarColumn(text))
+        /*
+         * 目标列必须是合法列（五项 ✔）：
+         *   n = 4 时这一族正好是「S ✘」的合法角（D、F 都不成立）；
+         *   n ≥ 6 时 S ⟺ 五项，候选 1 会先命中，这里只在候选 1 / 2 失败时被调用，
+         *   因此不再要求「S ✘」，只要求合法。
+         */
+        if (!ShapeSignature.CheckColumn(text).IsLegal)
+        {
+            return null;
+        }
+
+        if (parts == 4 && PillarSCriterion.IsPillarColumn(text))
         {
             return null;
         }
@@ -586,8 +826,8 @@ public static partial class AngleWorkOrderBuilder
         /*
          * 顶部三层的环：
          *   s   = 最高晶体层（沿列扫描，不是查表）
-         *   s+1 = 顶针（不参与横向粘连 ⇒ 环必须从 Q2 的竖直晶体段绕过去）
-         *   s+2 = 普通格（与 Q2 顶层晶体横向咬合，闭合循环支撑）
+         *   s+1 = 顶针（不参与横向粘连 ⇒ 环必须从环伙伴的竖直晶体段绕过去）
+         *   s+2 = 普通格（与环伙伴顶层晶体横向咬合，闭合循环支撑）
          */
         int s = text.LastIndexOf(ShapeSignature.CrystalCode);
 
@@ -604,7 +844,7 @@ public static partial class AngleWorkOrderBuilder
 
         /*
          * 抬升：目标在 s−1 必须留洞、s−2 必须是普通格。
-         * 把 s−2 的普通格搬到 s−1（与 Q2 同层普通格配对），s−2 让出的位置
+         * 把 s−2 的普通格搬到 s−1（与环伙伴同层普通格配对），s−2 让出的位置
          * 和其余洞一起填临时晶体——这正是「不写打表、只按结构扫描」的形态谓词。
          */
         if (text[s - 1] != ShapeSignature.EmptyCode ||
@@ -617,7 +857,7 @@ public static partial class AngleWorkOrderBuilder
 
         Array.Fill(preColumn, ShapeSignature.EmptyCode);
 
-        for (int layer = 0; layer < text.Length; layer++)
+        for (int layer = 0; layer < text.Length && layer < cap; layer++)
         {
             preColumn[layer] = text[layer];
         }
@@ -633,50 +873,47 @@ public static partial class AngleWorkOrderBuilder
             }
         }
 
-        // 临时晶体段必须连续、且贴着 s−2：整段才会与保险丝同属一个连通块。
-        var temporaryLayers = new List<int>();
+        /*
+         * 临时晶体块：preColumn 是晶体、目标列不是晶体的连续层段。
+         * n = 4 的实测形态只有一个块（上端正是 s−2）；
+         * k ≥ 3 / 多缺口形态可能有多个块，每块都要单独接一根保险丝。
+         */
+        List<(int Bottom, int Top)> blocks = TemporaryCrystalBlocks(
+            preColumn,
+            text,
+            s);
 
-        for (int layer = 0; layer < s; layer++)
-        {
-            if (preColumn[layer] == ShapeSignature.CrystalCode &&
-                text[layer] != ShapeSignature.CrystalCode)
-            {
-                temporaryLayers.Add(layer);
-            }
-        }
-
-        if (temporaryLayers.Count == 0 ||
-            temporaryLayers[^1] != s - 2)
+        if (blocks.Count == 0)
         {
             return null;
         }
 
-        for (int index = 0; index < temporaryLayers.Count; index++)
+        foreach ((int blockBottom, int blockTop) in blocks)
         {
-            if (temporaryLayers[index] !=
-                s - 2 - (temporaryLayers.Count - 1 - index))
+            /*
+             * 临时晶体块的上 / 下端不能与目标原生晶体纵向融合：
+             * 融合之后碎晶会连带炸掉目标列的原生晶体（§5 规则二）。
+             */
+            if (blockTop + 1 < text.Length &&
+                text[blockTop + 1] == ShapeSignature.CrystalCode)
+            {
+                return null;
+            }
+
+            if (blockBottom > 0 &&
+                text[blockBottom - 1] == ShapeSignature.CrystalCode)
             {
                 return null;
             }
         }
 
-        // 临时晶体段下端不能紧贴目标原生晶体：纵向融合会把原生晶体一起炸掉。
-        int blockBottom = temporaryLayers[0];
-
-        if (blockBottom > 0 &&
-            text[blockBottom - 1] == ShapeSignature.CrystalCode)
-        {
-            return null;
-        }
-
-        int partnerColumn = Wrap(column + 1, HalfParts);
-        int emptyColumn = Wrap(column + 2, HalfParts);
-        int fuseColumn = Wrap(column - 1, HalfParts);
-        int rotation = Wrap(-column, HalfParts);
+        int partnerColumn = Wrap(column + 1, parts);
+        int fuseColumn = Wrap(column - 1, parts);
+        int rotation = Wrap(-column, parts);
         char color = CrystalColor(target, column);
 
         /*
-         * Q2 环伙伴（紧列）：
+         * 环伙伴（紧列，位于同一半边内部、与目标列相邻）：
          *   0 … s−3  普通格（s−3 这一枚是双格下落时的刹车）
          *   s−2      晶体（与临时晶体同层，一刀碎掉，腾出落点）
          *   s−1      普通格（与 Q1 抬升的普通格横向粘连、配对下落）
@@ -700,20 +937,31 @@ public static partial class AngleWorkOrderBuilder
         partner[s + 2] = ShapeSignature.CrystalCode;
 
         /*
-         * Q4 保险丝柱（紧列）：只在临时晶体所在的「s−2」层放一颗晶体，
+         * 保险丝柱（紧列）：在每个临时晶体块的「顶层」各放一颗晶体，
          * 与 Q1 的临时晶体横向相邻（跨刀口），其余层用普通格垫满。
+         * n = 4 时只有一个块，上端 = s−2，退化成原来的一颗保险丝。
          */
-        for (int layer = 0; layer <= s - 2; layer++)
+        int highestBlockTop = 0;
+
+        foreach ((int _, int blockTop) in blocks)
+        {
+            highestBlockTop = Math.Max(highestBlockTop, blockTop);
+        }
+
+        for (int layer = 0; layer <= highestBlockTop; layer++)
         {
             fuse[layer] = ShapeSignature.SolidCode;
         }
 
-        fuse[s - 2] = ShapeSignature.CrystalCode;
+        foreach ((int _, int blockTop) in blocks)
+        {
+            fuse[blockTop] = ShapeSignature.CrystalCode;
+        }
 
         string partnerText = new string(partner);
         string fuseText = new string(fuse);
 
-        var preState = new ShapeDocument(cap, HalfParts);
+        var preState = new ShapeDocument(cap, parts);
 
         /*
          * Q1：保留目标列的原生格（形状码 / 颜色逐格沿用），
@@ -734,6 +982,23 @@ public static partial class AngleWorkOrderBuilder
         WriteColumn(preState, partnerColumn, partnerText, color);
         WriteColumn(preState, fuseColumn, fuseText, color);
 
+        /*
+         * k ≥ 3：半边的其余列（column+2 … column+k−1）原样保留——
+         * 它们也是目标半边的一部分，由真实回放逐格核对。
+         * k = 2 时这个循环不执行，其余象限保持为空（与原两列版本一致）。
+         */
+        for (int index = 2; index < width; index++)
+        {
+            int part = Wrap(column + index, parts);
+
+            for (int layer = 0; layer < cap; layer++)
+            {
+                preState[layer, part] = layer < target.LayerCount
+                    ? target[layer, part].Clone()
+                    : ShapeCell.Empty();
+            }
+        }
+
         string expectedPartner = BuildHalfPartnerColumn(s, cap);
 
         ShapeDocument expectedHalf = BuildHalfExpectation(
@@ -742,47 +1007,54 @@ public static partial class AngleWorkOrderBuilder
             cap,
             partnerColumn,
             expectedPartner,
-            color);
+            color,
+            parts);
 
-        var auxiliaryColumns = new[]
-        {
-            partnerColumn,
-            emptyColumn,
-            fuseColumn
-        };
+        int[] auxiliaryColumns = parts == 4
+            ? new[] { partnerColumn, Wrap(column + 2, parts), fuseColumn }
+            : new[] { partnerColumn, fuseColumn };
 
         var limitations = BaseLimitations(
-            "半边工序（候选 3：临时晶体 + 保险丝 + 一刀）：半边 = 连续 2 列（n/2），" +
-            "与交换链的轴划分一致。Q1 抬升 + 临时晶体、Q2 顶部 c-P-T ↔ c-c-c 咬合、" +
-            "Q4 只在临时晶体那一层放保险丝晶体；半破后两列逐格核对。");
+            $"半边工序（候选 3：临时晶体 + 保险丝 + 一刀）：半边 = 连续 {width} 列（n/2 = {width}），" +
+            "与交换链的轴划分一致。Q1 抬升 + 临时晶体、环伙伴顶部 c-P-T ↔ c-c-c 咬合、" +
+            "保险丝柱在每个临时晶体块的顶层各放一颗晶体；半破后 k 列逐格核对。");
 
         limitations.Add(
             $"扫描结果：s = 第 {s + 1} 层（最高晶体），抬升层 = 第 {s - 1} 层 → 第 {s} 层，" +
-            $"临时晶体段 = 第 {blockBottom + 1}–{s - 1} 层。");
+            $"临时晶体块 = " + DescribeBlocks(blocks) + "。");
         limitations.Add(
-            $"前态：Q1 = {new string(preColumn).TrimEnd(ShapeSignature.EmptyCode)}，" +
-            $"Q2（第 {partnerColumn + 1} 象限）= {partnerText.TrimEnd(ShapeSignature.EmptyCode)}，" +
-            $"Q4（第 {fuseColumn + 1} 象限）= {fuseText.TrimEnd(ShapeSignature.EmptyCode)}，" +
-            $"第 {emptyColumn + 1} 象限留空。");
+            $"前态：Q1 = {Trim(preColumn)}，" +
+            $"环伙伴（第 {partnerColumn + 1} 象限）= {partnerText.TrimEnd(ShapeSignature.EmptyCode)}，" +
+            $"保险丝（第 {fuseColumn + 1} 象限）= {fuseText.TrimEnd(ShapeSignature.EmptyCode)}。" +
+            (width > 2
+                ? "其余半边列原样保留：" + DescribeColumns(
+                    preState,
+                    HalfColumns(column, parts),
+                    parts,
+                    string.Empty)
+                : ""));
         limitations.Add(
-            $"切割轴：顺转 {rotation} 个象限，使保留侧（西 = 第 1、2 位）正好是" +
-            $"「目标列 + 环伙伴」，保险丝柱落在被丢弃的一侧（第 4 位）。");
+            $"切割轴：顺转 {rotation} 个象限，使保留侧（西 = 第 1…{width} 位）正好是" +
+            "「目标列 + 环伙伴 + 其余半边列」，保险丝柱落在被丢弃的一侧。");
         limitations.Add(
-            $"半破后的两列：第 {column + 1} 象限 = {text}，" +
-            $"第 {partnerColumn + 1} 象限 = {expectedPartner.TrimEnd(ShapeSignature.EmptyCode)}" +
+            $"半破后的 k 列：" + DescribeColumns(expectedHalf, HalfColumns(column, parts), parts) +
             "（都按类型 / 形状码 / 颜色逐格核对）。");
         limitations.Add(
             "辅助列全程紧列（docs §5 规则六 / §6 第 7 条 / §17.7）：" +
-            "Q2 需要让位的那一层放晶体、Q4 的保险丝层放晶体，半破时与临时晶体一起碎掉。");
+            "环伙伴需要让位的那一层放晶体、保险丝在临时晶体块的顶层放晶体，" +
+            "半破时与临时晶体一起碎掉。");
 
         // ── 验收条件一 / 七：前态每列合法且紧列，目标列 ≠ 目标 ──
+        int[] columnsWithSubRecipe = parts >= 6
+            ? HalfColumns(column, parts)
+            : Array.Empty<int>();
+
         if (ShapeSignature.ColumnText(preState, column) == text ||
             !ShapeSignature.AllColumnsLegal(preState, out _) ||
             !ShapeOps.IsStable(preState) ||
             HasIllegalColumnHoles(
                 preState,
-                column,
-                targetColumnHasSubRecipe: false,
+                columnsWithSubRecipe,
                 out _))
         {
             return BuildHalfFailure(
@@ -795,32 +1067,37 @@ public static partial class AngleWorkOrderBuilder
                 cutResult: null,
                 rotation,
                 auxiliaryColumns,
+                columns: HalfColumns(column, parts),
                 limitations);
         }
 
         // ── 一刀半破：真实 ShapePhysics.Cut ──
         ShapeDocument rotated = ShapeOps.Rotate(preState, rotation);
 
-        int targetRotated = Wrap(column + rotation, HalfParts);
-        int partnerRotated = Wrap(partnerColumn + rotation, HalfParts);
-        int fuseRotated = Wrap(fuseColumn + rotation, HalfParts);
+        int targetRotated = Wrap(column + rotation, parts);
+        int partnerRotated = Wrap(partnerColumn + rotation, parts);
+        int fuseRotated = Wrap(fuseColumn + rotation, parts);
 
         // 保留侧必须同时含目标列与环伙伴；保险丝柱必须落在被丢弃的一侧。
-        if (targetRotated >= HalfWidth ||
-            partnerRotated >= HalfWidth ||
-            fuseRotated < HalfWidth)
+        if (targetRotated >= width ||
+            partnerRotated >= width ||
+            fuseRotated < width)
         {
             return null;
         }
 
         /*
-         * 保险丝必须真的跨刀口：旋转后它在被丢弃侧（第 4 位），
-         * 同层与目标列的临时晶体横向相邻——这样半破才会把它连临时晶体整段碎掉。
+         * 保险丝必须真的跨刀口：旋转后它在被丢弃侧，
+         * 在每个临时晶体块的顶层与目标列的临时晶体横向相邻——
+         * 这样半破才会把每一块连保险丝整段碎掉。
          */
-        if (rotated[s - 2, fuseRotated].Type != CellType.Crystal ||
-            rotated[s - 2, targetRotated].Type != CellType.Crystal)
+        foreach ((int _, int blockTop) in blocks)
         {
-            return null;
+            if (rotated[blockTop, fuseRotated].Type != CellType.Crystal ||
+                rotated[blockTop, targetRotated].Type != CellType.Crystal)
+            {
+                return null;
+            }
         }
 
         CutResult cut = ShapePhysics.Cut(rotated);
@@ -836,6 +1113,7 @@ public static partial class AngleWorkOrderBuilder
                 cutResult: null,
                 rotation,
                 auxiliaryColumns,
+                columns: HalfColumns(column, parts),
                 limitations);
         }
 
@@ -848,16 +1126,17 @@ public static partial class AngleWorkOrderBuilder
                 target,
                 column,
                 kind,
-                "半破后的西半边不稳定或含非法列，两列无法逐格对上目标半边",
+                "半破后的西半边不稳定或含非法列，k 列无法逐格对上目标半边",
                 preState,
                 cutResult: null,
                 rotation,
                 auxiliaryColumns,
+                columns: HalfColumns(column, parts),
                 limitations);
         }
 
-        // 断口两侧的晶体必须全部碎掉：临时晶体 + Q2 的闸门晶体；
-        // 目标列的原生晶体一颗不少、Q2 顶部三连晶保留。
+        // 断口两侧的晶体必须全部碎掉：临时晶体（含全部块）+ 环伙伴的闸门晶体；
+        // 目标列的原生晶体一颗不少、环伙伴顶部三连晶保留。
         int targetCrystals = CountCrystalsInText(text);
 
         if (CrystalsInColumn(west, targetRotated) != targetCrystals ||
@@ -872,26 +1151,31 @@ public static partial class AngleWorkOrderBuilder
                 cutResult: null,
                 rotation,
                 auxiliaryColumns,
+                columns: HalfColumns(column, parts),
                 limitations);
         }
 
         ShapeDocument result = ShapeOps.Rotate(west, -rotation);
 
-        // ── 两列逐格核对（类型 / 形状码 / 颜色）──
+        // ── k 列逐格核对（类型 / 形状码 / 颜色）──
         if (!ShapeOps.Same(result, expectedHalf))
         {
             return BuildHalfFailure(
                 target,
                 column,
                 kind,
-                "半破后的两列与目标半边不符：" +
-                $"第 {column + 1} 象限 = {ShapeSignature.ColumnText(result, column)}（期望 {text}），" +
-                $"第 {partnerColumn + 1} 象限 = {ShapeSignature.ColumnText(result, partnerColumn)}" +
-                $"（期望 {expectedPartner}）",
+                "半破后的 k 列与目标半边不符：" +
+                DescribeColumns(result, HalfColumns(column, parts), parts) +
+                "（期望 " + DescribeColumns(
+                    expectedHalf,
+                    HalfColumns(column, parts),
+                    parts,
+                    string.Empty) + "）",
                 preState,
                 result,
                 rotation,
                 auxiliaryColumns,
+                columns: HalfColumns(column, parts),
                 limitations);
         }
 
@@ -904,9 +1188,87 @@ public static partial class AngleWorkOrderBuilder
             expectedHalf,
             rotation,
             auxiliaryColumns,
+            HalfColumns(column, parts),
             text,
             expectedPartner,
             limitations);
+    }
+
+    /// <summary>
+    /// 临时晶体块：<paramref name="preColumn"/> 是晶体、目标列文本不是晶体的连续层段
+    /// （只在上端 &lt; <paramref name="s"/> 的范围里找）。返回按层号升序的 (底, 顶)。
+    /// </summary>
+    private static List<(int Bottom, int Top)> TemporaryCrystalBlocks(
+        char[] preColumn,
+        string text,
+        int s)
+    {
+        var blocks = new List<(int Bottom, int Top)>();
+
+        int layer = 0;
+
+        while (layer < s)
+        {
+            bool temporary =
+                preColumn[layer] == ShapeSignature.CrystalCode &&
+                (layer >= text.Length ||
+                 text[layer] != ShapeSignature.CrystalCode);
+
+            if (!temporary)
+            {
+                layer++;
+                continue;
+            }
+
+            int bottom = layer;
+
+            while (layer < s &&
+                   preColumn[layer] == ShapeSignature.CrystalCode &&
+                   (layer >= text.Length ||
+                    text[layer] != ShapeSignature.CrystalCode))
+            {
+                layer++;
+            }
+
+            blocks.Add((bottom, layer - 1));
+        }
+
+        return blocks;
+    }
+
+    /// <summary>把临时晶体块写成「第 a–b 层 / 第 c 层」。</summary>
+    private static string DescribeBlocks(
+        List<(int Bottom, int Top)> blocks)
+    {
+        var parts = new List<string>();
+
+        foreach ((int bottom, int top) in blocks)
+        {
+            parts.Add(bottom == top
+                ? $"第 {bottom + 1} 层"
+                : $"第 {bottom + 1}–{top + 1} 层");
+        }
+
+        return string.Join("、", parts);
+    }
+
+    /// <summary>把 k 列写成「第 i 象限 = 列文本」，用于说明文字。</summary>
+    private static string DescribeColumns(
+        ShapeDocument shape,
+        int[] columns,
+        int parts,
+        string prefix = "扫描结果：")
+    {
+        var lines = new List<string>();
+
+        foreach (int part in columns)
+        {
+            lines.Add(
+                $"第 {part + 1} 象限 = " +
+                Trim(ShapeSignature.ColumnText(shape, part)));
+        }
+
+        return prefix + string.Join("，", lines);
     }
 
     #endregion
@@ -914,7 +1276,7 @@ public static partial class AngleWorkOrderBuilder
     #region 工序单
 
     /// <summary>
-    /// 把候选 1 / 2 的两列半边装成角工序 + <see cref="HalfWorkOrder"/>。
+    /// 把候选 1 / 2 的 k 列半边装成角工序 + <see cref="HalfWorkOrder"/>。
     ///
     /// <para>
     /// 候选 1：<paramref name="collapseStep"/> 为 null ⇒ 步骤链
@@ -925,9 +1287,9 @@ public static partial class AngleWorkOrderBuilder
     /// 的结果 ⇒ 步骤链 <c>PreState(Q′) → Collapse → Target(Q)</c>，下落一次。
     /// </para>
     /// <para>
-    /// 两列都是带子配方的目标列（各自按 S 单角工序制作），所以
+    /// k 列都是带子配方的目标列（各自按 S 单角工序制作），所以
     /// <see cref="HalfWorkOrder.TargetColumnsHaveSubRecipe"/> 为 true、允许带洞；
-    /// 另外两个象限整列为空，没有辅助列。三个候选都不含 Pin，<c>Rank = 0</c>。
+    /// 另外 n−k 个象限整列为空，没有辅助列。三个候选都不含 Pin，<c>Rank = 0</c>。
     /// </para>
     /// </summary>
     private static AngleWorkOrder BuildPaperHalfOrder(
@@ -938,12 +1300,9 @@ public static partial class AngleWorkOrderBuilder
         ShapeDocument preState,
         ShapeDocument expectedHalf,
         ShapeDocument? collapseStep,
+        int[] columns,
         List<string> limitations)
     {
-        int partnerColumn = Wrap(column + 1, HalfParts);
-        string targetText = ShapeSignature.ColumnText(expectedHalf, column);
-        string partnerText = ShapeSignature.ColumnText(expectedHalf, partnerColumn);
-
         string candidateName = candidate switch
         {
             HalfCandidate.Algo8Self => "候选 1（Q 自身）",
@@ -954,13 +1313,13 @@ public static partial class AngleWorkOrderBuilder
                 "BuildPaperHalfOrder 只处理算法 8 的两条候选。")
         };
 
+        string preStateText = DescribeColumns(preState, columns, preState.PartCount);
+        string targetText = DescribeColumns(expectedHalf, columns, expectedHalf.PartCount);
+
         var halfSteps = new List<AngleWorkStep>
         {
             new(
-                $"半边工序前态（{candidateName}）：第 {column + 1} 象限 = " +
-                $"{Trim(ShapeSignature.ColumnText(preState, column))}，" +
-                $"第 {partnerColumn + 1} 象限 = " +
-                $"{Trim(ShapeSignature.ColumnText(preState, partnerColumn))}",
+                $"半边工序前态（{candidateName}）：{preStateText}",
                 preState,
                 AngleWorkStepKind.PreState)
         };
@@ -968,21 +1327,18 @@ public static partial class AngleWorkOrderBuilder
         if (collapseStep is not null)
         {
             halfSteps.Add(new AngleWorkStep(
-                "一次完整下落（真实 Collapse）：两根 S 列拼合后整组下落，得到目标半边",
+                "一次完整下落（真实 Collapse）：k 根 S 列拼合后整组下落，得到目标半边",
                 collapseStep,
                 AngleWorkStepKind.Collapse));
         }
 
         halfSteps.Add(new AngleWorkStep(
-            $"半边目标（{candidateName}）：第 {column + 1} 象限 = {Trim(targetText)}，" +
-            $"第 {partnerColumn + 1} 象限 = {Trim(partnerText)}（两列逐格核对类型 / 形状码 / 颜色）",
+            $"半边目标（{candidateName}）：{targetText}（k 列逐格核对类型 / 形状码 / 颜色）",
             expectedHalf,
             AngleWorkStepKind.Target));
 
         var half = new HalfWorkOrder(
-            new WorkOrderTarget(
-                new[] { column, partnerColumn },
-                column),
+            new WorkOrderTarget(columns, column),
             candidate,
             halfSteps,
             true,
@@ -990,14 +1346,16 @@ public static partial class AngleWorkOrderBuilder
             limitations,
             0)
         {
-            // 两列都能由单角工序（S 形态）单独做出 ⇒ 带子配方，允许带洞。
-            TargetColumnsHaveSubRecipe = true
+            // k 列都能由单角工序（S 形态）单独做出 ⇒ 带子配方，允许带洞。
+            TargetColumnsHaveSubRecipe = true,
+            Rotation = 0
         };
 
         var steps = new List<AngleWorkStep>
         {
             new(
-                $"半边工序（{candidateName}）前态：两列一起做，两列都属于 n = 4 的 S",
+                $"半边工序（{candidateName}）前态：{columns.Length} 列一起做，" +
+                "每一列都属于该象限数下的 S",
                 preState,
                 AngleWorkStepKind.PreState)
         };
@@ -1005,15 +1363,15 @@ public static partial class AngleWorkOrderBuilder
         if (collapseStep is not null)
         {
             steps.Add(new AngleWorkStep(
-                "一次完整下落：两列各自按 S 单角工序做好后拼合，一次下落到目标半边",
+                "一次完整下落：k 列各自按 S 单角工序做好后拼合，一次下落到目标半边",
                 collapseStep,
                 AngleWorkStepKind.Collapse));
         }
 
         steps.Add(new AngleWorkStep(
             collapseStep is null
-                ? "两列逐格等于目标半边，得到目标角（无需切割）"
-                : "两列逐格等于目标半边，得到目标角",
+                ? "k 列逐格等于目标半边，得到目标角（无需切割）"
+                : "k 列逐格等于目标半边，得到目标角",
             target,
             AngleWorkStepKind.Target));
 
@@ -1028,7 +1386,7 @@ public static partial class AngleWorkOrderBuilder
             Construction = AngleConstruction.Half,
             Algorithm = AngleAlgorithm.None,
             Rotation = 0,
-            // 候选 1 / 2 没有辅助列：另外两个象限整列为空。
+            // 候选 1 / 2 没有辅助列：另外 n−k 个象限整列为空。
             AuxiliaryColumns = Array.Empty<int>(),
             Rank = 0,
             Half = half,
@@ -1036,7 +1394,7 @@ public static partial class AngleWorkOrderBuilder
         };
     }
 
-    /// <summary>把验证通过的两列半边装成角工序 + <see cref="HalfWorkOrder"/>。</summary>
+    /// <summary>把验证通过的 k 列半边装成角工序 + <see cref="HalfWorkOrder"/>。</summary>
     private static AngleWorkOrder BuildHalfOrder(
         ShapeDocument target,
         int column,
@@ -1046,15 +1404,18 @@ public static partial class AngleWorkOrderBuilder
         ShapeDocument expectedHalf,
         int rotation,
         int[] auxiliaryColumns,
+        int[] columns,
         string targetText,
         string expectedPartnerText,
         List<string> limitations)
     {
+        int partnerColumn = auxiliaryColumns[0];
+
         var halfSteps = new List<AngleWorkStep>
         {
             new(
                 "半边工序前态：目标列抬升 + 洞填临时晶体；" +
-                "环伙伴顶部三层 ccc 咬合、闸门层放晶体；保险丝柱只在临时晶体那一层放晶体",
+                "环伙伴顶部三层 ccc 咬合、闸门层放晶体；保险丝柱在每个临时晶体块的顶层放晶体",
                 preState,
                 AngleWorkStepKind.PreState),
 
@@ -1063,34 +1424,40 @@ public static partial class AngleWorkOrderBuilder
                     ? string.Empty
                     : $"先顺转 {rotation} 个象限，再") +
                 "一刀半破（候选 3）：刀口跨过保险丝晶体与目标列的临时晶体，" +
-                "临时晶体整段碎掉，抬升的普通格与环伙伴同层普通格配对只落一层",
+                "临时晶体整块碎掉，抬升的普通格与环伙伴同层普通格配对只落一层",
                 cutResult,
                 AngleWorkStepKind.Cut),
 
             new(
                 $"半边目标：第 {column + 1} 象限 = {targetText}，" +
-                $"第 {auxiliaryColumns[0] + 1} 象限 = " +
-                $"{expectedPartnerText.TrimEnd(ShapeSignature.EmptyCode)}（两列逐格核对）",
+                $"第 {partnerColumn + 1} 象限 = " +
+                $"{expectedPartnerText.TrimEnd(ShapeSignature.EmptyCode)}（k 列逐格核对）",
                 expectedHalf,
                 AngleWorkStepKind.Target)
         };
 
         var half = new HalfWorkOrder(
-            new WorkOrderTarget(
-                new[] { column, auxiliaryColumns[0] },
-                column),
+            new WorkOrderTarget(columns, column),
             HalfCandidate.TempCrystalFuse,
             halfSteps,
             true,
             null,
             limitations,
-            0);
+            0)
+        {
+            /*
+             * n ≥ 6 时半边的每一列都是整图里真实存在的目标列（每列合法 ⇒ 每列是 S），
+             * 只有环伙伴 / 保险丝是辅助列；n = 4 时两列版本只豁免 Q1（保持原语义）。
+             */
+            TargetColumnsHaveSubRecipe = target.PartCount >= 6,
+            Rotation = rotation
+        };
 
         var steps = new List<AngleWorkStep>
         {
             new(
-                "半边工序（候选 3）前态：两列一起做——目标列抬升 + 临时晶体，" +
-                "环伙伴提供顶部三层循环支撑，保险丝柱跨刀口",
+                "半边工序（候选 3）前态：k 列一起做——目标列抬升 + 临时晶体，" +
+                "环伙伴提供顶部循环支撑，保险丝柱跨刀口",
                 preState,
                 AngleWorkStepKind.PreState),
 
@@ -1101,7 +1468,7 @@ public static partial class AngleWorkOrderBuilder
                 AngleWorkStepKind.Cut),
 
             new(
-                "清除环伙伴象限，得到目标角",
+                "清除辅助象限，得到目标角",
                 target,
                 AngleWorkStepKind.Target)
         };
@@ -1138,6 +1505,7 @@ public static partial class AngleWorkOrderBuilder
         ShapeDocument? cutResult,
         int rotation,
         int[] auxiliaryColumns,
+        int[] columns,
         List<string> limitations)
     {
         string note = UncoveredPrefix +
@@ -1157,7 +1525,7 @@ public static partial class AngleWorkOrderBuilder
         if (cutResult is not null)
         {
             halfSteps.Add(new AngleWorkStep(
-                "一刀半破的真实 Cut 结果（两列尚未对上目标半边）",
+                "一刀半破的真实 Cut 结果（k 列尚未对上目标半边）",
                 cutResult,
                 AngleWorkStepKind.Cut));
         }
@@ -1168,9 +1536,7 @@ public static partial class AngleWorkOrderBuilder
             AngleWorkStepKind.Note));
 
         var half = new HalfWorkOrder(
-            new WorkOrderTarget(
-                new[] { column, auxiliaryColumns[0] },
-                column),
+            new WorkOrderTarget(columns, column),
             HalfCandidate.TempCrystalFuse,
             halfSteps,
             false,
@@ -1226,7 +1592,7 @@ public static partial class AngleWorkOrderBuilder
     #region 列扫描小工具（半边工序专用）
 
     /// <summary>
-    /// 半边第二列（环伙伴）半破后的期望形态：
+    /// 半边环伙伴半破后的期望形态：
     /// <c>0 … s−2</c> 是普通格，<c>s−1</c> 是洞（配对下落让出的那一层），
     /// <c>s … s+2</c> 是顶部三连晶。
     /// </summary>
@@ -1251,8 +1617,8 @@ public static partial class AngleWorkOrderBuilder
     }
 
     /// <summary>
-    /// 目标半边的期望图形：第 1 列逐格复制目标角列，第 2 列按
-    /// <see cref="BuildHalfPartnerColumn"/> 写入（普通格 <c>C/u</c>、晶体用目标晶体颜色）。
+    /// 目标半边的期望图形：半边的 k 列逐格复制目标（环伙伴那一列再按
+    /// <see cref="BuildHalfPartnerColumn"/> 写入：普通格 <c>C/u</c>、晶体用目标晶体颜色）。
     /// </summary>
     private static ShapeDocument BuildHalfExpectation(
         ShapeDocument target,
@@ -1260,15 +1626,22 @@ public static partial class AngleWorkOrderBuilder
         int cap,
         int partnerColumn,
         string partnerText,
-        char color)
+        char color,
+        int parts)
     {
-        var expected = new ShapeDocument(cap, HalfParts);
+        int width = parts / 2;
+        var expected = new ShapeDocument(cap, parts);
 
-        for (int layer = 0; layer < cap; layer++)
+        for (int index = 0; index < width; index++)
         {
-            expected[layer, column] = layer < target.LayerCount
-                ? target[layer, column].Clone()
-                : ShapeCell.Empty();
+            int part = Wrap(column + index, parts);
+
+            for (int layer = 0; layer < cap; layer++)
+            {
+                expected[layer, part] = layer < target.LayerCount
+                    ? target[layer, part].Clone()
+                    : ShapeCell.Empty();
+            }
         }
 
         WriteColumn(expected, partnerColumn, partnerText, color);
@@ -1312,6 +1685,13 @@ public static partial class AngleWorkOrderBuilder
         string text)
     {
         return text.TrimEnd(ShapeSignature.EmptyCode);
+    }
+
+    /// <summary>去掉列代码数组末尾的空层，只用于说明文字。</summary>
+    private static string Trim(
+        char[] cells)
+    {
+        return new string(cells).TrimEnd(ShapeSignature.EmptyCode);
     }
 
     #endregion
