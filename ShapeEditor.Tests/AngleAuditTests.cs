@@ -241,10 +241,20 @@ internal static class AngleAuditTests
     ///
     /// <para>
     /// 「有空洞」= <see cref="ShapeSignature.IsTightColumn"/> 为 false（材料之间夹着空层）。
-    /// 目标列（被求解的角）允许有洞，但必须带子配方；辅助列一律紧列。
+    /// 目标列（被求解的角）允许有洞，但必须「可造」：
+    /// </para>
+    /// <list type="bullet">
+    /// <item>带真实子配方（<see cref="AngleWorkOrder.SubRecipe"/>，算法 6 的造塔）；
+    /// 或半边候选 1/2 的两根 S 列（<see cref="HalfWorkOrder.TargetColumnsHaveSubRecipe"/>）；</item>
+    /// <item>或者是<b>后续前态</b>——它由上一刀/顶针真实产生（目标列与上一步逐格相同），
+    /// 不是凭空出现；初始前态不享受这条豁免。</item>
+    /// </list>
+    /// <para>
     /// 修复前：仅辅助列有洞 7 个（<c>T.ccc</c> / <c>T.ccc.</c> / <c>T.cccT</c> /
     /// <c>T.cccP</c> / <c>P.T..c</c> / <c>TT.ccc</c> / <c>T.cccc</c>）；
     /// 修复后必须为 0，且 S 生成成功数仍是 2125。
+    /// 新增的 <c>HOLES</c> 行：初始前态目标列有洞且没有真实子配方的个数必须为 0
+    /// （修复前 H 的 18 个初始前态就是这种情况；现在洞已填成临时晶体，顶针时整簇碎掉）。
     /// </para>
     /// </summary>
     public static void PreStateTightnessAudit()
@@ -256,7 +266,12 @@ internal static class AngleAuditTests
         int onlyTarget = 0;
         int onlyAux = 0;
         int both = 0;
+        int targetHoles = 0;
+        int targetHoleWithSub = 0;
+        int targetHoleDerived = 0;
+        int targetHoleNoSub = 0;
         var auxCases = new List<string>();
+        var noSubCases = new List<string>();
 
         for (int layers = 3; layers <= 6; layers++)
         {
@@ -293,14 +308,41 @@ internal static class AngleAuditTests
 
                 success++;
 
+                /*
+                 * 后续前态的豁免依据：它必须和上一刀/顶针之前的目标列逐格相同，
+                 * 也就是「洞是上一步真实造出来的」，不是初始前态里凭空出现。
+                 */
+                bool operationSeen = false;
+                string? previousTarget = null;
+
                 foreach (AngleWorkStep step in order.Steps)
                 {
                     if (step.Kind != AngleWorkStepKind.PreState || step.Shape is null)
                     {
+                        if (step.Shape is not null)
+                        {
+                            previousTarget = ShapeSignature.ColumnText(
+                                step.Shape,
+                                order.Column);
+                        }
+
+                        if (step.Kind is AngleWorkStepKind.Cut or
+                            AngleWorkStepKind.Collapse or
+                            AngleWorkStepKind.Pin or
+                            AngleWorkStepKind.Support or
+                            AngleWorkStepKind.Stack)
+                        {
+                            operationSeen = true;
+                        }
+
                         continue;
                     }
 
                     steps++;
+
+                    string preTarget = ShapeSignature.ColumnText(
+                        step.Shape,
+                        order.Column);
 
                     bool targetHole = !ShapeSignature.IsTightColumn(step.Shape, order.Column);
                     bool auxHole = false;
@@ -337,6 +379,35 @@ internal static class AngleAuditTests
                     {
                         tight++;
                     }
+
+                    if (targetHole)
+                    {
+                        targetHoles++;
+
+                        bool hasSubRecipe =
+                            order.SubRecipe is not null ||
+                            (order.Half is { TargetColumnsHaveSubRecipe: true } half &&
+                             half.Target.Columns.Contains(order.Column));
+
+                        if (hasSubRecipe)
+                        {
+                            targetHoleWithSub++;
+                        }
+                        else if (operationSeen && previousTarget == preTarget)
+                        {
+                            targetHoleDerived++;
+                        }
+                        else
+                        {
+                            targetHoleNoSub++;
+
+                            noSubCases.Add(
+                                text + "：第 " + (steps) + " 条前态目标列 " +
+                                preTarget + "（" + order.Construction + "）");
+                        }
+                    }
+
+                    previousTarget = preTarget;
                 }
             }
         }
@@ -344,12 +415,21 @@ internal static class AngleAuditTests
         Console.WriteLine(
             $"  TIGHT totalS={s} success={success} steps={steps} tight={tight} " +
             $"onlyTarget={onlyTarget} onlyAux={onlyAux} both={both}");
+        Console.WriteLine(
+            $"  HOLES totalS={s} targetHole={targetHoles} " +
+            $"targetHoleWithSub={targetHoleWithSub} " +
+            $"targetHoleDerived={targetHoleDerived} " +
+            $"targetHoleNoSub={targetHoleNoSub}");
 
         Assert.Equal(2125, s, "≤6 层的 S 列应为 2125");
         Assert.Equal(2125, success, "S 列生成成功数应仍为 2125");
         Assert.True(
             onlyAux == 0 && both == 0,
             "仅辅助列有洞的个数必须为 0（修复前 7）：" + string.Join(" | ", auxCases));
+        Assert.True(
+            targetHoleNoSub == 0,
+            "初始前态目标列有洞且没有子配方的个数必须为 0：" +
+            string.Join(" | ", noSubCases));
     }
 
     /// <summary>

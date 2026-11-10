@@ -1044,3 +1044,97 @@ rank 0 装配原语造出来**的形态，例如：
 8. `docs/production-path-spec.md` §5.4.1 第 562–569 行「可交换 & 交换链失败 = 0」：
    本轮在 n = 6/8、4–5 层随机语料上复验（链失败 120+ 个样本，两侧半边都可得 0 个），
    可补一句「半边可得性判据与交换链成功在该语料上仍然一致」。
+
+### 7.14 双闸门 G 的紧前态：填洞 + 抬升 + 环缝保险丝（2026-11）
+
+**用户实测**：`T.cccT.T.ccc`（12 层）的工序页前态是
+
+```
+T.cccT..Tccc
+TTTTTTTcTTPT
+TTTTTTTcTTTT
+............
+```
+
+目标列第 7、8 层是两个洞，既没有填紧，也没有子配方 ⇒ 等于凭空出现，
+违反 docs §5 规则六 / §6 第 7 条。
+
+**根因（与 §7.10 的双闸门记录同源）**：
+
+1. `cTT.cccT.T.ccc`（14 层）的同族形态在新构造 G（`TryBuildConstructGOrder`）里
+   因「双闸门 + 下方针」作废：闸门晶体与针同层，针上方出现晶体违反五项条件二；
+2. 退回**单发 G**（`BuildCutPath`）后，`BuildPreState` 只把 `target[d]` 搬到 `s`，
+   目标列剩下的洞直接留在前态里；生成器又把 `TargetColumnHasSubRecipe` 一律置 true，
+   但 `SubRecipe` 实际是 null ⇒ 旧 `TIGHT` 审计只看辅助列，漏掉了这一类。
+
+**修法（优先紧前态，不挂子配方）**：
+
+| 步骤 | 位置 | 做法 |
+|---|---|---|
+| ① 间隙洞填紧 | `FillTargetHoleRun` | 把闸门 `d` 所在的连续空段填成同层临时晶体；刀口与闸门/保险丝同簇碎掉 |
+| ② 晶体下的洞 / 晶体间的洞 | `LiftLowerTargetHoles` | 把洞正下方最近的**普通格**抬进洞里，让出的层填临时晶体；目标晶体/针不能搬，搬不了就放弃 |
+| ③ 底层临时晶体的保险丝 | `BuildCutPath` | 在**环缝另一侧**的 N 列（旋转后第 4 象限）放同层晶体，与目标列跨 3–0 环缝相连；一刀同时碎掉 |
+| ④ 普通格落回 | B 列底部整段放**针** | 针不与目标列普通格横向粘连，抬升格才能落回；B 上方普通格仍托住目标列原生晶体 |
+| ⑤ 终审 | `TightPreStateWorks` | 前态每列合法、全紧、稳定，真实 `Cut` + `Collapse` 逐格等于目标列才采用 |
+
+构造 H 的初始前态同理：把 `d−1` 的空段填成临时晶体，它与 B 的晶体桥 / E 的满高
+晶体柱同簇，一次 `Pin` 时被 E 顶端超限碎裂连带删掉，顶针结果与原前态逐格相同。
+
+**实测布局（四列，前态已全紧）**：
+
+```
+12 层 T.cccT.T.ccc
+  PreState  cTcccTccTccc | PPTTTTTcTTPT | TTTTTTTcTTTT | cP..........
+  Cut       .TcccT..Tccc | PPTTTTT.TTPT | ............ | ............
+  Collapse  T.cccT.T.ccc | PPTTTTTT.TPT | ............ | ............
+  Target    T.cccT.T.ccc | ............ | ............ | ............
+
+14 层 cTT.cccT.T.ccc
+  PreState  cTcTcccTccTccc | PPPPTTTTTcTTPT | TTTTTTTTTcTTTT | TTcP..........
+  Cut       cT.TcccT..Tccc | PPPTTTTTT.TTPT | .............. | ..............
+  Collapse  cTT.cccT.T.ccc | PPPPTTTTTT.TPT | .............. | ..............
+```
+
+12 层的 `cTccc...` 是「地面普通格抬到第 2 层、地面填临时晶体」，
+14 层还多一个第 4 层的同类洞（`cTcT...`）；两例的 Cut 之后普通格都落回原位。
+
+**审计（新增 `HOLES` 行）**：
+
+```
+TIGHT totalS=2125 success=2125 steps=446 tight=400 onlyTarget=46 onlyAux=0 both=0
+HOLES totalS=2125 targetHole=46 targetHoleWithSub=41 targetHoleDerived=5 targetHoleNoSub=0
+```
+
+- `targetHoleWithSub`：41 条来自半边候选 1/2 的 S 列（两列都能按单角工序单独做出来，
+  `HalfWorkOrder.TargetColumnsHaveSubRecipe = true`）；算法 6 的 `SubRecipe` 也计入。
+- `targetHoleDerived`：5 条构造 D 的**第二条**前态（`.TT.c` / `T.T..c` / `T..T.c` /
+  `TT.T.c` / `.TTT.c`）。它们由上一刀真实产生，目标列与上一刀逐格相同，
+  不是初始前态凭空出现；审计要求「上一步之后 + 目标列逐格不变」才放行。
+- `targetHoleNoSub=0`：初始前态目标列不再有「有洞且没有真实子配方」的情形。
+
+**验收数字**：
+
+| 测试 | 结果 |
+|---|---|
+| 全量测试 | **158/158** 通过（其中 2 项 XFAIL：claw / 二择，保持不变；新增 `DoubleGateGapFillsTargetColumn`） |
+| `AUDIT`（≤6 层 S） | `total=5440 legal=2126 s=2125 success=2125 legalNonS=1 failures=0 falsePositives=0`（未退化） |
+| `TIGHT` | `steps=446 tight=400 onlyTarget=46 onlyAux=0 both=0`（未退化，tight 从 382 升到 400） |
+| `HOLES` | `targetHoleNoSub=0`（新增断言） |
+| `HALFAUDIT` | `legalNonS=229 halfComplete=6 notProducible=225 uncovered=0 problems=0`（未退化） |
+
+**文档待更新**（`docs/` 由开发者本人维护，本次未动；行号按本次阅读时的版本）：
+
+1. §5 规则六（第 536–585 行）：补「目标列可以填紧」的两条构造——
+   间隙洞填临时晶体；晶体下/晶体间的洞用「抬升普通格 + 让出层填晶体 +
+   环缝另一侧保险丝」，不必一有洞就挂子配方；
+2. §6 第 7 条（第 624–641 行）：「前态目标列有洞必须有子配方」补成
+   「**初始**前态目标列必须紧列或带子配方；后续前态若由上一刀/顶针真实产生
+   且目标列逐格不变，视为可造」；
+3. §17.7（第 1471–1538 行）：数字 441/375/66 与分类 59+7 改为本仓库口径
+   `steps=446 tight=400 onlyTarget=46 onlyAux=0`；并补 `HOLES` 行；
+4. §15.9 / §7.9 的 `cTT.cccT.T.ccc` 前态（TODO 第 576 行）：改为
+   `cTcTcccTccTccc | PPPPTTTTTcTTPT | TTTTTTTTTcTTTT | TTcP..........`；
+5. §15.3 不变量三（第 566 行）：「只碎辅助晶体」补成「只碎辅助晶体与目标列里
+   填洞用的临时晶体；目标原生晶体一颗不少」；
+6. §15.8 实现要点（第 1055 行起）：补「单发 G 的前态会先填洞 + 抬升，
+   用 `TightPreStateWorks` 真实回放终审」。

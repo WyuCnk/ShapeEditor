@@ -2657,14 +2657,119 @@ internal static class AngleWorkOrderTests
         Assert.Equal(0, badStripped, "被拒的应是目标列（第 1 象限）");
     }
 
+    /// <summary>
+    /// 用户实测的双闸门案例（12 层）：<c>T.cccT.T.ccc</c>。
+    ///
+    /// <para>
+    /// 旧输出前态目标列是 <c>T.cccT..Tccc</c>（第 7、8 层两个洞），
+    /// 既没有填紧、也没有子配方 ⇒ 等于「凭空出现」，违反 docs §5 规则六 / §6 第 7 条。
+    /// 现在：
+    /// </para>
+    /// <list type="number">
+    /// <item>把第 7、8 层的间隙洞填成同层临时晶体；</item>
+    /// <item>把最底晶体下的洞（第 2 层）用「地面普通格抬到第 2 层、地面填临时晶体」填紧；</item>
+    /// <item>底层临时晶体用环缝另一侧的 N 列保险丝一刀碎掉，普通格落回地面。</item>
+    /// </list>
+    /// <para>
+    /// 前态因此是**全紧列** <c>cTcccTccTccc</c>；Cut 后回到
+    /// <c>.TcccT..Tccc</c>，Collapse 后逐格等于目标 <c>T.cccT.T.ccc</c>。
+    /// </para>
+    /// </summary>
+    public static void DoubleGateGapFillsTargetColumn()
+    {
+        const string text = "T.cccT.T.ccc";
+        const int layers = 12;
+
+        ShapeDocument target = FromColumns(4, layers, (0, text));
+
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers);
+
+        Assert.True(order.IsComplete, order.Note ?? $"{text} 应完成");
+        Assert.Equal(AngleAlgorithm.Algorithm4, order.Algorithm, text);
+        Assert.Equal(AngleConstruction.G, order.Construction, text);
+        Assert.Equal(0, order.Rank, text);
+        Assert.True(order.SubRecipe is null, "该案例应靠紧前态，而不是造塔子配方");
+
+        AssertStepKinds(
+            order,
+            AngleWorkStepKind.PreState,
+            AngleWorkStepKind.Cut,
+            AngleWorkStepKind.Collapse,
+            AngleWorkStepKind.Note,
+            AngleWorkStepKind.Target);
+
+        ShapeDocument preState = NthStep(order, AngleWorkStepKind.PreState, 0).Shape!;
+
+        Assert.Equal(
+            "cTcccTccTccc",
+            ShapeSignature.ColumnText(preState, 0),
+            "目标列的两个洞应填成同层临时晶体；最底晶体下的洞用「抬普通格 + 地面填晶体」填紧");
+
+        for (int part = 0; part < preState.PartCount; part++)
+        {
+            Assert.True(
+                ShapeSignature.IsTightColumn(preState, part),
+                $"前态第 {part + 1} 象限必须是紧列：" +
+                ShapeSignature.ColumnText(preState, part));
+        }
+
+        Assert.False(
+            order.HasIllegalPreState(out _, out int badColumn),
+            "紧前态不应有非法列：" + badColumn);
+        Assert.True(ShapeOps.IsStable(preState), "前态必须稳定");
+
+        // 真实回放：Cut 的西半边（转回后）就是 Collapse 步，且目标列逐格等于目标。
+        CutResult cut = ShapePhysics.Cut(
+            ShapeOps.Rotate(preState, order.Rotation));
+
+        Assert.True(cut.Success, cut.Error ?? "切割失败");
+
+        ShapeDocument replayed = ShapeOps.Rotate(
+            cut.West!,
+            -order.Rotation);
+
+        Assert.True(
+            ShapeOps.Same(
+                replayed,
+                Step(order, AngleWorkStepKind.Collapse).Shape),
+            "Collapse 步应等于真实 Cut 出来的西半边");
+        Assert.Equal(
+            text,
+            ShapeSignature.ColumnText(replayed, 0),
+            "碎晶下落之后目标列应逐格等于目标");
+
+        Assert.True(
+            ShapeOps.Same(
+                ShapePhysics.Collapse(
+                    Step(order, AngleWorkStepKind.Cut).Shape!).Document!,
+                replayed),
+            "Cut 步再 Collapse 一次应等于真实西半边");
+
+        Assert.True(
+            ShapeOps.Same(target, Step(order, AngleWorkStepKind.Target).Shape),
+            "末步应得到目标角");
+
+        // 临时晶体真的被这一刀碎掉：Cut 后的目标列回到「洞 + 待落 T」的形态。
+        Assert.Equal(
+            ".TcccT..Tccc",
+            ShapeSignature.ColumnText(
+                Step(order, AngleWorkStepKind.Cut).Shape!,
+                0),
+            "Cut 之后临时晶体应被碎掉，抬升的普通格落回地面");
+    }
+
     public static void ConstructGIsStandardRouteForLongCrystalRuns()
     {
         /*
          * 闸门改晶体后，`cTT.cccT.T.ccc` 的双闸门前态（闸门 2、9）要求
          * 环伙伴同时放下方针（第 6 层）和闸门晶体（第 9 层）——
          * 针上方出现晶体 ⇒ 违反五项条件二，新构造 G 的候选因此作废；
-         * 但等价的单发 G（PreState → Cut → Collapse → Note → Target）仍然成立，
-         * 辅助列全紧、逐格回放等于目标，所以该案例保留为 G，只是步型不同。
+         * 但等价的单发 G（PreState → Cut → Collapse → Note → Target）仍然成立。
+         *
+         * 前态目标列的两个间隙洞（第 9、10 层）填成同层临时晶体（紧列），
+         * 第 4 层的晶体下洞用「抬普通格 + 让出层填晶体」填紧；
+         * 底层临时晶体由环缝另一侧的 N 列保险丝一刀碎掉。
+         * 这样前态不再「凭空出现」带洞的目标列（docs §5 规则六 / §6 第 7 条）。
          */
         var cases = new (string Text, int Layers, bool UsesG, bool NewStyleG, string PreStateColumns)[]
         {
@@ -2685,7 +2790,7 @@ internal static class AngleWorkOrderTests
                 14,
                 true,
                 false,
-                "cTT.cccT..Tccc|TTTTTTTTTcTTPT|TTTTTTTTTcTTTT|.............."),
+                "cTcTcccTccTccc|PPPPTTTTTcTTPT|TTTTTTTTTcTTTT|TTcP.........."),
             (
                 "cT.T.T.T...ccc",
                 14,

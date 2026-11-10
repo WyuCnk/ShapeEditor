@@ -166,6 +166,7 @@ internal static class Program
             ("角工序:算法 1/2/3/4 分档", AngleWorkOrderTests.AlgorithmTiersSelectPaperBranch),
             ("角工序:算法 4 的 §11 通用实现", AngleWorkOrderTests.Algorithm4GenericPlanCoversAcceptanceCorpus),
             ("角工序:构造 G 是长段标准路线", AngleWorkOrderTests.ConstructGIsStandardRouteForLongCrystalRuns),
+            ("角工序:双闸门案例填紧前态", AngleWorkOrderTests.DoubleGateGapFillsTargetColumn),
             ("角工序:路线 F 4–9 层全枚举 0 未覆盖", AngleWorkOrderTests.RouteFFullyCoveredForFourToNineLayers),
             ("角工序:n ≥ 6 分档出算法 1/2/3", AngleWorkOrderTests.SixPlusCornersFollowAlgorithmTiers),
             ("角工序:构造 F 的四列布局", AngleWorkOrderTests.ConstructFLaysFourColumns),

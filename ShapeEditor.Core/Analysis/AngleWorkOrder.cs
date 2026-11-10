@@ -5821,6 +5821,206 @@ public static partial class AngleWorkOrderBuilder
     /// <summary>
     /// 构造 G（单层）或 F（n ≥ 6）的切割路径：前态 → Cut → Collapse → Target。
     /// </summary>
+    /// <summary>
+    /// 把目标列里<b>与某个空层连通的那一段空洞</b>填成同层临时晶体，得到紧列。
+    ///
+    /// <para>
+    /// 只填 <paramref name="anchor"/> 所在的连续空段（上下都被材料夹住的那一段），
+    /// 不碰目标自己的其它洞：G/F 的刀口只经过闸门所在的那一段临时晶体，
+    /// 远处的洞（例如最底晶体下方的「普通资源洞」）填了也切不掉，只会粘在原生晶体上。
+    /// </para>
+    /// <para>
+    /// 颜色取目标列最高晶体的颜色；填出来的临时晶体必须能被同一刀/顶针碎掉，
+    /// 否则候选会在真实回放里被逐格对比淘汰。
+    /// </para>
+    /// </summary>
+    private static ShapeDocument FillTargetHoleRun(
+        ShapeDocument document,
+        ShapeDocument target,
+        int column,
+        int anchor)
+    {
+        var result = new ShapeDocument(document.LayerCount, document.PartCount);
+
+        for (int layer = 0; layer < document.LayerCount; layer++)
+        {
+            for (int part = 0; part < document.PartCount; part++)
+            {
+                result[layer, part] = document[layer, part].Clone();
+            }
+        }
+
+        if (anchor < 0 ||
+            anchor >= document.LayerCount ||
+            document[anchor, column].Type != CellType.Empty)
+        {
+            return result;
+        }
+
+        int bottom = anchor;
+        int top = anchor;
+
+        while (bottom > 0 &&
+               document[bottom - 1, column].Type == CellType.Empty)
+        {
+            bottom--;
+        }
+
+        while (top + 1 < document.LayerCount &&
+               document[top + 1, column].Type == CellType.Empty)
+        {
+            top++;
+        }
+
+        char color = CrystalColor(target, column);
+
+        for (int layer = bottom; layer <= top; layer++)
+        {
+            result[layer, column] = ShapeCell.Crystal(color);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// 判断「把目标列的洞填成临时晶体」后，这一刀是否仍逐格得到目标：
+    /// 前态每列合法、稳定，真实 Cut 的西半边再转回后目标列等于目标。
+    /// </summary>
+    private static bool TightPreStateWorks(
+        ShapeDocument target,
+        int column,
+        int layers,
+        int parts,
+        int half,
+        int rotation,
+        ShapeDocument preState)
+    {
+        if (!ShapeSignature.AllColumnsLegal(preState, out _) ||
+            !ShapeSignature.IsTightColumn(preState, column) ||
+            !ShapeOps.IsStable(preState) ||
+            ShapeSignature.ColumnText(preState, column) ==
+            ShapeSignature.ColumnText(target, column))
+        {
+            return false;
+        }
+
+        for (int part = 0; part < parts; part++)
+        {
+            if (part != column &&
+                !ShapeSignature.IsTightColumn(preState, part))
+            {
+                return false;
+            }
+        }
+
+        ShapeDocument rotated = ShapeOps.Rotate(preState, rotation);
+
+        ShapeDocument rawWest = CutWestBeforeCollapse(rotated, half);
+
+        CutResult realCut = ShapePhysics.Cut(rotated);
+
+        if (!realCut.Success || realCut.West is null)
+        {
+            return false;
+        }
+
+        ShapeDocument rawCollapsed = ShapePhysics.Collapse(rawWest).Document!;
+
+        if (!ShapeOps.Same(rawCollapsed, realCut.West))
+        {
+            return false;
+        }
+
+        ShapeDocument back = ShapeOps.Rotate(rawCollapsed, -rotation);
+
+        return MatchesTargetColumn(
+            back,
+            target,
+            column,
+            layers,
+            out _);
+    }
+
+    /// <summary>
+    /// 把目标列里剩余的洞（最底晶体以下、或晶体之间）也填紧：
+    /// 把洞正下方最近的普通格<b>抬到洞里</b>，它让出的那一层填同色临时晶体，
+    /// 临时晶体放在环缝另一侧的保险丝列，切割时跨环缝碎掉；普通格随后落回原层，
+    /// 洞就造出来了。
+    ///
+    /// <para>
+    /// 典型例子：<c>T.cccT..Tccc</c>（洞在第 2 层）→ 把地面普通格抬到第 2 层、
+    /// 地面填临时晶体，得到 <c>cTcccTccTccc</c>；一刀之后普通格落回地面，目标列的
+    /// 第 2 层重新变成洞。抬升的必须是普通格（不是目标晶体/针），否则放弃填紧。
+    /// </para>
+    /// </summary>
+    /// <returns>填紧后的列；无法安全抬升时返回 null。</returns>
+    private static string? LiftTargetHoles(
+        string preTarget,
+        string targetColumn,
+        out List<int> fuseLayers,
+        out List<int> holeLayers)
+    {
+        fuseLayers = new List<int>();
+        holeLayers = new List<int>();
+
+        char[] result = preTarget.ToCharArray();
+
+        /*
+         * 从高到低处理剩余的目标洞（晶体塔下的「普通资源洞」、晶体之间的洞等）：
+         * 只有「洞正下方最近的非空格是普通格，且它在目标里也是普通格」才抬升。
+         * 若源格是晶体 / 针，放弃填紧（不能为了填洞搬走目标原生材料）。
+         */
+        for (int layer = preTarget.Length - 1; layer >= 0; layer--)
+        {
+            if (result[layer] != ShapeSignature.EmptyCode ||
+                targetColumn[layer] != ShapeSignature.EmptyCode)
+            {
+                continue;
+            }
+
+            bool materialAbove = false;
+
+            for (int above = layer + 1; above < preTarget.Length; above++)
+            {
+                if (result[above] != ShapeSignature.EmptyCode)
+                {
+                    materialAbove = true;
+                    break;
+                }
+            }
+
+            if (!materialAbove)
+            {
+                continue;
+            }
+
+            int source = -1;
+
+            for (int below = layer - 1; below >= 0; below--)
+            {
+                if (result[below] != ShapeSignature.EmptyCode)
+                {
+                    source = below;
+                    break;
+                }
+            }
+
+            if (source < 0 ||
+                result[source] != ShapeSignature.SolidCode ||
+                targetColumn[source] != ShapeSignature.SolidCode)
+            {
+                return null;
+            }
+
+            result[layer] = result[source];
+            result[source] = ShapeSignature.CrystalCode;
+            fuseLayers.Add(source);
+            holeLayers.Add(layer);
+        }
+
+        return new string(result);
+    }
+
     private static AngleWorkOrder BuildCutPath(
         ShapeDocument target,
         int column,
@@ -5832,6 +6032,16 @@ public static partial class AngleWorkOrderBuilder
         AngleBuildKind kind,
         AngleConstruction construction)
     {
+        /*
+         * 目标列的洞先在「前态」里填成同层临时晶体（紧列），
+         * 再让这一刀把临时晶体与闸门/保险丝一起碎掉。
+         *
+         * 这一步只作为候选：填紧后必须真实 Cut + Collapse 仍逐格等于目标列，
+         * 才采用；否则保留原前态（兼容其它形态）。
+         */
+        int p = half - 2;
+        int rotation = Wrap(p - column, parts);
+
         var limitations = BaseLimitations(
             construction == AngleConstruction.G
                 ? "构造 G 的验证直接使用 ShapePhysics 的现有语义：" +
@@ -5854,9 +6064,82 @@ public static partial class AngleWorkOrderBuilder
             ? new[] { bColumn, eColumn }
             : new[] { nColumn, bColumn, eColumn };
 
-        int p = half - 2;
+        bool filledTargetHoles = false;
 
-        int rotation = Wrap(p - column, parts);
+        if (ShapeSignature.IsLegalColumn(target, column))
+        {
+            ShapeDocument tightPreState = FillTargetHoleRun(
+                preState,
+                target,
+                column,
+                d);
+
+            char crystalColor = CrystalColor(target, column);
+
+            // 最底晶体以下的洞：抬升普通格、让出的层放临时晶体（保险丝层）。
+            string? lifted = LiftTargetHoles(
+                ShapeSignature.ColumnText(tightPreState, column),
+                ShapeSignature.ColumnText(target, column),
+                out List<int> lowerFuseLayers,
+                out List<int> lowerHoleLayers);
+
+            if (lifted is not null)
+            {
+                WriteColumn(tightPreState, column, lifted, crystalColor);
+
+                if (lowerHoleLayers.Count > 0)
+                {
+                    /*
+                     * 下方洞的临时晶体放在「环缝另一侧」的 N 列（旋转后是第 4 象限），
+                     * 目标列（旋转后第 1 象限）与它跨 3–0 环缝横向相连，一刀即碎。
+                     *
+                     * B 列的底部整段放针：针不与目标列的普通格横向粘连，
+                     * 抬升的普通格才能落回；B 上方的普通格仍托住目标列的原生晶体。
+                     * N 列底部用普通格顶住保险丝晶体，洞层放针避免托住抬升格。
+                     */
+                    int maxHole = lowerHoleLayers.Max();
+                    int maxSource = lowerFuseLayers.Max();
+
+                    for (int layer = 0; layer <= maxHole; layer++)
+                    {
+                        tightPreState[layer, bColumn] = ShapeCell.Pin();
+                    }
+
+                    int supportTop = Math.Max(maxHole, maxSource);
+
+                    for (int layer = 0; layer <= supportTop; layer++)
+                    {
+                        tightPreState[layer, nColumn] = ShapeCell.Shape('C', 'u');
+                    }
+
+                    foreach (int fuse in lowerFuseLayers)
+                    {
+                        tightPreState[fuse, nColumn] = ShapeCell.Crystal(crystalColor);
+                    }
+
+                    foreach (int hole in lowerHoleLayers)
+                    {
+                        tightPreState[hole, nColumn] = ShapeCell.Pin();
+                    }
+                }
+            }
+
+            bool tightWorks = TightPreStateWorks(
+                target,
+                column,
+                layers,
+                parts,
+                half,
+                rotation,
+                tightPreState);
+
+            if (!ShapeOps.Same(tightPreState, preState) &&
+                tightWorks)
+            {
+                preState = tightPreState;
+                filledTargetHoles = true;
+            }
+        }
 
         /*
          * 验收条件一（§6 第 1 条）：G/F 的候选前态也必须每一列都过五项条件。
@@ -5878,10 +6161,19 @@ public static partial class AngleWorkOrderBuilder
                     AngleWorkStepKind.Note));
         }
 
+        if (filledTargetHoles)
+        {
+            limitations.Add(
+                "目标列的空洞已填成同层临时晶体（前态是紧列）；" +
+                "这一刀把临时晶体与闸门 / 保险丝同簇碎掉，普通格只降一层。");
+        }
+
         var steps = new List<AngleWorkStep>
         {
             new(
-                "碎晶前的角（带辅助象限）",
+                filledTargetHoles
+                    ? "碎晶前的角（带辅助象限；目标列的洞已填成临时晶体）"
+                    : "碎晶前的角（带辅助象限）",
                 preState,
                 AngleWorkStepKind.PreState)
         };
@@ -5971,28 +6263,42 @@ public static partial class AngleWorkOrderBuilder
             }
         }
 
+        /*
+         * 目标列的原生晶体必须一颗不少；填洞用的临时晶体必须被这一刀碎干净。
+         * 不能再用「前态里的每颗晶体都要保留」——前态现在可能含临时晶体。
+         */
         bool targetCrystalsKept = true;
+        bool temporaryCrystalsGone = true;
 
         for (int layer = 0;
              layer < layers;
              layer++)
         {
-            if (rotated[layer, p].Type == CellType.Crystal &&
-                rawWest[layer, p].Type != CellType.Crystal)
+            bool targetCrystal = target[layer, column].Type == CellType.Crystal;
+            bool beforeCrystal = rotated[layer, p].Type == CellType.Crystal;
+            bool afterCrystal = rawWest[layer, p].Type == CellType.Crystal;
+
+            if (targetCrystal && !afterCrystal)
             {
                 targetCrystalsKept = false;
+            }
+
+            if (!targetCrystal && beforeCrystal && afterCrystal)
+            {
+                temporaryCrystalsGone = false;
             }
         }
 
         if (!hadBridgeCrystals ||
             !bridgeCrystalsGone ||
-            !targetCrystalsKept)
+            !targetCrystalsKept ||
+            !temporaryCrystalsGone)
         {
             return Incomplete(
                 column,
                 kind,
-                "切割没有按预期打碎桥柱晶体（或误伤了目标列晶体），" +
-                "因此不保留 Cut 步。",
+                "切割没有按预期打碎桥柱晶体（或误伤了目标列晶体、" +
+                "临时晶体没有碎干净），因此不保留 Cut 步。",
                 limitations,
                 steps,
                 construction,
@@ -6219,6 +6525,41 @@ public static partial class AngleWorkOrderBuilder
 
         var auxiliaryColumns = new[] { nColumn, bColumn, eColumn };
 
+        /*
+         * 目标列的洞也填成同层临时晶体（紧列）：临时晶体与 B 的晶体桥、
+         * E 的满高晶体柱连成一簇，顶针时 E 顶端超限碎裂会把它一起带走，
+         * 顶针结果必须与原前态逐格相同才采用。
+         */
+        bool filledTargetHoles = false;
+
+        if (ShapeSignature.IsLegalColumn(target, column))
+        {
+            ShapeDocument tightPreState = FillTargetHoleRun(
+                preState,
+                target,
+                column,
+                d - 1);
+
+            if (!ShapeOps.Same(tightPreState, preState) &&
+                ShapeSignature.AllColumnsLegal(tightPreState, out _) &&
+                ShapeOps.IsStable(tightPreState))
+            {
+                PhysicsResult normalPin = ShapePhysics.Pin(preState);
+                PhysicsResult tightPin = ShapePhysics.Pin(tightPreState);
+
+                if (normalPin.Success &&
+                    tightPin.Success &&
+                    normalPin.Document is not null &&
+                    tightPin.Document is not null &&
+                    ShapeSignature.ColumnText(tightPin.Document, column) ==
+                    ShapeSignature.ColumnText(normalPin.Document, column))
+                {
+                    preState = tightPreState;
+                    filledTargetHoles = true;
+                }
+            }
+        }
+
         // 验收条件一（§6 第 1 条）：构造 H 的候选前态也必须每列合法。
         if (IsRejectedPreState(target, column, preState, out int badPreStateColumn))
         {
@@ -6237,10 +6578,19 @@ public static partial class AngleWorkOrderBuilder
                     AngleWorkStepKind.Note));
         }
 
+        if (filledTargetHoles)
+        {
+            limitations.Add(
+                "目标列的空洞已填成同层临时晶体（前态是紧列）；" +
+                "它与 B 的晶体桥、E 的满高晶体柱同簇，顶针时一起碎掉。");
+        }
+
         var steps = new List<AngleWorkStep>
         {
             new(
-                "碎晶前的角（带辅助象限，按顶针后层号对齐）",
+                filledTargetHoles
+                    ? "碎晶前的角（带辅助象限，按顶针后层号对齐；目标列的洞已填成临时晶体）"
+                    : "碎晶前的角（带辅助象限，按顶针后层号对齐）",
                 preState,
                 AngleWorkStepKind.PreState)
         };
