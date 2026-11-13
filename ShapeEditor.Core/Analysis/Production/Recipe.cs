@@ -20,7 +20,8 @@ public sealed class Recipe
         IReadOnlyList<RecipeStep> steps,
         int rank,
         ExchangeDetails? exchange,
-        HalfAssemblyDetails? halfAssembly)
+        HalfAssemblyDetails? halfAssembly,
+        int cutRotation = 0)
     {
         Kind = kind;
         Shape = shape;
@@ -31,6 +32,7 @@ public sealed class Recipe
         Rank = rank;
         Exchange = exchange;
         HalfAssembly = halfAssembly;
+        CutRotation = cutRotation;
     }
 
     public RecipeKind Kind { get; }
@@ -64,6 +66,47 @@ public sealed class Recipe
     /// 只有 <see cref="RecipeKind.HalfAssembly"/> 节点会带。
     /// </summary>
     public HalfAssemblyDetails? HalfAssembly { get; }
+
+    /// <summary>
+    /// 半破节点（<see cref="RecipeKind.Cut"/>）切割前需要顺转的象限数；
+    /// 与 <see cref="ShapeOps.Rotate"/> 一致（顺时针为正）。其它节点恒为 0。
+    ///
+    /// <para>
+    /// 回放语义：<c>ShapeOps.Rotate(Cut(Rotate(Steps[0].Shape, CutRotation)).West, -CutRotation)</c>
+    /// 必须逐格等于 <see cref="Shape"/>。
+    /// </para>
+    /// </summary>
+    public int CutRotation { get; }
+
+    /// <summary>
+    /// 半破节点（Q1 子配方，docs §19.4 / §5.1）：从「紧列起点」切一刀得到零件。
+    ///
+    /// <para>
+    /// <see cref="Steps"/>[0] 是切割前的前态（目标列的所有洞填成临时晶体 ⇒ 全紧列；
+    /// 另配托柱与保险丝），<see cref="Steps"/>[1] 是真实 <see cref="ShapePhysics.Cut"/>
+    /// 的西半边。产物 <see cref="Shape"/> 就是半破后的半边——目标列就是零件本身，
+    /// 托柱残料在装配时丢弃（§5.1 的「托柱 / 保险丝」本来就不参与产物）。
+    /// 这条路径没有顶针，所以 <c>Rank = 0</c>，满足「子配方至多一层」。
+    /// </para>
+    /// </summary>
+    public static Recipe CreateCut(
+        ShapeDocument cutPreState,
+        ShapeDocument halfBreak,
+        int cutRotation,
+        IReadOnlyList<RecipeStep> steps)
+    {
+        return new Recipe(
+            RecipeKind.Cut,
+            halfBreak,
+            Array.Empty<Recipe>(),
+            null,
+            null,
+            steps,
+            0,
+            null,
+            null,
+            cutRotation);
+    }
 
     public static Recipe CreateExchange(
         ShapeDocument shape,
@@ -172,7 +215,13 @@ public enum RecipeKind
     /// k 列半边装配（落地清单第 5 条）：两个半边各自按半边工序做好，
     /// 再送进交换机合并。交换链做不出来时才使用（见 <see cref="HalfAssembly"/>）。
     /// </summary>
-    HalfAssembly
+    HalfAssembly,
+
+    /// <summary>
+    /// 半破（Q1 子配方，docs §19.4 / §5.1）：从「紧列 + 托柱 + 保险丝」切一刀
+    /// 得到目标列零件。真实 <see cref="ShapePhysics.Cut"/> 回放，无顶针（rank 0）。
+    /// </summary>
+    Cut
 }
 
 /// <summary>过程快照：给 UI 显示「这一步做完了长什么样」。</summary>

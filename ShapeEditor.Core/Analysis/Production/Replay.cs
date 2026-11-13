@@ -127,6 +127,44 @@ public static class Replay
                 break;
             }
 
+            case RecipeKind.Cut:
+            {
+                /*
+                 * Q1 子配方（docs §19.4 / §5.1）：紧列起点 → 一刀半破 → 零件。
+                 * 不用相信 Steps[1] 的快照，直接从 Steps[0] 用真实 Cut 重算。
+                 */
+                if (recipe.Steps.Count < 2 ||
+                    recipe.Steps[0].Shape is null)
+                {
+                    errors.Add("半破子配方缺少紧列起点。");
+                    break;
+                }
+
+                ShapeDocument rotated = ShapeOps.Rotate(
+                    recipe.Steps[0].Shape,
+                    recipe.CutRotation);
+
+                CutResult cut = ShapePhysics.Cut(rotated);
+
+                if (!cut.Success || cut.West is null)
+                {
+                    errors.Add("半破子配方的真实 Cut 失败：" +
+                               (cut.Error ?? "未知原因"));
+                    break;
+                }
+
+                ShapeDocument replayed = ShapeOps.Rotate(
+                    cut.West,
+                    -recipe.CutRotation);
+
+                if (!ShapeOps.Same(replayed, recipe.Shape))
+                {
+                    errors.Add("半破子配方回放失败：Cut 结果与产物不一致。");
+                }
+
+                break;
+            }
+
             default:
                 errors.Add("未知的工序类型。");
                 break;
@@ -209,6 +247,10 @@ public static class Replay
                 break;
 
             case RecipeKind.HalfAssembly:
+                steps.AddRange(recipe.Steps);
+                break;
+
+            case RecipeKind.Cut:
                 steps.AddRange(recipe.Steps);
                 break;
         }

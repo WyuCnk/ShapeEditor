@@ -198,6 +198,20 @@ public sealed record AngleWorkOrder(
     public Recipe? SubRecipe { get; init; }
 
     /// <summary>
+    /// Q1 子配方（docs §19.4 / §5.1）：顶针路线（构造 H）的工序单里，
+    /// 目标列 A 若带洞，必须挂「从紧列开始、一层展开」的子配方：
+    /// <code>
+    /// 紧列（洞填临时晶体）+ 托柱 + 保险丝
+    ///   → 一刀半破（真实 ShapePhysics.Cut）
+    ///   → 零件 A（Q1）
+    /// </code>
+    /// 用 <see cref="RecipeKind.Cut"/> 表达，<see cref="Replay"/>.Verify 直接用真实 Cut
+    /// 重算。<see cref="SubRecipe"/> 仍然是整份前态的交换链装配；两者互补：
+    /// 前者证明整份前态装得出来，后者说明 Q1 这一列本身怎么造。
+    /// </summary>
+    public Recipe? Q1SubRecipe { get; init; }
+
+    /// <summary>
     /// 半边工序（docs/half-side-work-order.md）：n = 4、五项 ✔ 但 S ✘ 的合法角
     /// 不能单角做，必须与相邻象限一起做。
     ///
@@ -371,6 +385,15 @@ public static partial class AngleWorkOrderBuilder
     /// 标注不是失败，只是如实说明它不属于论文构造 A–H。
     /// </summary>
     public const string NonPaperConstructionPrefix = "非论文构造：";
+
+    /// <summary>
+    /// Q1 子配方缺失时的统一说明（docs §19.4 第 3 条）：
+    /// <b>不伪造</b>一层紧列子配方——保持现状并把原因写进
+    /// <see cref="AngleWorkOrder.Limitations"/>。
+    /// </summary>
+    public const string Q1SubRecipeMissingText =
+        "Q1 子配方未找到（一层紧列不可行）：前态 A 的洞无法用「紧列 + 半破」做出来，" +
+        "保持如实标注，不伪造子配方。";
 
     /// <summary>
     /// 未覆盖的含义说明：避免 UI 把它误读成「不可制作」。
@@ -668,7 +691,10 @@ public static partial class AngleWorkOrderBuilder
 
             if (tailOrder is not null)
             {
-                return tailOrder;
+                return ApplyIsolatedColumnRule(
+                    tailOrder,
+                    target,
+                    column);
             }
         }
 
@@ -722,9 +748,12 @@ public static partial class AngleWorkOrderBuilder
                  * 档内链（算法 1 → 2 → 3）会自己标出真正成功的那一档，
                  * 这里只给没打标的实现补上分档标记。
                  */
-                return tierOrder.Algorithm == AngleAlgorithm.None
-                    ? Label(tierOrder, algorithm, attempt: false)
-                    : tierOrder;
+                return ApplyIsolatedColumnRule(
+                    tierOrder.Algorithm == AngleAlgorithm.None
+                        ? Label(tierOrder, algorithm, attempt: false)
+                        : tierOrder,
+                    target,
+                    column);
             }
         }
 
@@ -750,7 +779,7 @@ public static partial class AngleWorkOrderBuilder
                 !HasCyclicPreState(constructG, target) &&
                 !constructG.HasIllegalPreState(out _, out _))
             {
-                return constructG;
+                return ApplyIsolatedColumnRule(constructG, target, column);
             }
 
             AngleWorkOrder? generic = TryBuildGenericFourQuadrantOrder(
@@ -764,7 +793,7 @@ public static partial class AngleWorkOrderBuilder
                 !HasCyclicPreState(generic, target) &&
                 !generic.HasIllegalPreState(out _, out _))
             {
-                return generic;
+                return ApplyIsolatedColumnRule(generic, target, column);
             }
         }
 
@@ -800,7 +829,10 @@ public static partial class AngleWorkOrderBuilder
 
         if (algorithm == AngleAlgorithm.Algorithm4)
         {
-            return Label(legacy, AngleAlgorithm.Algorithm4, attempt: false);
+            return ApplyIsolatedColumnRule(
+                Label(legacy, AngleAlgorithm.Algorithm4, attempt: false),
+                target,
+                column);
         }
 
         string tierReason = tierRejectionReason ?? (tierOrder?.Note is null
@@ -813,10 +845,13 @@ public static partial class AngleWorkOrderBuilder
              * 分档构造没覆盖、兜底链成功：如实标成 Fallback，
              * 并在限制说明里写清「实际用的是兜底构造」。
              */
-            return AddLimitation(
-                Label(legacy, AngleAlgorithm.Fallback, attempt: false),
-                $"论文分档（{DescribeAlgorithm(algorithm)}）在该形态上未通过回放验证，" +
-                $"改用兜底构造（{legacy.Construction}）：{tierReason}");
+            return ApplyIsolatedColumnRule(
+                AddLimitation(
+                    Label(legacy, AngleAlgorithm.Fallback, attempt: false),
+                    $"论文分档（{DescribeAlgorithm(algorithm)}）在该形态上未通过回放验证，" +
+                    $"改用兜底构造（{legacy.Construction}）：{tierReason}"),
+                target,
+                column);
         }
 
         /*
@@ -825,6 +860,106 @@ public static partial class AngleWorkOrderBuilder
         return AppendFailure(
             Label(legacy, algorithm, attempt: true),
             $"论文分档（{DescribeAlgorithm(algorithm)}）未覆盖：{tierReason}");
+    }
+
+    /// <summary>
+    /// §14.4 的产物规则：角工序做完后，若目标列满足<b>定理 4（孤立列判据）</b>，
+    /// 就可以把托柱拆掉、降到孤立列（更省材料）；不满足则停在 S 形态，
+    /// 并在 <see cref="AngleWorkOrder.Limitations"/> 里写明原因。
+    ///
+    /// <para>
+    /// <b>实现方式</b>：只在「施工里真的出现过托柱」（有 <see cref="AngleWorkStepKind.Support"/>
+    /// 步或非空辅助列）的工序单上追加一步「构造 C：拆掉托柱」，并用真实
+    /// <see cref="ShapeOps.IsStable"/> 检验孤立列自己能站住；检验不过就保留托柱。
+    /// Simple / 无晶体档本来就没有托柱（工序单只有逐层计划），只补一条「该列是孤立列」的说明。
+    /// </para>
+    /// <para>
+    /// <b>实测（≤6 层 2125 个 S 列）</b>：其中 1054 列本身满足定理 4（例如 <c>cT.</c>——
+    /// 紧列但带晶体，仍要碎晶/顶针才能做出来）；有托柱的 604 例都真的追加了「拆托柱」步，
+    /// 并逐例用真实 <see cref="ShapeOps.IsStable"/> 验证。剩下的 S 列带洞（构造 G / D 的典型），
+    /// 定理 4 不成立，保留托柱并写明原因。Simple / 无晶体档本来就没有托柱。
+    /// </para>
+    /// </summary>
+    private static AngleWorkOrder ApplyIsolatedColumnRule(
+        AngleWorkOrder order,
+        ShapeDocument target,
+        int column)
+    {
+        if (!order.IsComplete || order.Half is not null)
+        {
+            return order;
+        }
+
+        var limitations = new List<string>(order.Limitations);
+
+        bool hasPillar =
+            order.AuxiliaryColumns.Count > 0 ||
+            order.Steps.Any(step => step.Kind == AngleWorkStepKind.Support);
+
+        bool isolated = IsolatedColumn.IsIsolatedColumn(target, column);
+
+        if (!isolated)
+        {
+            limitations.Add(
+                "保留托柱：该列不是孤立列（定理 4 不成立），停在 S 形态。");
+
+            return order with { Limitations = limitations };
+        }
+
+        if (!hasPillar)
+        {
+            limitations.Add(
+                "该列是孤立列（定理 4 成立）：按孤立列施工，不需要托柱。");
+
+            return order with { Limitations = limitations };
+        }
+
+        /*
+         * 有托柱且定理 4 成立：真的拆掉托柱。产物只保留目标列，
+         * 并检验它自己能稳定站住（构造 C 交接 + 真实下落）。
+         * 目标图的其它象限是固定场景，不能在这一步里清掉。
+         */
+        if (HasOtherColumn(target, column))
+        {
+            limitations.Add(
+                "该列是孤立列（定理 4 成立），但目标图还有其它象限；" +
+                "托柱由末步 Target 统一清除，不单独拆。");
+
+            return order with { Limitations = limitations };
+        }
+
+        ShapeDocument isolatedShape = ShapeOps.Project(target, column, 1);
+
+        if (!ShapeOps.IsStable(isolatedShape) ||
+            ShapeSignature.ColumnText(isolatedShape, column) !=
+                ShapeSignature.ColumnText(target, column))
+        {
+            limitations.Add(
+                "保留托柱：定理 4 判真，但拆托柱后的孤立列回放不稳定。");
+
+            return order with { Limitations = limitations };
+        }
+
+        var steps = new List<AngleWorkStep>(order.Steps);
+
+        int targetIndex = steps.FindLastIndex(
+            step => step.Kind == AngleWorkStepKind.Target);
+
+        steps.Insert(
+            targetIndex < 0 ? steps.Count : targetIndex,
+            new AngleWorkStep(
+                "构造 C：拆掉托柱，降到孤立列（定理 4 成立、真实下落稳定）",
+                isolatedShape,
+                AngleWorkStepKind.Support));
+
+        limitations.Add(
+            "拆托柱：该列满足定理 4，最后用构造 C 交接把托柱拆掉，降到孤立列。");
+
+        return order with
+        {
+            Steps = steps,
+            Limitations = limitations
+        };
     }
 
     /// <summary>
@@ -1246,9 +1381,14 @@ public static partial class AngleWorkOrderBuilder
     #endregion
 
     /// <summary>
-    /// 核心 / 尾部拆分（docs §17.5 第 1 条）：把目标列拆成
-    /// 「核心（最高晶体及以下）」与「尾部（以上）」。
+    /// 核心 / 尾部拆分（docs §17.5 第 1 条 / §5.3）：把目标列拆成
+    /// 「核心（<b>整图</b>最高晶体及以下）」与「尾部（以上）」。
     ///
+    /// <para>
+    /// <b><c>Hc</c> 的取法（§5.3 ①）</b>：<c>Hc</c> 是<b>整图</b>（所有象限）最高晶体
+    /// 所在层，不是目标列自己的最高晶体——这样「<c>Hc</c> 以上没有晶体」由扫描
+    /// 自动满足，也不需要额外的「尾部无晶体」判据（§5.3 的说明）。
+    /// </para>
     /// <para>
     /// 核心直接复用现有分档流程：核心列没有尾部，因此不会递归；
     /// 核心工序完成后再用构造 C 接回尾部：
@@ -1269,7 +1409,7 @@ public static partial class AngleWorkOrderBuilder
         AngleBuildKind kind,
         bool enforceFiveConditions)
     {
-        int highest = AngleClassifier.HighestCrystalLayer(target, column);
+        int highest = HighestCrystalLayerOfShape(target);
 
         if (highest < 0 || highest >= target.LayerCount - 1)
         {
@@ -1389,7 +1529,8 @@ public static partial class AngleWorkOrderBuilder
         var limitations = new List<string>(coreOrder.Limitations);
 
         limitations.Add(
-            $"核心 / 尾部拆分：核心 = 第 1–{highest + 1} 层（最高晶体及以下），" +
+            $"核心 / 尾部拆分（§5.3）：Hc = 第 {highest + 1} 层（<b>整图</b>最高晶体），" +
+            $"核心 = 第 1–{highest + 1} 层，" +
             $"尾部 = 第 {highest + 2}–{target.LayerCount} 层；" +
             "尾部不参与碎晶，最后由构造 C 逐层接回。");
 
@@ -1403,7 +1544,7 @@ public static partial class AngleWorkOrderBuilder
             }
         }
 
-        return new AngleWorkOrder(
+        return AttachQ1SubRecipe(new AngleWorkOrder(
             column,
             kind,
             steps,
@@ -1419,7 +1560,35 @@ public static partial class AngleWorkOrderBuilder
             SubRecipe = coreOrder.SubRecipe,
             Rank = rank,
             Limitations = limitations
-        };
+        });
+    }
+
+    /// <summary>
+    /// 整图最高晶体所在层（docs §5.3 ① 的 <c>Hc</c>，0 起；没有晶体返回 -1）。
+    ///
+    /// <para>
+    /// 注意与 <see cref="AngleClassifier.HighestCrystalLayer"/> 的区别：那个只扫
+    /// <b>一列</b>，这里的 <c>Hc</c> 要扫<b>所有象限</b>——否则当别的象限有更高的
+    /// 晶体时，核心 / 尾部的分界线会取低，尾部里就会混进晶体（§5.3 明确要求
+    /// 「<c>Hc</c> 以上没有晶体」）。
+    /// </para>
+    /// </summary>
+    private static int HighestCrystalLayerOfShape(
+        ShapeDocument document)
+    {
+        int highest = -1;
+
+        for (int part = 0; part < document.PartCount; part++)
+        {
+            int layer = AngleClassifier.HighestCrystalLayer(document, part);
+
+            if (layer > highest)
+            {
+                highest = layer;
+            }
+        }
+
+        return highest;
     }
 
     /// <summary>把核心目标列写进一张新图（其余象限留空）。</summary>
@@ -6251,7 +6420,7 @@ public static partial class AngleWorkOrderBuilder
             target,
             AngleWorkStepKind.Target));
 
-        return new AngleWorkOrder(
+        return AttachQ1SubRecipe(new AngleWorkOrder(
             column,
             kind,
             steps,
@@ -6263,7 +6432,7 @@ public static partial class AngleWorkOrderBuilder
             Rotation = 0,
             AuxiliaryColumns = auxiliaryColumns,
             Limitations = limitations
-        };
+        });
     }
 
     #endregion
@@ -6305,6 +6474,514 @@ public static partial class AngleWorkOrderBuilder
     /// <see cref="Replay"/>.Verify）证明可造，拿不到就如实报未覆盖。
     /// </para>
     /// </summary>
+    #region 构造 H（§20.3 构造式：目标列 → 抬高后的列）
+
+    /// <summary>
+    /// 构造式构造 H（docs §20.3 / §20.5）：<b>由目标列 → 抬高后的列逐格比对</b>
+    /// 推出降表、<c>I</c>、<c>J</c>，再生成 A | B | E | N，用真实
+    /// <see cref="ShapePhysics.Pin"/> 验收。<b>不扫描「晶体正下方的空段」</b>。
+    ///
+    /// <para><b>推导规则（§20.3 ④）</b>：目标列的每个内部空段（上下都有材料）处理一次：</para>
+    /// <list type="bullet">
+    /// <item>空段上方的材料是<b>普通格</b> ⇒ 把它抬高一层（它就是「要降的格」），
+    /// 空段连同它让出来的那一层用临时晶体填满——<b>只填让出来的段，不做「全填」</b>；</item>
+    /// <item>空段上方的材料是<b>晶体</b> ⇒ 晶体下移一层（顶针会把它抬回去），
+    /// 空出来的那一格留给下方空段抬高上来的普通格。</item>
+    /// </list>
+    /// <para>
+    /// 两种处理顺序（从下往上 / 从上往下）都是确定性扫描，先后各试一次，
+    /// <b>不做参数枚举</b>。普通格 0 起第 <c>k</c> 层给出降表 <c>k+2 → k+1</c>
+    /// （§20.3 ①，层号用顶针后）；<c>I = ∪[d, s−1]</c> 并入临时晶体段最高层，
+    /// <c>J = {s}</c>（§20.3 ②③）；B / N 直接按 I / J 生成（§20.3 ⑤）。
+    /// </para>
+    /// <para>
+    /// 回放只作验收（§20.5 第 4 条）：不过就退回扫描路线，绝不扩大搜索。
+    /// </para>
+    /// </summary>
+    private static AngleWorkOrder? TryBuildConstructedHPaper(
+        ShapeDocument target,
+        int column,
+        int layers,
+        int parts,
+        AngleBuildKind kind,
+        AngleAlgorithm algorithm,
+        out string? failureReason)
+    {
+        failureReason = null;
+
+        if (parts != 4)
+        {
+            failureReason = "构造 H 需要四象限的环（A | B | E | N）。";
+            return null;
+        }
+
+        if (layers < 2 || layers < target.LayerCount)
+        {
+            failureReason = "cap 装不下目标列的完整高度，构造 H 的前态放不下。";
+            return null;
+        }
+
+        if (target[0, column].Type is not (CellType.Pin or CellType.Empty))
+        {
+            failureReason = "构造 H 的顶针会在第 1 层补针，目标底层必须是针或空。";
+            return null;
+        }
+
+        var targetCodes = new char[layers];
+
+        for (int layer = 0; layer < layers; layer++)
+        {
+            targetCodes[layer] = CodeOf(
+                layer < target.LayerCount
+                    ? target[layer, column]
+                    : ShapeCell.Empty());
+        }
+
+        // 底针链（算法 5）走扫描路线：§20.3 的构造式只讨论普通格与晶体。
+        for (int layer = 0; layer < layers; layer++)
+        {
+            if (targetCodes[layer] == ShapeSignature.PinCode)
+            {
+                failureReason = "目标列含顶针，§20.3 构造式只处理普通格 / 晶体。";
+                return null;
+            }
+        }
+
+        char color = CrystalColor(target, column);
+        string? deriveFailure = null;
+
+        foreach (bool topDown in new[] { false, true })
+        {
+            char[]? raised = DeriveRaisedColumn(
+                targetCodes,
+                layers,
+                topDown,
+                out bool[]? temporary,
+                out string? why);
+
+            if (raised is null || temporary is null)
+            {
+                deriveFailure = why;
+                continue;
+            }
+
+            AngleWorkOrder? order = TryBuildConstructedHPaperCore(
+                target,
+                column,
+                layers,
+                parts,
+                kind,
+                algorithm,
+                raised,
+                temporary,
+                color,
+                topDown,
+                out string? coreFailure);
+
+            if (order is not null)
+            {
+                failureReason = null;
+                return order;
+            }
+
+            deriveFailure = coreFailure;
+        }
+
+        failureReason = "按 §20.3 构造式推导抬高后的列失败：" + deriveFailure;
+        return null;
+    }
+
+    /// <summary>
+    /// §20.3 ④：由目标列推出「抬高后的列」A。返回 null 表示这份目标列不能按
+    /// 构造式抬高（调用方退回扫描路线）。
+    ///
+    /// <para>
+    /// <paramref name="topDown"/> 只决定内部空段的处理顺序：两种顺序都是确定性扫描，
+    /// 不引入搜索参数。
+    /// </para>
+    /// </summary>
+    private static char[]? DeriveRaisedColumn(
+        char[] targetCodes,
+        int layers,
+        bool topDown,
+        out bool[]? temporary,
+        out string? failureReason)
+    {
+        temporary = null;
+        failureReason = null;
+
+        var raised = (char[])targetCodes.Clone();
+        var temp = new bool[layers];
+
+        var gaps = new List<(int Lo, int Hi)>();
+        int index = 0;
+
+        while (index < layers)
+        {
+            if (targetCodes[index] != ShapeSignature.EmptyCode)
+            {
+                index++;
+                continue;
+            }
+
+            int lo = index;
+
+            while (index < layers &&
+                   targetCodes[index] == ShapeSignature.EmptyCode)
+            {
+                index++;
+            }
+
+            int hi = index - 1;
+
+            if (lo > 0 &&
+                hi + 1 < layers &&
+                targetCodes[lo - 1] != ShapeSignature.EmptyCode &&
+                targetCodes[hi + 1] != ShapeSignature.EmptyCode)
+            {
+                gaps.Add((lo, hi));
+            }
+        }
+
+        gaps.Sort((left, right) => topDown
+            ? right.Hi.CompareTo(left.Hi)
+            : left.Lo.CompareTo(right.Lo));
+
+        foreach ((int lo, int hi) in gaps)
+        {
+            char upper = targetCodes[hi + 1];
+
+            if (upper == ShapeSignature.SolidCode)
+            {
+                /*
+                 * §20.3 ④ 前半：把要降的普通格抬高一层，让出来的段填临时晶体。
+                 * 抬高目标 = 空段上方的第一格再上一层；填晶体范围 = 空段 + 它让出的那一层。
+                 */
+                int destination = hi + 2;
+
+                if (destination >= layers ||
+                    raised[destination] != ShapeSignature.EmptyCode ||
+                    raised[hi + 1] != ShapeSignature.SolidCode)
+                {
+                    failureReason =
+                        $"第 {hi + 2} 层的普通格抬到第 {destination + 1} 层时没有空位。";
+                    return null;
+                }
+
+                raised[destination] = ShapeSignature.SolidCode;
+                raised[hi + 1] = ShapeSignature.EmptyCode;
+
+                for (int layer = lo; layer <= hi + 1; layer++)
+                {
+                    raised[layer] = ShapeSignature.CrystalCode;
+                    temp[layer] = true;
+                }
+            }
+            else if (upper == ShapeSignature.CrystalCode)
+            {
+                /*
+                 * §20.3 ④ 后半：晶体下移一层（顶针抬回原层）；空出来的那一格
+                 * 留给下方空段抬高上来的普通格，填不上时在下面补临时晶体。
+                 */
+                if (raised[hi] != ShapeSignature.EmptyCode ||
+                    raised[hi + 1] != ShapeSignature.CrystalCode)
+                {
+                    failureReason =
+                        $"第 {hi + 2} 层的晶体下移时第 {hi + 1} 层已被占用。";
+                    return null;
+                }
+
+                raised[hi] = ShapeSignature.CrystalCode;
+                raised[hi + 1] = ShapeSignature.EmptyCode;
+            }
+            else
+            {
+                failureReason = "空段上方的材料不是普通格或晶体（§20.3 不处理顶针）。";
+                return null;
+            }
+        }
+
+        // 让出来的段若还剩内部空洞（上下都有材料），补成临时晶体。
+        int top = layers - 1;
+
+        while (top >= 0 && raised[top] == ShapeSignature.EmptyCode)
+        {
+            top--;
+        }
+
+        for (int layer = 1; layer < top; layer++)
+        {
+            if (raised[layer] == ShapeSignature.EmptyCode &&
+                raised[layer - 1] != ShapeSignature.EmptyCode &&
+                raised[layer + 1] != ShapeSignature.EmptyCode)
+            {
+                raised[layer] = ShapeSignature.CrystalCode;
+                temp[layer] = true;
+            }
+        }
+
+        // 目标底层为空 ⇒ 前态第 1 层必须为空（否则 Pin 会补出目标没有的针）。
+        if (targetCodes[0] == ShapeSignature.EmptyCode &&
+            raised[0] != ShapeSignature.EmptyCode)
+        {
+            failureReason = "前态第 1 层不为空，Pin 会补出目标没有的针。";
+            return null;
+        }
+
+        // 临时晶体与原生晶体纵向相邻 ⇒ 碎晶会连带炸掉目标晶体：退回扫描路线。
+        for (int layer = 0; layer < layers; layer++)
+        {
+            if (!temp[layer])
+            {
+                continue;
+            }
+
+            bool touchesNative =
+                (layer > 0 &&
+                 raised[layer - 1] == ShapeSignature.CrystalCode &&
+                 !temp[layer - 1]) ||
+                (layer + 1 < layers &&
+                 raised[layer + 1] == ShapeSignature.CrystalCode &&
+                 !temp[layer + 1]);
+
+            if (touchesNative)
+            {
+                failureReason =
+                    $"第 {layer + 1} 层的临时晶体与原生晶体纵向相邻，碎晶会误伤目标晶体。";
+                return null;
+            }
+        }
+
+        temporary = temp;
+        return raised;
+    }
+
+    /// <summary>§20.3 ⑤：按 I / J 生成 A | B | E | N，并用真实 Pin 验收。</summary>
+    private static AngleWorkOrder? TryBuildConstructedHPaperCore(
+        ShapeDocument target,
+        int column,
+        int layers,
+        int parts,
+        AngleBuildKind kind,
+        AngleAlgorithm algorithm,
+        char[] raised,
+        bool[] temporary,
+        char color,
+        bool topDown,
+        out string? failureReason)
+    {
+        failureReason = null;
+
+        var iLayers = new HashSet<int>();
+        var jLayers = new HashSet<int>();
+        var descents = new List<string>();
+
+        for (int layer = 0; layer < layers; layer++)
+        {
+            if (raised[layer] != ShapeSignature.SolidCode)
+            {
+                continue;
+            }
+
+            // §20.3 ①：普通格 0 起第 k 层顶针后在 k+1 层，降到 k ⇒ 降表 k+2 → k+1。
+            descents.Add($"{layer + 2}→{layer + 1}");
+            iLayers.Add(layer);
+            jLayers.Add(layer + 1);
+        }
+
+        // §20.3 ②：每段临时晶体的最高层并入 I（B 的晶体桥在那里与它咬合）。
+        for (int layer = 0; layer < layers; layer++)
+        {
+            if (!temporary[layer] ||
+                (layer > 0 && temporary[layer - 1]))
+            {
+                continue;
+            }
+
+            int segmentTop = layer;
+
+            while (segmentTop + 1 < layers && temporary[segmentTop + 1])
+            {
+                segmentTop++;
+            }
+
+            iLayers.Add(segmentTop + 1);
+            jLayers.Add(segmentTop + 2);
+        }
+
+        var preState = new ShapeDocument(layers, parts);
+
+        for (int layer = 0; layer < layers; layer++)
+        {
+            preState[layer, column] = CellFromCode(raised[layer], color);
+        }
+
+        int bColumn = Wrap(column + 1, parts);
+        int eColumn = Wrap(column + 2, parts);
+        int nColumn = Wrap(column - 1, parts);
+
+        for (int layer = 0; layer < layers; layer++)
+        {
+            // B：z+1 ∈ I → 晶体，否则普通格（整列紧列）。
+            preState[layer, bColumn] = iLayers.Contains(layer + 1)
+                ? ShapeCell.Crystal(color)
+                : ShapeCell.Shape('C', 'u');
+
+            // E：满高纯晶体柱。
+            preState[layer, eColumn] = ShapeCell.Crystal(color);
+
+            // N：z+1 ∈ J → 针，否则普通格（整列紧列）。
+            preState[layer, nColumn] = jLayers.Contains(layer + 1)
+                ? ShapeCell.Pin()
+                : ShapeCell.Shape('C', 'u');
+        }
+
+        if (ShapeSignature.ColumnText(preState, column) ==
+            ShapeSignature.ColumnText(target, column))
+        {
+            failureReason = "§20.3 推出的 A 与目标列相同（循环）。";
+            return null;
+        }
+
+        // A 有洞 ⇒ 交换链子配方（rank 0）证明整份前态可装配。
+        bool tightTargetColumn =
+            ShapeSignature.IsTightColumn(preState, column);
+        Recipe? subRecipe = null;
+
+        if (!tightTargetColumn &&
+            (!ExchangeChain.TryBuild(preState, out subRecipe) ||
+             subRecipe is null ||
+             subRecipe.Rank != 0 ||
+             !Replay.Verify(subRecipe, preState, out _)))
+        {
+            failureReason =
+                "§20.3 推出的 A 带洞，交换链子配方没能装配出这份前态。";
+            return null;
+        }
+
+        var limitations = BaseLimitations(
+            "构造 H（§20.3 构造式，由目标列 → 抬高后的列逐格比对得出）：" +
+            "A = 目标列把要降的普通格抬高一层、只把让出来的段填临时晶体；" +
+            "B 按 z+1 ∈ I 放晶体、E 是满高纯晶体柱、N 按 z+1 ∈ J 放针；" +
+            "一次 Pin 同时引爆并整批落下。");
+
+        limitations.Add(
+            "降表（§20.3 ①，层号用顶针后）：" +
+            (descents.Count > 0 ? string.Join("、", descents) : "无") +
+            $"，I = {{{string.Join(",", iLayers.Order().Select(layer => layer + 1))}}}" +
+            $"，J = {{{string.Join(",", jLayers.Order().Select(layer => layer + 1))}}}。");
+
+        limitations.Add(
+            "A 的推导顺序：" +
+            (topDown ? "从上往下的空段" : "从下往上的空段") +
+            $"，A = {ShapeSignature.ColumnText(preState, column)}。");
+
+        // §19.1：A 里晶体正下方为空 = 有晶下间隙；目标对应位置有材料时可避免。
+        for (int layer = 1; layer < layers; layer++)
+        {
+            if (preState[layer, column].Type != CellType.Crystal ||
+                preState[layer - 1, column].Type != CellType.Empty)
+            {
+                continue;
+            }
+
+            bool targetHasSupport =
+                layer - 1 < target.LayerCount &&
+                target[layer - 1, column].Type != CellType.Empty;
+
+            limitations.Add(targetHasSupport
+                ? "§19.1：A 第 " + (layer + 1) + " 层晶体下方本可贴住（目标对应位置有材料），" +
+                  "但构造式没能填上，记为待改进。"
+                : "此处的晶下间隙是目标本身要求的，支撑材料会留残料（§19.1 / §19.3）。");
+        }
+
+        var auxiliaryColumns = new[] { nColumn, bColumn, eColumn };
+
+        var steps = new List<AngleWorkStep>
+        {
+            new(
+                "碎晶前的角（构造 H：A | 晶体桥柱 B | 满高纯晶体柱 E | 针槽柱 N）",
+                preState,
+                AngleWorkStepKind.PreState)
+        };
+
+        // 验收条件一 / 七：前态每列五项条件 + 辅助列紧列。
+        if (IsRejectedPreState(target, column, preState, out int badColumn))
+        {
+            failureReason = DescribeIllegalPreState(preState, badColumn);
+            return null;
+        }
+
+        if (!ShapeOps.IsStable(preState))
+        {
+            failureReason = "§20.3 构造式的前态不稳定。";
+            return null;
+        }
+
+        PhysicsResult pinResult = ShapePhysics.Pin(preState);
+
+        if (!pinResult.Success || pinResult.Document is null)
+        {
+            failureReason = "ShapePhysics.Pin 失败：" +
+                            (pinResult.Error ?? "未知原因");
+            return null;
+        }
+
+        ShapeDocument pinned = pinResult.Document;
+
+        if (!MatchesTargetColumn(
+                pinned,
+                target,
+                column,
+                layers,
+                out string? difference))
+        {
+            failureReason = "§20.3 构造式一次顶针后的目标列与目标不符：" + difference;
+            return null;
+        }
+
+        for (int layer = 0; layer < layers; layer++)
+        {
+            if (pinned[layer, bColumn].Type == CellType.Crystal)
+            {
+                failureReason = "顶针后晶体桥没有全部删除，构造 H 的前提不成立。";
+                return null;
+            }
+        }
+
+        steps.Add(new AngleWorkStep(
+            "顶针：一次 Pin 把整体抬一层，E 顶端超限整簇碎裂并连带删掉 B 的晶体桥，" +
+            "源普通格沿通道落到各自的目标层",
+            pinned,
+            AngleWorkStepKind.Pin));
+
+        steps.Add(CrystallizeNote());
+
+        steps.Add(new AngleWorkStep(
+            "清除辅助象限，得到目标角",
+            target,
+            AngleWorkStepKind.Target));
+
+        return new AngleWorkOrder(
+            column,
+            kind,
+            steps,
+            null)
+        {
+            IsComplete = true,
+            TargetColumnHasSubRecipe = true,
+            Construction = AngleConstruction.H,
+            Algorithm = algorithm,
+            Rotation = 0,
+            AuxiliaryColumns = auxiliaryColumns,
+            SubRecipe = subRecipe,
+            Rank = 1,
+            Limitations = limitations
+        };
+    }
+
+    #endregion
+
     private static AngleWorkOrder? TryBuildConstructedH(
         ShapeDocument target,
         int column,
@@ -6315,7 +6992,26 @@ public static partial class AngleWorkOrderBuilder
         out string? failureReason)
     {
         /*
-         * 两种<b>确定性</b>形态，先后各试一次，不枚举参数：
+         * ⓪ §20.3 构造式优先：由「目标列 → 抬高后的列」逐格比对推出降表 / I / J，
+         *    不再扫描「晶体正下方的空段」。失败才退回下面两条扫描形态。
+         */
+        AngleWorkOrder? paper = TryBuildConstructedHPaper(
+            target,
+            column,
+            layers,
+            parts,
+            kind,
+            algorithm,
+            out string? paperFailure);
+
+        if (paper is not null)
+        {
+            failureReason = null;
+            return AttachQ1SubRecipe(paper);
+        }
+
+        /*
+         * 两种<b>确定性</b>扫描形态，先后各试一次，不枚举参数：
          * ① 先把「晶体正下方空段」的普通格整体提到空段顶端（A 里形成可碎掉的
          *    通道；目标列的原生晶体与临时晶体之间被普通格隔开，碎晶不会误伤）；
          * ② ① 不成立时，直接取 A = 目标列下移一层（Pin 之后每格正好落在目标层）。
@@ -6334,7 +7030,7 @@ public static partial class AngleWorkOrderBuilder
         if (lifted is not null)
         {
             failureReason = null;
-            return lifted;
+            return AttachQ1SubRecipe(lifted);
         }
 
         AngleWorkOrder? plain = TryBuildConstructedHCore(
@@ -6349,9 +7045,247 @@ public static partial class AngleWorkOrderBuilder
 
         failureReason = plain is not null
             ? null
-            : $"带下降通道：{liftedFailure}；无下降通道：{plainFailure}";
+            : $"§20.3 构造式：{paperFailure}；带下降通道：{liftedFailure}；" +
+              $"无下降通道：{plainFailure}";
 
-        return plain;
+        return plain is null ? null : AttachQ1SubRecipe(plain);
+    }
+
+    /// <summary>
+    /// §19.4：给顶针路线（构造 H）的工序单挂 Q1 子配方——「紧列 → 半破 → 零件」，
+    /// 子配方最多一层（§5.1）。找不到时如实写进 <see cref="AngleWorkOrder.Limitations"/>，
+    /// <b>不伪造</b>。
+    /// </summary>
+    private static AngleWorkOrder AttachQ1SubRecipe(
+        AngleWorkOrder order)
+    {
+        if (order.Construction != AngleConstruction.H ||
+            order.Q1SubRecipe is not null)
+        {
+            return order;
+        }
+
+        ShapeDocument? preState = order.Steps
+            .FirstOrDefault(step =>
+                step.Kind == AngleWorkStepKind.PreState &&
+                step.Shape is not null)
+            ?.Shape;
+
+        if (preState is null ||
+            ShapeSignature.IsTightColumn(preState, order.Column))
+        {
+            return order;
+        }
+
+        var limitations = new List<string>(order.Limitations);
+
+        if (TryBuildColumnPartSubRecipe(
+                preState,
+                order.Column,
+                out Recipe? q1,
+                out string? description))
+        {
+            limitations.Add("Q1 子配方（§19.4 / §5.1）：" + description);
+
+            return order with
+            {
+                Q1SubRecipe = q1,
+                Limitations = limitations
+            };
+        }
+
+        limitations.Add(
+            AngleWorkOrderBuilder.Q1SubRecipeMissingText +
+            (description is null ? string.Empty : "（" + description + "）"));
+
+        return order with { Limitations = limitations };
+    }
+
+    /// <summary>
+    /// 造 Q1 的一层子配方（§19.4 / §5.1）：
+    /// <code>
+    /// 紧列（Q1 的洞填临时晶体）+ 托柱（下一象限满高普通柱）
+    ///     + 保险丝（上一象限：在每段临时晶体的最低层放晶体，跨刀口）
+    ///   → 一刀半破（真实 ShapePhysics.Cut）
+    ///   → 零件 Q1（托柱残料在装配时丢弃）
+    /// </code>
+    /// 半破时，Q1 的临时晶体经<b>环形相邻</b>与保险丝的晶体连成跨刀口晶体块，
+    /// 整块碎掉；Q1 剩下的材料横向粘在紧列托柱上，位置不变。
+    /// </summary>
+    private static bool TryBuildColumnPartSubRecipe(
+        ShapeDocument preState,
+        int column,
+        out Recipe? recipe,
+        out string? description)
+    {
+        recipe = null;
+        description = null;
+
+        int parts = preState.PartCount;
+        int layers = preState.LayerCount;
+
+        if (parts != 4)
+        {
+            description = "半破需要四象限的刀口。";
+            return false;
+        }
+
+        string partText = ShapeSignature.ColumnText(preState, column);
+
+        int top = layers - 1;
+
+        while (top >= 0 && partText[top] == ShapeSignature.EmptyCode)
+        {
+            top--;
+        }
+
+        if (top < 0)
+        {
+            description = "Q1 是空列，不需要子配方。";
+            return false;
+        }
+
+        var holes = new List<int>();
+
+        for (int layer = 0; layer <= top; layer++)
+        {
+            if (partText[layer] == ShapeSignature.EmptyCode)
+            {
+                holes.Add(layer);
+            }
+        }
+
+        if (holes.Count == 0)
+        {
+            description = "Q1 已是紧列。";
+            return false;
+        }
+
+        // 临时晶体与原生晶体纵向相邻 ⇒ 半破会误伤目标晶体：一层紧列不可行。
+        foreach (int hole in holes)
+        {
+            if ((hole > 0 && partText[hole - 1] == ShapeSignature.CrystalCode) ||
+                (hole + 1 <= top && partText[hole + 1] == ShapeSignature.CrystalCode))
+            {
+                description = $"第 {hole + 1} 层的洞与原生晶体纵向相邻。";
+                return false;
+            }
+        }
+
+        char color = CrystalColor(preState, column);
+
+        var tight = partText.ToCharArray();
+        var support = new char[layers];
+        var fuse = new char[layers];
+
+        Array.Fill(support, ShapeSignature.EmptyCode);
+        Array.Fill(fuse, ShapeSignature.EmptyCode);
+
+        for (int layer = 0; layer <= top; layer++)
+        {
+            support[layer] = ShapeSignature.SolidCode;
+        }
+
+        int maxHole = holes[^1];
+
+        for (int layer = 0; layer <= maxHole; layer++)
+        {
+            fuse[layer] = ShapeSignature.SolidCode;
+        }
+
+        for (int index = 0; index < holes.Count; index++)
+        {
+            tight[holes[index]] = ShapeSignature.CrystalCode;
+
+            // 每段临时晶体的最低层放一颗保险丝晶体（跨刀口）。
+            if (index == 0 || holes[index] != holes[index - 1] + 1)
+            {
+                fuse[holes[index]] = ShapeSignature.CrystalCode;
+            }
+        }
+
+        int supportColumn = Wrap(column + 1, parts);
+        int fuseColumn = Wrap(column - 1, parts);
+        int rotation = Wrap(-column, parts);
+
+        var cutPreState = new ShapeDocument(layers, parts);
+
+        for (int layer = 0; layer < layers; layer++)
+        {
+            if (layer > top)
+            {
+                cutPreState[layer, column] = ShapeCell.Empty();
+            }
+            else if (partText[layer] == ShapeSignature.EmptyCode)
+            {
+                // 洞填临时晶体：紧列起点。
+                cutPreState[layer, column] = ShapeCell.Crystal(color);
+            }
+            else
+            {
+                cutPreState[layer, column] = preState[layer, column].Clone();
+            }
+
+            cutPreState[layer, supportColumn] = CellFromCode(support[layer], color);
+            cutPreState[layer, fuseColumn] = CellFromCode(fuse[layer], color);
+        }
+
+        if (!ShapeOps.IsStable(cutPreState) ||
+            !AllColumnsTight(cutPreState))
+        {
+            description = "紧列起点的托柱 / 保险丝布局不稳定或不紧。";
+            return false;
+        }
+
+        CutResult cut = ShapePhysics.Cut(
+            ShapeOps.Rotate(cutPreState, rotation));
+
+        if (!cut.Success || cut.West is null)
+        {
+            description = "半破子配方的真实 Cut 失败：" +
+                          (cut.Error ?? "未知原因");
+            return false;
+        }
+
+        ShapeDocument halfBreak = ShapeOps.Rotate(cut.West, -rotation);
+
+        if (ShapeSignature.ColumnText(halfBreak, column) != partText)
+        {
+            description = "半破后的 Q1 与零件不符：" +
+                          ShapeSignature.ColumnText(halfBreak, column);
+            return false;
+        }
+
+        var steps = new List<RecipeStep>
+        {
+            new(
+                "Q1 紧列起点（洞填临时晶体）+ 托柱 + 保险丝",
+                cutPreState),
+            new("半破（真实 Cut）→ 零件 Q1", halfBreak)
+        };
+
+        recipe = Recipe.CreateCut(cutPreState, halfBreak, rotation, steps);
+        description =
+            $"紧列起点 {new string(tight)} → 半破 → 零件 {partText}" +
+            $"（托柱第 {supportColumn + 1} 象限、保险丝第 {fuseColumn + 1} 象限，" +
+            $"顺转 {rotation}）。";
+
+        return true;
+    }
+
+    /// <summary>所有非空列都是紧列（Q1 子配方的起点要求，§5.1 / §6 第 7 条）。</summary>
+    private static bool AllColumnsTight(
+        ShapeDocument document)
+    {
+        for (int part = 0; part < document.PartCount; part++)
+        {
+            if (!ShapeSignature.IsTightColumn(document, part))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>

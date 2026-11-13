@@ -563,6 +563,9 @@ internal static class AngleAuditTests
         int success = 0;
         int dTwoColumns = 0;
         int dTotal = 0;
+        int dTailed = 0;
+        int dTailedTwoColumns = 0;
+        var dTailedCases = new List<string>();
 
         for (int layers = 3; layers <= 6; layers++)
         {
@@ -619,6 +622,17 @@ internal static class AngleAuditTests
                     {
                         dTwoColumns++;
                     }
+
+                    if (order.Steps.Any(step => step.Kind == AngleWorkStepKind.Stack))
+                    {
+                        dTailed++;
+                        dTailedCases.Add(text);
+
+                        if (CountNonEmptyAuxColumns(order) == 2)
+                        {
+                            dTailedTwoColumns++;
+                        }
+                    }
                 }
 
                 if (order.Construction == AngleConstruction.FillBreak)
@@ -655,6 +669,11 @@ internal static class AngleAuditTests
                 : string.Empty));
         Console.WriteLine($"  COLLAPSE steps={collapseSteps}");
         Console.WriteLine($"  D2RATIO 2列={dTwoColumns}/{dTotal}");
+        Console.WriteLine(
+            $"  DTAIL tailed={dTailed} twoColumns={dTailedTwoColumns}" +
+            (dTailedCases.Count > 0
+                ? "：" + string.Join(" ", dTailedCases)
+                : string.Empty));
 
         Assert.Equal(2125, success, "S 列生成成功数应仍为 2125");
         Assert.True(

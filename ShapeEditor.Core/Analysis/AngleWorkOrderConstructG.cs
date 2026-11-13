@@ -427,6 +427,22 @@ public static partial class AngleWorkOrderBuilder
 
         WriteColumn(preState, bridgeColumn, bridgeText, color);
 
+        /*
+         * ── G8a（§15.11）：保险丝晶体不得与任何「要保留的晶体」连通 ──
+         * 显式从每个锚层的保险丝晶体做一次晶体洪泛：只要连通块里出现
+         * 目标列的原生晶体，就说明碎它会连带毁掉目标晶体，候选作废。
+         * 这比「切完再数晶体」更早、更直接。
+         */
+        if (FuseTouchesPreservedCrystal(
+                preState,
+                column,
+                bridgeColumn,
+                anchors,
+                targetColumn))
+        {
+            return null;
+        }
+
         // §6 验收 1–3：前态每列合法、整体稳定、目标列 ≠ 目标。
         if (!ShapeSignature.AllColumnsLegal(preState, out _) ||
             !ShapeOps.IsStable(preState) ||
@@ -708,6 +724,104 @@ public static partial class AngleWorkOrderBuilder
 
             yield return (start, index - start);
         }
+    }
+
+    /// <summary>
+    /// §15.11 的 <b>G8a</b> 显式检查：从保险丝柱的每个锚层晶体出发做晶体连通洪泛，
+    /// 若连通块里出现目标列的<b>原生晶体</b>（<paramref name="targetColumnText"/> 里是
+    /// <c>c</c> 的层），返回 true。
+    ///
+    /// <para>
+    /// 「要保留的晶体」就是目标列的原生晶体；临时晶体在目标里不是 <c>c</c>，
+    /// 环伙伴 / 保险丝是辅助列，都不算。这样能把「保险丝与目标晶体段连通」这件事
+    /// 在切之前就挡住，而不是等切完再发现目标晶体少了。
+    /// </para>
+    /// </summary>
+    private static bool FuseTouchesPreservedCrystal(
+        ShapeDocument preState,
+        int targetColumn,
+        int fuseColumn,
+        IReadOnlyList<int> anchors,
+        string targetColumnText)
+    {
+        int layers = preState.LayerCount;
+        int parts = preState.PartCount;
+
+        var visited = new bool[layers, parts];
+        var queue = new Queue<(int Layer, int Part)>();
+
+        foreach (int anchor in anchors)
+        {
+            if (anchor < 0 ||
+                anchor >= layers ||
+                preState[anchor, fuseColumn].Type != CellType.Crystal ||
+                visited[anchor, fuseColumn])
+            {
+                continue;
+            }
+
+            visited[anchor, fuseColumn] = true;
+            queue.Enqueue((anchor, fuseColumn));
+        }
+
+        while (queue.Count > 0)
+        {
+            (int layer, int part) = queue.Dequeue();
+
+            if (part == targetColumn &&
+                layer < targetColumnText.Length &&
+                targetColumnText[layer] == ShapeSignature.CrystalCode)
+            {
+                return true;
+            }
+
+            for (int offset = -1; offset <= 1; offset += 2)
+            {
+                EnqueueCrystal(
+                    preState,
+                    visited,
+                    queue,
+                    layer + offset,
+                    part,
+                    layers,
+                    parts);
+
+                EnqueueCrystal(
+                    preState,
+                    visited,
+                    queue,
+                    layer,
+                    Wrap(part + offset, parts),
+                    layers,
+                    parts);
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>G8a 洪泛用：晶体邻居入队（越界 / 非晶体 / 已访问都跳过）。</summary>
+    private static void EnqueueCrystal(
+        ShapeDocument state,
+        bool[,] visited,
+        Queue<(int Layer, int Part)> queue,
+        int layer,
+        int part,
+        int layers,
+        int parts)
+    {
+        if (layer < 0 ||
+            layer >= layers ||
+            part < 0 ||
+            part >= parts ||
+            visited[layer, part] ||
+            state[layer, part].Type != CellType.Crystal)
+        {
+            return;
+        }
+
+        visited[layer, part] = true;
+        queue.Enqueue((layer, part));
     }
 
     /// <summary>一列里晶体的颗数。</summary>
