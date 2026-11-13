@@ -1238,3 +1238,112 @@ D2RATIO 2列=324/324
 1. §5.2 的 D 数字 2/291 更新为 324/324（两列优先的实现在 `SearchGenericPlan`）；
 2. §5.3 的 12 例表可补「本仓库已全量通过，验收测试 `TailTwoStepAcceptsPaperCorpus`」；
 3. FillBreak 77 例更新为 44 例，并说明「全部带 `Note = 非论文构造：…`」。
+
+### 7.16 塔式路线与算法 4 的纯构造化（2026-11）
+
+**用户契约**：任意层的角工序只允许**纯构造**，不能有「生成候选 → 逐个回放筛选」的循环；
+只有固定顺序的少数确定性形态（本文登记为 2 种）例外。
+
+#### 删除的枚举方法与常量
+
+| 位置 | 删除项 | 说明 |
+|---|---|---|
+| `AngleWorkOrder.cs` | `EnumerateTowerSupportColumns` / `EnumerateTowerBridgeColumns` / `LastSolidLayer` | 托针柱与落块柱的全部候选枚举 |
+| 同上 | `arrangements`（4 种象限排布）+ `broadPins` + 20 ms `broadStart` 预算 + `forceBroad` | 角色排布与宽枚举预算 |
+| 同上 | `TryBuildDirectionalBreak` | 只是 `TryBuildFillBreak(LiftOnly)` 再改标 D，≤8 层穷举 0 例命中，删除 |
+| 同上 | `BuildNormalizedTowerColumn` / `TightenAuxiliaryColumn` | 死代码（塔式改造后不再调用） |
+| `AngleWorkOrderAlgorithm4.cs` | `GenericReplayBudget=320`、`GenericTimeBudgetMs=40` | 回放/时间预算 |
+| 同上 | `GenericCutOrder` / `GenericSupportMode` / `GenericFillMode` / `EnumerateLiftPlans` / `ResolveCanonicalDestinations` / `CutSchedule` / `HasBrakeBelow` / `LiftCutIndex` / `BlockCutIndex` / `HoldCrystalTower` / `IsStrictlyIncreasing` / `BuildFourColumnState` | V1–V5 变体与辅助函数 |
+| 同上 | 三列辅助的第二遍 | 构造 D 的辅助列固定为两列（第三象限留空），三列退路删除 |
+| `AngleWorkOrderConstructG.cs` | `ConstructGLiftBudget=8` + 提升计划循环 | 改为单次阶梯式提升计划 |
+| `AngleWorkOrder.cs`（构造 F） | `EnumerateDropWindows` 的逐窗口回放循环（改为 `FindCanonicalDropWindow`） | 只取扫描出的最高窗口（规范窗口） |
+
+**保留**：`TryBuildFillBreak`（每个缺口只有固定填法，不含参数枚举）。
+调用点：`BuildLegacyChain`（n = 4 兜底）与 `TryBuildSixPlusOrder`（算法 1 `LiftOnly` /
+算法 2 `DirectOnly`，`withHandover: true`）。
+
+#### 改造后每条路线怎么构造
+
+**塔式路线（算法 5 / 算法 6，构造 C）**——`TryBuildTowerStyleOrder`：
+
+1. 角列 A：仍取固定的几个形态（正规化塔 / 底块提升 / 底针埋晶 / 压缩缺口种子），
+   每个形态只按扫描结果拼一次，不按层数打表；
+2. 托针柱 N：针位 = 塔列最高普通格以下的**全部层** `[0, topSolid]`
+   （塔整体抬一层后，这些层正是各普通格的下落路径，构造 E 规则一），
+   托帽普通格在 `topSolid + 1`，其余为空；
+3. 落块柱 B：`0..topSolid` 为普通格，桥锚层 = `target[0]` 是普通格 ? 第 2 层 : 第 1 层；
+   桥锚与引爆柱同层相邻，Pin 时整簇碎掉；
+4. 引爆柱 E：满高纯晶体柱；角色排布固定为 `A | B | E | N`（B = +1、E = +2、N = −1）；
+5. 一次真实 `Pin` → 目标列逐格核对 → 构造 C 换支撑柱；回放失败即报未覆盖，不回退搜索。
+
+**算法 4 的 D 路线（§11 规范计划）**——`TryBuildGenericFourQuadrantOrder`：
+
+```
+lift    = ResolveRecursiveLiftPlan（§11.2 原文：最近普通格 + 段长 1–2 递归）
+fill    = 最高晶体以下的全部空位填成临时晶体
+support = 全实心 + 每个提升记录的下落路径层 [target+1, core] 换顶针
+bridge  = 每个临时晶体块的最高层（锚层）放晶体，其余普通格
+cuts    = 固定形态①「一刀全碎」；回放不过再试固定形态②「逐块各一刀、从上到下」
+order   = 与 cuts 同源
+```
+
+每个候选只生成一次即回放，没有变体搜索、没有预算；失败返回 null，
+由 `Build` 报「未覆盖：缺哪条规则」。
+
+**构造 G**：阶梯式提升计划（`ResolveStaircaseLiftPlan`，§4.8.1）只解一次；
+环伙伴的「闸门晶体 vs 环内针」冲突仍是**固定 2 种形态**（与改造前一致）。
+**构造 F**：只取扫描出的最高 `(s, d)` 窗口，不再逐窗口筛选。
+
+#### 覆盖与构造分布
+
+三层穷举（n = 4，字母表 `{., T, P, c}`，`Build` 默认参数）：
+
+| 层数 | S 列 | 改造前失败 | 改造后失败 | 改造后构造分布 |
+|---|---|---|---|---|
+| ≤ 6 | 2125 | 0 | **0** | `A=1087 C=622 D=238 G=6 H=172 FillBreak=0` |
+| 7 | 4320 | 0 | **0** | `A=2073 C=1050 D=628 G=17 H=552` |
+| 8 | 12646 | 0 | **0** | `A=5742 C=2776 D=2101 G=54 H=1973` |
+
+- 改造前（本轮基线）：≤6 `A=1087 C=604 D=256 G=6 H=172`、7 `A=2073 C=1010 D=666 G=19 H=552`、
+  8 `A=5742 C=2657 D=2207 G=67 H=1973`。
+- 变化来源：纯构造塔式路线覆盖面变大（C↑、D↓）；`FillBreak` 仍为 0。
+- 纯构造做不出来的形态：**清单为空**（三层穷举 0 失败），因此没有「缺哪条规则」需要登记；
+  如果将来出现，`TryBuildTowerStyleOrder` / `TryBuildGenericFourQuadrantOrder` 会返回 null，
+  上层按「未覆盖：缺哪条规则」上报，不恢复搜索。
+
+#### 测试与审计数字
+
+| 项 | 结果 |
+|---|---|
+| 全量测试 | **162/162** 通过（161 项原有 + 新增 `7–8 层穷举审计`；2 项 XFAIL claw / 二择不变） |
+| `AUDIT` | `total=5440 legal=2126 s=2125 success=2125 legalNonS=1 failures=0 falsePositives=0 worst≈1.1ms` |
+| `LAYERAUDIT 7` | `s=4320 success=4320 failures=0 falsePositives=0` |
+| `LAYERAUDIT 8` | `s=12646 success=12646 failures=0 falsePositives=0` |
+| `TIGHT` | `totalS=2125 success=2125 steps=445 tight=344 onlyTarget=101 onlyAux=0 both=0` |
+| `HOLES` | `targetHole=101 targetHoleWithSub=97 targetHoleDerived=4 targetHoleNoSub=0` |
+| `CONSTR` | `A=1087 C=622 D=238 G=6 H=172`；`FILLBREAK n=0`、`FILLBREAKUNANNOTATED n=0` |
+| `COLLAPSE` / `D2RATIO` | `steps=0`；`2列=238/238` |
+| `HALFAUDIT` / `HALFFENCE` | 未退化（`halfComplete=6 problems=0`；`claimed=0`） |
+
+**因行为改变更新的断言（原因）**：
+
+1. `FillBreakCoversUserExamples`：`T..ccc` / `T..cc` 的 D 成立 ⇒ 算法 6；纯构造塔式 C
+   现在一次 Pin + 构造 C 就成功，比 §11 通用计划（D）先命中，断言改为 `Algorithm6/C`。
+2. `ConstructionHandlesCapAboveTargetHeight`：`T..ccc`（cap = 10）同样改为 `C`。
+3. `DirectionalBreakPrefersTwoColumnsAndAnnotatesFillBreak`：`T..T.c` 不再走构造 D
+   的两列布局，从 D 循环移到单独的塔式 C 断言（`Algorithm6/C`、Pin 步、构造 C 交接）。
+4. 新增 `AngleAuditTests.ExhaustiveSevenEightLayerAudit`：7 / 8 层全枚举，
+   断言 S 列数 4320 / 12646、失败 0、假阳性 0；`AUDIT` 的假阳性口径同步用于该审计
+   （只有 `NeedsCrystalBreak` 才要求末步 Target 逐格等于目标）。
+
+**文档待更新（`docs/` 由开发者本人维护，本次未动）**：
+
+1. `docs/angle-work-order-algorithm.md` §11.3「变体搜索（有界、非查表）」整节应改为
+   「规范计划一次成型 + 切割排程两种固定形态」；
+2. 同文件 §11.1 主流程里的 `foreach θ in Variants(plan)` 删除；
+3. 同文件 §13.3 / §13.4 关于「算法 4 用 V1–V5」的描述改为「规范计划单次 + 回放」；
+4. 同文件 §18.2 的规模表补上「本仓库 ≤6 / 7 / 8 层穷举失败数均为 0」；
+5. 同文件 §18.4 的「失败再退回枚举兜底」改为「失败即报未覆盖，不回退枚举」；
+6. 构造 C 的段落（§3 / §4）可补「托针柱针位 = topSolid 以下全部层、落块柱桥锚 =
+   目标底格是否为普通格、角色排布固定 A|B|E|N」。
+

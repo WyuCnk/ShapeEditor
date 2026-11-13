@@ -433,6 +433,111 @@ internal static class AngleAuditTests
     }
 
     /// <summary>
+    /// 7 层与 8 层的穷举审计（docs §18.2 的规模口径）：
+    /// <c>{., T, P, c}</c> 单列全枚举，统计 S 列数与生成失败数。
+    ///
+    /// <para>
+    /// 规模由 4^7 = 16384 与 4^8 = 65536 个列得出；S 列数分别是 4320 / 12646。
+    /// 本轮把塔式构造与 §11 通用计划改成纯构造后，两条都必须仍然 0 失败，
+    /// 且成功单不得含假阳性（前态每列合法、末步逐格等于目标）。
+    /// </para>
+    /// </summary>
+    public static void ExhaustiveSevenEightLayerAudit()
+    {
+        var cases = new (int Layers, int ExpectedS)[]
+        {
+            (7, 4320),
+            (8, 12646)
+        };
+
+        foreach ((int layers, int expectedS) in cases)
+        {
+            int combinations = 1 << (2 * layers);
+            var buffer = new char[layers];
+            var failures = new List<string>();
+            var falsePositives = new List<string>();
+            var constructions = new SortedDictionary<string, int>(StringComparer.Ordinal);
+            int s = 0;
+            int success = 0;
+
+            for (int code = 0; code < combinations; code++)
+            {
+                int remaining = code;
+
+                for (int layer = 0; layer < layers; layer++)
+                {
+                    buffer[layer] = Alphabet[remaining % Alphabet.Length];
+                    remaining /= Alphabet.Length;
+                }
+
+                string text = new(buffer);
+                ShapeDocument target = BuildColumn(text);
+
+                if (!ShapeSignature.CheckColumn(text).IsLegal ||
+                    !PillarSCriterion.IsPillarColumn(target, 0))
+                {
+                    continue;
+                }
+
+                s++;
+
+                AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers);
+
+                if (!order.IsComplete)
+                {
+                    failures.Add(text + "：" + (order.Note ?? "未给出原因"));
+                    continue;
+                }
+
+                success++;
+                string key = order.Construction.ToString();
+                constructions[key] = constructions.TryGetValue(key, out int count)
+                    ? count + 1
+                    : 1;
+
+                if (order.HasIllegalPreState(out int preStateIndex, out int badColumn))
+                {
+                    falsePositives.Add(
+                        text + $"：第 {preStateIndex + 1} 条前态第 {badColumn + 1} 象限不合法");
+                    continue;
+                }
+
+                AngleWorkStep? targetStep = order.Steps
+                    .LastOrDefault(step => step.Kind == AngleWorkStepKind.Target);
+
+                /*
+                 * 只有「碎晶角」才必须给出 Target 步并逐格等于目标；
+                 * 无晶体 / Simple 档只有逐层计划（构造 A/C），没有碎晶步骤。
+                 */
+                if (order.Kind == AngleBuildKind.NeedsCrystalBreak &&
+                    (targetStep?.Shape is null ||
+                     !ShapeOps.Same(targetStep.Shape, target)))
+                {
+                    falsePositives.Add(text + "：末步没有逐格等于目标");
+                }
+            }
+
+            Console.WriteLine(
+                $"  LAYERAUDIT {layers} s={s} success={success} " +
+                $"failures={failures.Count} falsePositives={falsePositives.Count} " +
+                "constr=" + string.Join(
+                    " ",
+                    constructions.Select(pair => pair.Key + "=" + pair.Value)));
+
+            Assert.Equal(expectedS, s, layers + " 层的 S 列数");
+            Assert.Equal(expectedS, success, layers + " 层的 S 列生成成功数");
+            Assert.True(
+                failures.Count == 0,
+                $"{layers} 层 S 列生成失败 {failures.Count} 个：" +
+                string.Join(" | ", failures.Take(20)));
+            Assert.True(
+                falsePositives.Count == 0,
+                $"{layers} 层出现 {falsePositives.Count} 个假阳性：" +
+                string.Join(" | ", falsePositives.Take(20)));
+        }
+    }
+
+    /// <summary>
     /// 基线测量（docs §5.2 / §5.3）：≤6 层的 2125 个 S 列，
     /// 按 <see cref="AngleWorkOrder.Construction"/> 统计构造分布、
     /// 每种构造的辅助列数量分布、<see cref="AngleConstruction.FillBreak"/> 例数，

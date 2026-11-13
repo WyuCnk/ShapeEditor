@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using ShapeEditor.Core.Analysis.Production;
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Physics;
@@ -9,92 +8,33 @@ namespace ShapeEditor.Core.Analysis;
 /// 角工序生成器（续）：n = 4 的「路线 F」——算法 4 的 §11 通用实现。
 ///
 /// <para>
-/// 这里不再手写任何前态清单，而是按 <c>docs/angle-work-order-algorithm.md</c> §11 走：
+/// 规范计划 <c>θ = (lift, fill, support, bridge, cuts, order)</c> 的六个参数
+/// 全部由沿列扫描得出（<c>docs/angle-work-order-algorithm.md</c> §11.2），
+/// <b>只生成一次</b>，再用真实 <see cref="ShapePhysics"/> 逐格回放验收：
 /// </para>
 /// <code>
-/// CanonicalPlan(route = F, target, column, cap)      // §11.2：六个参数全部由扫描得出
-/// foreach θ in Variants(plan):                       // §11.3：有界、字典序
-///     order = Replay(θ)                              // 真实 ShapePhysics 逐格回放
-///     if order.IsComplete: return order
-/// return null                                        // 交给兜底链，最终报「未覆盖」
+/// θ = CanonicalPlan(target, column, cap)
+/// order = Replay(θ)                    // 真实物理回放
+/// if order.IsComplete: return order
+/// return null                          // 调用方报「未覆盖：缺哪条规则」
 /// </code>
 /// <para>
-/// <b>禁止打表</b>：分支谓词只有 D、F、底格是否针、段长、锚层是否相同这类结构谓词，
-/// 层号一律由沿列扫描得出（§10）。
+/// <b>没有候选枚举</b>：不再有 V1–V5 变体搜索、回放预算、时间预算，
+/// 也不再有「生成一批前态 → 逐个回放筛选」的循环。
+/// 层号一律由扫描得出（§10），分支谓词只有 D、F、底格是否针、段长这类结构谓词。
 /// </para>
 /// </summary>
 public static partial class AngleWorkOrderBuilder
 {
-    /// <summary>变体搜索的候选回放次数上限（§11.3「预算上限」，建议 ≤ 数百）。</summary>
-    private const int GenericReplayBudget = 320;
-
-    /// <summary>单角时间上限（毫秒）：超过就停止枚举，交给兜底链。</summary>
-    private const int GenericTimeBudgetMs = 40;
-
-    #region 计划参数
-
-    /// <summary>切割排程（§11.2 的 <c>cuts</c> 参数）。</summary>
-    private enum GenericCutOrder
-    {
-        /// <summary>一刀全碎：桥柱在全部临时晶体块的锚层各放一颗晶体，一次 Cut。</summary>
-        OneCut,
-
-        /// <summary>逐块各一刀，从最上面的块开始（§4.9 的实测顺序）。</summary>
-        BlocksTopDown,
-
-        /// <summary>逐块各一刀，从最下面的块开始（反例对照）。</summary>
-        BlocksBottomUp
-    }
-
-    /// <summary>托柱的针位策略（§11.3 的 V3）。</summary>
-    private enum GenericSupportMode
-    {
-        /// <summary>规范值：能靠目标列自身材料刹车时用「下落路径放针」，否则「伙伴 + 洞」。</summary>
-        Canonical,
-
-        /// <summary>全实心（不放针、不留洞）。</summary>
-        AllSolid,
-
-        /// <summary>全部按「下落路径放针」。</summary>
-        AllPinPath
-    }
-
-    /// <summary>填充集（§11.3 的 V2）。</summary>
-    private enum GenericFillMode
-    {
-        /// <summary>规范值：最高晶体以下的全部空位（正规核心 ⇒ 紧列）。</summary>
-        AllHoles,
-
-        /// <summary>只填「晶体正下方」的洞。</summary>
-        CrystalHolesOnly
-    }
-
-    /*
-     * 规范计划 θ = (lift, fill, support, bridge, cuts, order)（§11.2），
-     * 六个参数的生成位置：
-     *
-     *   lift    ← ResolveCanonicalDestinations / ResolveRecursiveDestinations（沿列扫描）
-     *   fill    ← BuildCoreColumn（GenericFillMode）
-     *   support ← BuildSupportColumn（HasBrakeBelow + HoldCrystalTower）
-     *   bridge  ← BridgeColumnText（锚层 = 临时晶体块的最高层）
-     *   cuts    ← CutSchedule（GenericCutOrder）
-     *   order   ← 与 cuts 同源：BlocksTopDown / BlocksBottomUp 就是恢复顺序
-     *
-     * 枚举顺序是「规范值优先、其余字典序」，每个候选都跑一遍真实回放。
-     */
-
-    #endregion
-
     #region 入口
 
     /// <summary>
     /// 路线 F（n = 4、底格非针、D 不成立、F 成立）的通用实现（§11）。
-    ///
-    /// <para>
-    /// 返回 null 表示「计划 + 变体都没通过回放」，由 <see cref="Build"/> 退回现有兜底链；
-    /// 最终失败仍然由上层区分为 <c>Uncovered</c>（计划试完）而不是 <c>NotProducible</c>。
-    /// </para>
     /// </summary>
+    /// <returns>
+    /// 返回 null 表示「规范计划没有通过回放」，由 <see cref="Build"/> 退回现有兜底链；
+    /// 最终失败再由上层区分为 <c>Uncovered</c>（未覆盖）而不是 <c>NotProducible</c>。
+    /// </returns>
     private static AngleWorkOrder? TryBuildGenericFourQuadrantOrder(
         ShapeDocument target,
         int column,
@@ -108,7 +48,7 @@ public static partial class AngleWorkOrderBuilder
 
         /*
          * 只处理「合法、无针、有晶体」的列：路线 F 的前提是五项条件通过，
-         * 而且 §11 的四列布局（核心 / 托柱 / 满高柱 / 桥柱）里没有针位。
+         * 而且 §11 的四列布局（核心 / 托柱 / 桥柱）里没有针位。
          */
         string targetColumn = ColumnTextPadded(target, column, cap);
         string tightTarget = ColumnTextPadded(target, column, target.LayerCount);
@@ -136,130 +76,63 @@ public static partial class AngleWorkOrderBuilder
             return null;
         }
 
-        var board = Stopwatch.StartNew();
+        // ── lift（§11.2）：只解一次，不枚举抬高量 ──
+        int[] destinations = ResolveRecursiveLiftPlan(targetColumn, highestCrystal);
+
+        // ── fill（§11.2）：最高晶体以下的所有空位都填成临时晶体 ──
+        char[]? core = BuildCoreColumn(targetColumn, destinations, highestCrystal);
+
+        if (core is null)
+        {
+            return null;
+        }
+
+        string coreText = new(core);
+        List<(int Bottom, int Top)> blocks = FindTemporaryBlocks(targetColumn, core);
+
+        if (blocks.Count == 0)
+        {
+            return null;
+        }
+
+        List<(int Core, int Target)> lifts = FindLifts(targetColumn, core);
+
+        // ── support / bridge / cuts（§11.2）：全部由扫描得出 ──
+        string support = BuildCanonicalSupportColumn(coreText, lifts);
 
         /*
-         * 辅助列最少化（docs §5.2 / T4）：构造 D 只需要「支撑 + 爆破」两列。
-         * 先按两列（第三象限留空）跑完整计划 + 变体搜索；全都没通过回放，
-         * 再退回三列（补一根满高普通柱）。顶针路线（构造 C / H）不走这里。
-         *
-         * 两遍搜索各自有独立的回放预算（320），时间预算共用：
-         * 两列那遍用光预算也不能把三列的退路一起吃掉。
+         * 切割排程只有两种<b>固定</b>形态（顺序固定，不是候选搜索）：
+         * ① 规范值：锚层互不相同 ⇒ 一刀全碎；
+         * ② 逐块各一刀、从上到下——阶梯式抬升（相邻两枚普通格之间隔着临时晶体）时，
+         *    上一刀留下的临时晶体正好当下一刀的刹车，普通格才会停在各自的落点。
+         * 两种形态都不改 lift / fill / support，也不再用预算裁剪。
          */
-        foreach (bool twoAuxiliaryColumns in new[] { true, false })
+        AngleWorkOrder? singleCut = ReplayGenericPlan(
+            target,
+            column,
+            cap,
+            kind,
+            coreText,
+            support,
+            blocks,
+            lifts,
+            perBlockCuts: false);
+
+        if (singleCut is not null)
         {
-            int replays = 0;
-
-            AngleWorkOrder? order = SearchGenericPlan(
-                target,
-                column,
-                cap,
-                kind,
-                targetColumn,
-                highestCrystal,
-                twoAuxiliaryColumns,
-                board,
-                ref replays);
-
-            if (order is not null)
-            {
-                return order;
-            }
+            return singleCut;
         }
 
-        return null;
-    }
-
-    /// <summary>
-    /// 在给定辅助列数量下搜索 §11 的规范计划 + 有界变体，返回第一份真实回放通过的工序。
-    /// </summary>
-    private static AngleWorkOrder? SearchGenericPlan(
-        ShapeDocument target,
-        int column,
-        int cap,
-        AngleBuildKind kind,
-        string targetColumn,
-        int highestCrystal,
-        bool twoAuxiliaryColumns,
-        Stopwatch board,
-        ref int replays)
-    {
-        foreach (int[] destinations in EnumerateLiftPlans(targetColumn, highestCrystal))
-        {
-            foreach (GenericFillMode fill in new[]
-                     {
-                         GenericFillMode.AllHoles,
-                         GenericFillMode.CrystalHolesOnly
-                     })
-            {
-                char[]? core = BuildCoreColumn(targetColumn, destinations, highestCrystal, fill);
-
-                if (core is null)
-                {
-                    continue;
-                }
-
-                string coreText = new(core);
-                List<(int Bottom, int Top)> blocks = FindTemporaryBlocks(targetColumn, core);
-
-                if (blocks.Count == 0)
-                {
-                    continue;
-                }
-
-                List<(int Core, int Target)> lifts = FindLifts(targetColumn, core);
-
-                foreach (GenericCutOrder cuts in new[]
-                         {
-                             GenericCutOrder.OneCut,
-                             GenericCutOrder.BlocksTopDown,
-                             GenericCutOrder.BlocksBottomUp
-                         })
-                {
-                    foreach (GenericSupportMode supportMode in new[]
-                             {
-                                 GenericSupportMode.Canonical,
-                                 GenericSupportMode.AllSolid,
-                                 GenericSupportMode.AllPinPath
-                             })
-                    {
-                        if (replays >= GenericReplayBudget ||
-                            board.ElapsedMilliseconds > GenericTimeBudgetMs)
-                        {
-                            return null;
-                        }
-
-                        replays++;
-
-                        string support = BuildSupportColumn(
-                            coreText,
-                            lifts,
-                            blocks,
-                            cuts,
-                            supportMode);
-
-                        AngleWorkOrder? order = ReplayGenericPlan(
-                            target,
-                            column,
-                            cap,
-                            kind,
-                            coreText,
-                            support,
-                            blocks,
-                            lifts,
-                            cuts,
-                            twoAuxiliaryColumns);
-
-                        if (order is not null)
-                        {
-                            return order;
-                        }
-                    }
-                }
-            }
-        }
-
-        return null;
+        return ReplayGenericPlan(
+            target,
+            column,
+            cap,
+            kind,
+            coreText,
+            support,
+            blocks,
+            lifts,
+            perBlockCuts: true);
     }
 
     #endregion
@@ -267,73 +140,20 @@ public static partial class AngleWorkOrderBuilder
     #region §11.2 规范计划的六个参数
 
     /// <summary>
-    /// 规范提升落点（§11.2 的 <c>lift</c>）：全部由扫描得出。
+    /// 规范提升落点（§11.2 的 <c>lift</c>）：全部由扫描得出，只算一遍。
     ///
-    /// <para>
-    /// 规则（每个「正下方为空的晶体段底端」都要被服务）：
-    /// </para>
+    /// <para>规则（§11.2 原文，逐条直译）：</para>
     /// <list type="number">
-    /// <item>晶体段正下方的空格必须由「下方最近的普通格」填上：这段下落就不会把晶体段拖下来；</item>
-    /// <item>被提升的普通格要落回它自己的目标层，所以它上方还要留出缓冲：相邻两枚普通格之间
-    /// 留 <c>2</c> 格临时晶体（这就是 §4.8.1 的阶梯式抬升：<c>T cc T cc T cc T</c>）；</item>
-    /// <item>提升不能越过上方的晶体段底端（否则会顶到晶体）；</item>
-    /// <item>最上面那枚普通格必须紧贴晶体段底端（否则晶体段会悬空）。</item>
+    /// <item>对每个「晶体段底端正下方为空」的段：把<b>下方最近的普通格</b>提到段底正下方；</item>
+    /// <item>若该格原位置下方仍为空，段长 1–2 时<b>继续递归</b>，
+    /// 段长 ≥3 时停下并记录「环下落」（§4.8.1 的阶梯式抬升 <c>T cc T cc T cc T</c>）。</item>
     /// </list>
     /// <para>
-    /// 四条规则都只是沿列扫描 + 相邻关系，没有任何按层数的常量（§10）。
+    /// 递归是规范计划的一部分，不是「V1 抬高量变体」：结果只生成一次，
+    /// 没有按「从近到远」枚举落点。
     /// </para>
     /// </summary>
-    private static int[] ResolveCanonicalDestinations(
-        string targetColumn,
-        int highestCrystal)
-    {
-        List<int> solids = FindSolidLayers(targetColumn, highestCrystal);
-        int[] destinations = new int[solids.Count];
-        int previous = int.MinValue;
-
-        for (int index = 0; index < solids.Count; index++)
-        {
-            int layer = solids[index];
-            int destination = Math.Max(layer, previous + 3);
-
-            // 不能顶进上方最近的晶体段：留出段底端下面那一格。
-            int ceiling = NearestCrystalBottomAbove(targetColumn, layer, highestCrystal);
-
-            destination = Math.Min(destination, ceiling - 1);
-            destination = Math.Max(destination, layer);
-
-            if (previous != int.MinValue && destination <= previous)
-            {
-                destination = previous + 1;
-            }
-
-            destinations[index] = destination;
-            previous = destination;
-        }
-
-        // 最上面的普通格紧贴晶体段底端（§4.8 的 T@3→4 与 §4.8.2 的 T@3→4 都是这一条）。
-        int topCeiling = NearestCrystalBottomAbove(
-            targetColumn,
-            solids.Count == 0 ? highestCrystal : solids[^1],
-            highestCrystal);
-
-        if (solids.Count > 0 && topCeiling - 1 > destinations[^1])
-        {
-            destinations[^1] = topCeiling - 1;
-        }
-
-        return destinations;
-    }
-
-    /// <summary>
-    /// §11.2 的「递归提升」变体：只服务晶体段底端，段长 1–2 时继续向下递归。
-    ///
-    /// <para>
-    /// 这是文档条文最直译的版本（§4.9 的 <c>cTccTcTc</c> 就是它），
-    /// 但对阶梯式抬升的形态会失败，因此作为 V1 的第二个候选。
-    /// </para>
-    /// </summary>
-    private static int[] ResolveRecursiveDestinations(
+    private static int[] ResolveRecursiveLiftPlan(
         string targetColumn,
         int highestCrystal)
     {
@@ -389,41 +209,54 @@ public static partial class AngleWorkOrderBuilder
     }
 
     /// <summary>
-    /// V1 的候选序列：规范计划 → 递归提升 → 单格微调（有界）。
+    /// 构造 G 的阶梯式提升计划（§4.8.1）：相邻两枚普通格之间留两格临时晶体。
+    ///
+    /// <para>
+    /// 长晶体段（≥3）的环下落需要这个形态：普通格按 <c>T cc T cc T</c> 阶梯排布，
+    /// 上一刀留下的临时晶体当下一刀的刹车；G1–G14 全部由它扫描判定。
+    /// 这是 G 路线的<b>规范形态</b>，只算一遍，不做多候选筛选。
+    /// </para>
     /// </summary>
-    private static IEnumerable<int[]> EnumerateLiftPlans(
+    private static int[] ResolveStaircaseLiftPlan(
         string targetColumn,
         int highestCrystal)
     {
-        int[] canonical = ResolveCanonicalDestinations(targetColumn, highestCrystal);
+        List<int> solids = FindSolidLayers(targetColumn, highestCrystal);
+        int[] destinations = new int[solids.Count];
+        int previous = int.MinValue;
 
-        yield return canonical;
-
-        int[] recursive = ResolveRecursiveDestinations(targetColumn, highestCrystal);
-
-        if (!recursive.SequenceEqual(canonical))
+        for (int index = 0; index < solids.Count; index++)
         {
-            yield return recursive;
-        }
+            int layer = solids[index];
+            int destination = Math.Max(layer, previous + 3);
 
-        // 单格微调：只动一枚普通格，向上/向下各 1–2 层（字典序、有界）。
-        for (int index = 0; index < canonical.Length; index++)
-        {
-            foreach (int delta in new[] { 1, -1, 2, -2 })
+            // 不能顶进上方最近的晶体段：留出段底端下面那一格。
+            int ceiling = NearestCrystalBottomAbove(targetColumn, layer, highestCrystal);
+
+            destination = Math.Min(destination, ceiling - 1);
+            destination = Math.Max(destination, layer);
+
+            if (previous != int.MinValue && destination <= previous)
             {
-                int[] variant = (int[])canonical.Clone();
-                variant[index] += delta;
-
-                if (variant[index] < canonical[index] ||
-                    variant[^1] > highestCrystal - 1 ||
-                    !IsStrictlyIncreasing(variant, firstMinimum: 0))
-                {
-                    continue;
-                }
-
-                yield return variant;
+                destination = previous + 1;
             }
+
+            destinations[index] = destination;
+            previous = destination;
         }
+
+        // 最上面的普通格紧贴晶体段底端（§4.8 的 T@3→4 与 §4.8.2 的 T@3→4 都是这一条）。
+        int topCeiling = NearestCrystalBottomAbove(
+            targetColumn,
+            solids.Count == 0 ? highestCrystal : solids[^1],
+            highestCrystal);
+
+        if (solids.Count > 0 && topCeiling - 1 > destinations[^1])
+        {
+            destinations[^1] = topCeiling - 1;
+        }
+
+        return destinations;
     }
 
     /// <summary>
@@ -437,8 +270,7 @@ public static partial class AngleWorkOrderBuilder
     private static char[]? BuildCoreColumn(
         string targetColumn,
         int[] destinations,
-        int highestCrystal,
-        GenericFillMode fill)
+        int highestCrystal)
     {
         int cap = targetColumn.Length;
         char[] core = new char[cap];
@@ -475,18 +307,10 @@ public static partial class AngleWorkOrderBuilder
             core[destination] = ShapeSignature.SolidCode;
         }
 
+        // fill：最高晶体以下的所有洞都填成临时晶体（正规核心 ⇒ 紧列）。
         for (int layer = 0; layer < highestCrystal; layer++)
         {
-            if (core[layer] != ShapeSignature.EmptyCode)
-            {
-                continue;
-            }
-
-            bool fillHere = fill == GenericFillMode.AllHoles ||
-                            (layer + 1 < cap &&
-                             targetColumn[layer + 1] == ShapeSignature.CrystalCode);
-
-            if (fillHere)
+            if (core[layer] == ShapeSignature.EmptyCode)
             {
                 core[layer] = ShapeSignature.CrystalCode;
             }
@@ -565,37 +389,25 @@ public static partial class AngleWorkOrderBuilder
     }
 
     /// <summary>
-    /// 托柱（§11.2 的 <c>support</c>）：默认全实心，按「要落回哪一层」放针或留洞。
+    /// 托柱（§11.2 的 <c>support</c>）：全实心，在被提升格的下落路径层放针。
     ///
     /// <para>
-    /// 每一处提升 <c>core → target</c> 都要让那枚普通格从核心层掉回目标层：
+    /// 每条提升 <c>core → target</c> 都让那枚普通格从核心层落回目标层；
+    /// 构造 E（§5 规则一）：针不参与横向粘连，所以路径经过的层换成顶针，
+    /// 目标层正下方仍是实心，普通格才会停在目标层。
     /// </para>
-    /// <list type="bullet">
-    /// <item><b>下落路径放针</b>：目标层下方还有材料当刹车时，只要把路径上的托柱换成顶针
-    /// （顶针不参与横向粘连 ⇒ 该层的格子掉下来）；</item>
-    /// <item><b>伙伴 + 洞</b>：目标层下方没有刹车（要靠托柱里的同层普通格一起下落来刹车）时，
-    /// 在核心层放一枚「伙伴」普通格，并在它正下方留一个洞，让两者一起降一层。</item>
-    /// </list>
     /// <para>
-    /// 刹车是否存在由「下方那一格的切割顺序」决定：本刀就删掉的临时晶体当不了刹车，
-    /// 更晚切的块才当得了（§4.9 的逐块上→下正是靠这个）。
+    /// 针数、针位全部来自扫描出的提升记录，没有候选、没有模式开关。
+    /// 针下方是洞时改为洞（五项条件：针必须有直接支撑）。
     /// </para>
     /// </summary>
-    private static string BuildSupportColumn(
+    private static string BuildCanonicalSupportColumn(
         string coreText,
-        List<(int Core, int Target)> lifts,
-        List<(int Bottom, int Top)> blocks,
-        GenericCutOrder cuts,
-        GenericSupportMode mode)
+        List<(int Core, int Target)> lifts)
     {
         int cap = coreText.Length;
         char[] support = new char[cap];
         Array.Fill(support, ShapeSignature.SolidCode);
-
-        if (mode == GenericSupportMode.AllSolid)
-        {
-            return new string(support);
-        }
 
         foreach ((int core, int target) in lifts)
         {
@@ -604,26 +416,11 @@ public static partial class AngleWorkOrderBuilder
                 continue;
             }
 
-            bool pinPath = mode == GenericSupportMode.AllPinPath ||
-                           HasBrakeBelow(coreText, target, core, blocks, cuts);
-
-            if (pinPath)
+            for (int layer = target + 1; layer <= core; layer++)
             {
-                for (int layer = target + 1; layer <= core; layer++)
+                if (support[layer] == ShapeSignature.SolidCode)
                 {
-                    if (support[layer] == ShapeSignature.SolidCode)
-                    {
-                        support[layer] = ShapeSignature.PinCode;
-                    }
-                }
-            }
-            else
-            {
-                support[core] = ShapeSignature.SolidCode;
-
-                if (core - 1 > 0)
-                {
-                    support[core - 1] = ShapeSignature.EmptyCode;
+                    support[layer] = ShapeSignature.PinCode;
                 }
             }
         }
@@ -643,169 +440,7 @@ public static partial class AngleWorkOrderBuilder
             support[0] = ShapeSignature.EmptyCode;
         }
 
-        HoldCrystalTower(coreText, support);
-
         return new string(support);
-    }
-
-    /// <summary>目标层下方是否有「这一刀之后还在」的材料当刹车。</summary>
-    private static bool HasBrakeBelow(
-        string coreText,
-        int target,
-        int core,
-        List<(int Bottom, int Top)> blocks,
-        GenericCutOrder cuts)
-    {
-        if (target <= 0)
-        {
-            return true;
-        }
-
-        int brakeLayer = target - 1;
-
-        // 目标层正下方：先看是不是临时晶体（那要看它属于哪一刀）。
-        int brakeCut = BlockCutIndex(blocks, brakeLayer, cuts);
-
-        if (brakeCut < 0)
-        {
-            // 不是临时晶体：再看它是不是「也要下落的普通格」（那样它会先走一步）。
-            brakeCut = LiftCutIndex(coreText, brakeLayer, blocks, cuts);
-        }
-
-        if (brakeCut < 0)
-        {
-            // 目标列自己停在目标层的普通格：永远在。
-            return true;
-        }
-
-        int ownCut = BlockCutIndex(blocks, core - 1, cuts);
-
-        return brakeCut > ownCut;
-    }
-
-    /// <summary>某一层若正好是另一枚被提升普通格的核心层，返回它所在的切割序号。</summary>
-    private static int LiftCutIndex(
-        string coreText,
-        int layer,
-        List<(int Bottom, int Top)> blocks,
-        GenericCutOrder cuts)
-    {
-        if (layer < 0 || layer >= coreText.Length)
-        {
-            return -1;
-        }
-
-        if (coreText[layer] != ShapeSignature.SolidCode)
-        {
-            return -1;
-        }
-
-        return BlockCutIndex(blocks, layer - 1, cuts);
-    }
-
-    /// <summary>某一层落在哪个临时块里、该块在排程里是第几刀；不在块里返回 -1。</summary>
-    private static int BlockCutIndex(
-        List<(int Bottom, int Top)> blocks,
-        int layer,
-        GenericCutOrder cuts)
-    {
-        for (int index = 0; index < blocks.Count; index++)
-        {
-            (int bottom, int top) = blocks[index];
-
-            if (layer >= bottom && layer <= top)
-            {
-                return cuts switch
-                {
-                    GenericCutOrder.OneCut => 0,
-                    GenericCutOrder.BlocksTopDown => blocks.Count - 1 - index,
-                    _ => index
-                };
-            }
-        }
-
-        return -1;
-    }
-
-    /// <summary>
-    /// 顶晶体段的「2-环支撑」：托柱被洞断开时，晶体段失去接地支撑，
-    /// 需要在晶体段里放一枚针制造构造 G 那种环（§4.8 的托柱第 12 层就是它）。
-    /// </summary>
-    private static void HoldCrystalTower(
-        string coreText,
-        char[] support)
-    {
-        int highestHole = -1;
-
-        for (int layer = 0; layer < support.Length; layer++)
-        {
-            if (support[layer] == ShapeSignature.EmptyCode)
-            {
-                highestHole = layer;
-            }
-        }
-
-        if (highestHole < 0)
-        {
-            return;
-        }
-
-        int top = -1;
-
-        for (int layer = coreText.Length - 1; layer >= 0; layer--)
-        {
-            if (coreText[layer] == ShapeSignature.CrystalCode)
-            {
-                top = layer;
-                break;
-            }
-        }
-
-        if (top < 0)
-        {
-            return;
-        }
-
-        int bottom = top;
-
-        while (bottom > 0 &&
-               coreText[bottom - 1] == ShapeSignature.CrystalCode)
-        {
-            bottom--;
-        }
-
-        if (bottom <= highestHole)
-        {
-            return;
-        }
-
-        int middle = bottom + (top - bottom) / 2;
-
-        foreach (int layer in new[] { middle }
-                     .Concat(Enumerable.Range(bottom, top - bottom + 1)))
-        {
-            if (layer <= highestHole ||
-                layer >= support.Length ||
-                support[layer] != ShapeSignature.SolidCode)
-            {
-                continue;
-            }
-
-            if (layer > 0 && support[layer - 1] == ShapeSignature.EmptyCode)
-            {
-                continue;
-            }
-
-            if (layer + 1 < support.Length &&
-                support[layer + 1] == ShapeSignature.EmptyCode)
-            {
-                continue;
-            }
-
-            support[layer] = ShapeSignature.PinCode;
-
-            return;
-        }
     }
 
     #endregion
@@ -813,7 +448,7 @@ public static partial class AngleWorkOrderBuilder
     #region 真实物理回放（§11.3 / §11.4）
 
     /// <summary>
-    /// 把一份候选（核心列 + 托柱 + 桥柱 + 排程）用真实 <see cref="ShapePhysics"/> 回放。
+    /// 把规范计划（核心列 + 托柱 + 桥柱）用真实 <see cref="ShapePhysics"/> 回放。
     ///
     /// <para>每一步都按 §11.4 的六条核对，任何一条不过就返回 null：</para>
     /// <list type="number">
@@ -834,30 +469,38 @@ public static partial class AngleWorkOrderBuilder
         string supportText,
         List<(int Bottom, int Top)> blocks,
         List<(int Core, int Target)> lifts,
-        GenericCutOrder cuts,
-        bool twoAuxiliaryColumns)
+        bool perBlockCuts)
     {
         int parts = target.PartCount;
         int holderColumn = Wrap(column + 1, parts);
-        int farColumn = Wrap(column + 2, parts);
         int bridgeColumn = Wrap(column - 1, parts);
         int rotation = Wrap(-column, parts);
         char crystalColor = CrystalColor(target, column);
 
-        List<List<(int Bottom, int Top)>> schedule = CutSchedule(blocks, cuts);
-
         string targetColumn = ColumnTextPadded(target, column, cap);
+
+        /*
+         * cuts / order（§11.2）：两种固定形态，不是候选搜索。
+         *   ① 一刀全碎：全部临时晶体块一次切掉；
+         *   ② 逐块各一刀，从上到下：上一刀的临时晶体留作下一刀的刹车。
+         * 桥柱在每个锚层（临时晶体块最高层）各放一颗晶体。
+         */
+        List<List<(int Bottom, int Top)>> schedule = perBlockCuts
+            ? blocks
+                .OrderByDescending(block => block.Top)
+                .Select(block => new List<(int Bottom, int Top)> { block })
+                .ToList()
+            : new List<List<(int Bottom, int Top)>> { new(blocks) };
+
         var steps = new List<AngleWorkStep>();
-        ShapeDocument state = BuildFourColumnState(
+        ShapeDocument state = BuildThreeColumnState(
             cap,
             parts,
             coreText,
             supportText,
             crystalColor,
             column,
-            holderColumn,
-            farColumn,
-            twoAuxiliaryColumns);
+            holderColumn);
 
         for (int cutIndex = 0; cutIndex < schedule.Count; cutIndex++)
         {
@@ -886,13 +529,9 @@ public static partial class AngleWorkOrderBuilder
             }
 
             steps.Add(new AngleWorkStep(
-                cutIndex == 0
-                    ? (twoAuxiliaryColumns
-                        ? "前态：规范核心列（提升 + 临时晶体）+ 托柱 + 桥柱" +
-                          AnchorsText(cutBlocks)
-                        : "前态：规范核心列（提升 + 临时晶体）+ 托柱 + 满高普通柱 + 桥柱" +
-                          AnchorsText(cutBlocks))
-                    : "重新装桥柱（" + AnchorsText(cutBlocks) + "），准备下一刀",
+                (cutIndex == 0
+                    ? "前态：规范核心列（提升 + 临时晶体）+ 托柱 + 桥柱"
+                    : "重新装桥柱，准备下一刀") + AnchorsText(cutBlocks),
                 state,
                 AngleWorkStepKind.PreState));
 
@@ -911,10 +550,11 @@ public static partial class AngleWorkOrderBuilder
             }
 
             steps.Add(new AngleWorkStep(
-                cuts == GenericCutOrder.OneCut
-                    ? "一刀全碎：桥柱把每个临时晶体块接到刀口另一侧，West 只保留「目标列 + 托柱」"
-                    : $"第 {cutIndex + 1} 刀：删掉" + AnchorsText(cutBlocks) +
-                      "的临时晶体块，West 只保留「目标列 + 托柱」",
+                perBlockCuts
+                    ? $"第 {cutIndex + 1} 刀：删掉" + AnchorsText(cutBlocks) +
+                      "的临时晶体块，West 只保留「目标列 + 托柱」"
+                    : "一刀全碎：桥柱把每个临时晶体块接到刀口另一侧，" +
+                      "West 只保留「目标列 + 托柱」",
                 state,
                 AngleWorkStepKind.Cut));
         }
@@ -941,9 +581,7 @@ public static partial class AngleWorkOrderBuilder
         }
 
         steps.Add(new AngleWorkStep(
-            twoAuxiliaryColumns
-                ? "构造 C：托柱换成满高普通柱、拆掉桥柱，目标列逐格不变"
-                : "构造 C：托柱换成满高普通柱、拆掉桥柱与满高柱，目标列逐格不变",
+            "构造 C：托柱换成满高普通柱、拆掉桥柱，目标列逐格不变",
             handover,
             AngleWorkStepKind.Support));
 
@@ -956,21 +594,17 @@ public static partial class AngleWorkOrderBuilder
             coreText,
             supportText,
             blocks,
-            lifts,
-            cuts);
+            lifts);
 
-        if (twoAuxiliaryColumns)
-        {
-            limitations.Add(
-                "辅助列最少化（§5.2）：只保留「支撑（托柱）+ 爆破（桥柱）」两列，" +
-                "第三象限整列为空；真实 Cut + 落定逐格核对通过。");
-        }
-        else
-        {
-            limitations.Add(
-                "两列辅助（支撑 + 爆破）在该形态上回放不通过，退回三列：" +
-                "补一根满高普通柱（第三象限）。");
-        }
+        limitations.Add(
+            "辅助列最少化（§5.2）：只保留「支撑（托柱）+ 爆破（桥柱）」两列，" +
+            "第三象限整列为空；真实 Cut + 落定逐格核对通过。");
+
+        limitations.Add(
+            perBlockCuts
+                ? "切割排程（固定形态②）：逐块各一刀、从最上面的块开始；" +
+                  "上一刀留下的临时晶体当下一刀的刹车。"
+                : "切割排程（固定形态①）：锚层互不相同 ⇒ 一刀全碎（§11.2 的规范 cuts）。");
 
         return new AngleWorkOrder(
             column,
@@ -983,42 +617,14 @@ public static partial class AngleWorkOrderBuilder
             Construction = AngleConstruction.D,
             Algorithm = AngleAlgorithm.Algorithm4,
             Rotation = rotation,
-            // §4.8 的布局：目标列 | 托柱 | （满高普通柱）| 桥柱（按环顺序）。
-            AuxiliaryColumns = twoAuxiliaryColumns
-                ? new[] { holderColumn, bridgeColumn }
-                : new[] { holderColumn, farColumn, bridgeColumn },
+            // §4.8 的布局：目标列 | 托柱 | 桥柱（按环顺序）。
+            AuxiliaryColumns = new[] { holderColumn, bridgeColumn },
             Rank = 0,
             Limitations = limitations
         };
     }
 
-    /// <summary>把一份候选切成若干刀（V4）。</summary>
-    private static List<List<(int Bottom, int Top)>> CutSchedule(
-        List<(int Bottom, int Top)> blocks,
-        GenericCutOrder cuts)
-    {
-        if (cuts == GenericCutOrder.OneCut)
-        {
-            return new List<List<(int, int)>> { new(blocks) };
-        }
-
-        var schedule = new List<List<(int, int)>>();
-        var ordered = new List<(int Bottom, int Top)>(blocks);
-
-        if (cuts == GenericCutOrder.BlocksTopDown)
-        {
-            ordered.Reverse();
-        }
-
-        foreach ((int bottom, int top) in ordered)
-        {
-            schedule.Add(new List<(int, int)> { (bottom, top) });
-        }
-
-        return schedule;
-    }
-
-    /// <summary>桥柱列：锚层放晶体，其余满普通格。</summary>
+    /// <summary>桥柱列：锚层（临时晶体块的最高层）放晶体，其余满普通格。</summary>
     private static string BridgeColumnText(
         int cap,
         IReadOnlyList<(int Bottom, int Top)> blocks)
@@ -1038,33 +644,21 @@ public static partial class AngleWorkOrderBuilder
     }
 
     /// <summary>
-    /// 布局：目标列 / 托柱 / （满高普通柱）/ 桥柱（§4.8 的实测布局）。
-    /// <paramref name="twoAuxiliaryColumns"/> 为 true 时第三象限整列为空（T4 的两列最少化）。
+    /// 布局：目标列 / 托柱 / 桥柱（§4.8 的两列辅助布局，第三象限留空）。
     /// </summary>
-    private static ShapeDocument BuildFourColumnState(
+    private static ShapeDocument BuildThreeColumnState(
         int cap,
         int parts,
         string coreText,
         string supportText,
         char crystalColor,
         int column,
-        int holderColumn,
-        int farColumn,
-        bool twoAuxiliaryColumns)
+        int holderColumn)
     {
         var state = new ShapeDocument(cap, parts);
 
         WriteColumn(state, column, coreText, crystalColor);
         WriteColumn(state, holderColumn, supportText, crystalColor);
-
-        if (!twoAuxiliaryColumns)
-        {
-            WriteColumn(
-                state,
-                farColumn,
-                new string(ShapeSignature.SolidCode, cap),
-                crystalColor);
-        }
 
         return state;
     }
@@ -1085,13 +679,12 @@ public static partial class AngleWorkOrderBuilder
         string coreText,
         string supportText,
         List<(int Bottom, int Top)> blocks,
-        List<(int Core, int Target)> lifts,
-        GenericCutOrder cuts)
+        List<(int Core, int Target)> lifts)
     {
         var limitations = BaseLimitations(
             "算法 4（§11 通用实现）：规范计划 = 提升 + 正规核心（临时晶体）+" +
             " 定向碎晶（构造 D）+ 构造 C。计划六个参数全部由扫描得出，" +
-            "每个候选都用真实 ShapePhysics 逐格回放。");
+            "只生成一次并用真实 ShapePhysics 逐格回放，不做变体搜索。");
 
         var liftText = lifts.Count == 0
             ? "无（目标列已经是紧列）"
@@ -1104,11 +697,7 @@ public static partial class AngleWorkOrderBuilder
             string.Join(
                 "、",
                 blocks.Select(block => $"第 {block.Bottom + 1}–{block.Top + 1} 层")) +
-            "；" +
-            (cuts == GenericCutOrder.OneCut
-                ? "锚层互不相同 ⇒ 一刀全碎。"
-                : "按锚层逐块各一刀，" +
-                  (cuts == GenericCutOrder.BlocksTopDown ? "从最上面的块开始。" : "从最下面的块开始。")));
+            "；桥柱在每个块的锚层（最高层）放一颗晶体。");
 
         limitations.Add(
             "恢复顺序从上到下：先删上方的临时晶体块，下方还没删的临时晶体当刹车，" +
@@ -1215,24 +804,6 @@ public static partial class AngleWorkOrderBuilder
         return layer < 0 ||
                layer >= column.Length ||
                column[layer] == ShapeSignature.EmptyCode;
-    }
-
-    private static bool IsStrictlyIncreasing(int[] values, int firstMinimum)
-    {
-        for (int index = 0; index < values.Length; index++)
-        {
-            if (values[index] < firstMinimum)
-            {
-                return false;
-            }
-
-            if (index > 0 && values[index] <= values[index - 1])
-            {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     #endregion

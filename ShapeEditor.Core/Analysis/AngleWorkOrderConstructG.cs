@@ -15,7 +15,7 @@ namespace ShapeEditor.Core.Analysis;
 ///
 /// <para><b>扫描方式（§15.2 / §15.8 的实现要点）</b></para>
 /// <list type="number">
-/// <item>提升计划由 <see cref="EnumerateLiftPlans"/> 逐条给出，核心列由「提升 + 正规核心」得出；</item>
+/// <item>提升计划由 <see cref="ResolveStaircaseLiftPlan"/> 一次给出（阶梯式，§4.8.1），核心列由「提升 + 正规核心」得出；</item>
 /// <item>每个「核心层 &gt; 目标层」的普通格是一条<b>下落记录</b> <c>q → d</c>；
 /// 它的<b>闸门</b> <c>g = q − 1</c> 必须是临时晶体（切掉它，q 层的普通格才落得下来）；</item>
 /// <item>最高的那条下落记录正上方必须是<b>连续三颗目标晶体</b>，其最下层记为 <c>s</c>
@@ -42,9 +42,6 @@ namespace ShapeEditor.Core.Analysis;
 /// </summary>
 public static partial class AngleWorkOrderBuilder
 {
-    /// <summary>构造 G 的候选提升计划上限（每个候选都要跑一次真实 Cut 回放）。</summary>
-    private const int ConstructGLiftBudget = 8;
-
     #region 入口
 
     /// <summary>
@@ -86,43 +83,26 @@ public static partial class AngleWorkOrderBuilder
             return null;
         }
 
-        int attempts = 0;
+        // 构造 G 的阶梯式提升计划（§4.8.1）只解一次（不再按候选计划枚举 + 回放筛选）。
+        int[] destinations = ResolveStaircaseLiftPlan(targetColumn, highestCrystal);
 
-        foreach (int[] destinations in EnumerateLiftPlans(targetColumn, highestCrystal))
+        char[]? core = BuildCoreColumn(
+            targetColumn,
+            destinations,
+            highestCrystal);
+
+        if (core is null)
         {
-            if (attempts >= ConstructGLiftBudget)
-            {
-                break;
-            }
-
-            attempts++;
-
-            char[]? core = BuildCoreColumn(
-                targetColumn,
-                destinations,
-                highestCrystal,
-                GenericFillMode.AllHoles);
-
-            if (core is null)
-            {
-                continue;
-            }
-
-            AngleWorkOrder? order = TryPlanConstructG(
-                target,
-                column,
-                cap,
-                kind,
-                targetColumn,
-                new string(core));
-
-            if (order is not null)
-            {
-                return order;
-            }
+            return null;
         }
 
-        return null;
+        return TryPlanConstructG(
+            target,
+            column,
+            cap,
+            kind,
+            targetColumn,
+            new string(core));
     }
 
     #endregion
@@ -431,26 +411,19 @@ public static partial class AngleWorkOrderBuilder
         int rotation = Wrap(-column, parts);
         char color = CrystalColor(target, column);
 
-        ShapeDocument preState = BuildFourColumnState(
+        ShapeDocument preState = BuildThreeColumnState(
             cap,
             parts,
             coreText,
             partnerText,
             color,
             column,
-            holderColumn,
-            farColumn,
-            twoAuxiliaryColumns: true);
+            holderColumn);
 
         /*
-         * 辅助列最少化：farColumn 只是满高普通柱，不参与任何跨刀口晶体连通，
-         * 切割时整列丢弃 ⇒ 留空即可。G 只剩「支撑 B + 保险丝 B′」两列，
+         * 辅助列最少化：第三象限整列为空（只留「支撑 B + 保险丝 B′」），
          * 与用户要求的「支撑 + 保险丝」一致。
          */
-        for (int layer = 0; layer < cap; layer++)
-        {
-            preState[layer, farColumn] = ShapeCell.Empty();
-        }
 
         WriteColumn(preState, bridgeColumn, bridgeText, color);
 

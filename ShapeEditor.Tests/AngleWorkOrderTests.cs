@@ -638,7 +638,7 @@ internal static class AngleWorkOrderTests
     public static void DirectionalBreakPrefersTwoColumnsAndAnnotatesFillBreak()
     {
         // T4：通用构造 D 的两列布局。
-        foreach (string text in new[] { "cTT..T.c", "T.T..c", "T..T.c" })
+        foreach (string text in new[] { "cTT..T.c", "T.T..c" })
         {
             int cap = text.Length;
             ShapeDocument target = FromColumns(4, cap, (0, text));
@@ -675,6 +675,29 @@ internal static class AngleWorkOrderTests
             }
 
             ReplayGenericAlgorithm4(order, target, 0);
+        }
+
+        /*
+         * `T..T.c` 的 D 同样成立（算法 6），但塔式构造 C 现在先命中：
+         * 托针柱针位 / 落块柱桥锚由扫描直接生成，一次 Pin + 构造 C 即得目标，
+         * 因此它不再是构造 D 的「两列辅助」案例。
+         */
+        {
+            ShapeDocument target = FromColumns(4, 6, (0, "T..T.c"));
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, 6);
+
+            Assert.True(order.IsComplete, order.Note ?? "T..T.c 应可制作");
+            Assert.Equal(AngleAlgorithm.Algorithm6, order.Algorithm);
+            Assert.Equal(AngleConstruction.C, order.Construction);
+            Assert.True(
+                order.Steps.Any(step => step.Kind == AngleWorkStepKind.Pin),
+                "T..T.c 的塔式构造 C 应有 Pin 步");
+            Assert.Equal(
+                "T..T.c",
+                ShapeSignature.ColumnText(
+                    Step(order, AngleWorkStepKind.Support).Shape!,
+                    0),
+                "T..T.c 的构造 C 交接后目标列应等于目标");
         }
 
         // T7：底针 + 普通格可抬升 ⇒ 现在由构造 H（按 I/J 构造性生成）一次顶针完成。
@@ -1041,10 +1064,10 @@ internal static class AngleWorkOrderTests
     /// 用户给的三个例子：<c>T..ccc</c>、<c>T..cc</c> 与 <c>cTT.cTcc</c>。
     ///
     /// <para>
-    /// <b>断言更新的原因</b>：前两个的 D 成立，底块提升现在由 §11 通用计划
-    /// 完成（构造 D），不再落到兜底链的填充+暴破；因此步骤链变为
-    /// PreState → Cut → Support → Target，前态也不再是「直接填缺口」。
-    /// 第三个 <c>cTT.cTcc</c> 的 D 不成立，仍走 §11 通用实现（构造 D）。
+    /// <b>断言更新的原因（本轮纯构造改造）</b>：前两个的 D 成立 ⇒ 算法 6；
+    /// 塔式构造 C 现在由「托针柱针位 = 最高普通格以下全部层、落块柱桥锚 = 目标底格」
+    /// 直接生成，一次 Pin + 构造 C 就能得到目标列，因此比 §11 通用计划（构造 D）
+    /// 先命中。第三个 <c>cTT.cTcc</c> 的 D 不成立，仍走 §11 通用实现（构造 D）。
     /// </para>
     /// </summary>
     public static void FillBreakCoversUserExamples()
@@ -1060,20 +1083,25 @@ internal static class AngleWorkOrderTests
             Assert.Equal(AngleBuildKind.NeedsCrystalBreak, order.Kind);
             Assert.True(
                 order.IsComplete,
-                order.Note ?? $"{text} 应由 §11 通用实现完成");
+                order.Note ?? $"{text} 应由算法 6 的塔式构造 C 完成");
             Assert.True(order.Note is null, $"{text} 不应有未实现说明");
-            Assert.Equal(AngleAlgorithm.Algorithm4, order.Algorithm);
-            Assert.Equal(AngleConstruction.D, order.Construction);
+            Assert.Equal(AngleAlgorithm.Algorithm6, order.Algorithm);
+            Assert.Equal(AngleConstruction.C, order.Construction);
 
             AssertStepKinds(
                 order,
                 AngleWorkStepKind.PreState,
-                AngleWorkStepKind.Cut,
+                AngleWorkStepKind.Pin,
                 AngleWorkStepKind.Support,
                 AngleWorkStepKind.Target);
 
             // 每一步都用真实物理回放，最终列逐格等于目标。
-            ReplayGenericAlgorithm4(order, target, 0);
+            Assert.True(
+                ShapeOps.Same(
+                    ShapePhysics.Pin(
+                        Step(order, AngleWorkStepKind.PreState).Shape!).Document,
+                    Step(order, AngleWorkStepKind.Pin).Shape),
+                $"{text} 的 Pin 步应等于真实顶针结果");
 
             Assert.Equal(
                 text,
@@ -1179,13 +1207,19 @@ internal static class AngleWorkOrderTests
 
     /// <summary>
     /// 目标只有 6/7/8 层、cap 更大时：前态与中间态要补空层，但目标列仍要逐格对上。
-    /// 覆盖填充+暴破、多轮 G、算法 6（.T..c. 的 D 成立）与构造 F。
+    /// 覆盖构造 C（塔式一次顶针）、构造 G、构造 H 与构造 F。
+    ///
+    /// <para>
+    /// <b>断言更新的原因（本轮纯构造改造）</b>：<c>T..ccc</c> 的 D 成立 ⇒ 算法 6；
+    /// 塔式构造 C 的托针柱/落块柱现在由扫描直接生成，一次 Pin + 构造 C 即得目标，
+    /// 因此不再落到 §11 通用计划（构造 D）。
+    /// </para>
     /// </summary>
     public static void ConstructionHandlesCapAboveTargetHeight()
     {
         var cases = new (string Text, int TargetLayers, int Parts, AngleConstruction Construction)[]
         {
-            ("T..ccc", 6, 4, AngleConstruction.D),
+            ("T..ccc", 6, 4, AngleConstruction.C),
             ("cT..ccc", 8, 4, AngleConstruction.G),
             // `.T..c.` 现在由构造性构造 H 完成（docs §18.4），不再走塔 X + 构造 C。
             (".T..c.", 6, 4, AngleConstruction.H),

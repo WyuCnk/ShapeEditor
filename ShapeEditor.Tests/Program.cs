@@ -16,7 +16,7 @@ internal static class Program
     {
         if (Environment.GetEnvironmentVariable("SHAPE_PROBE") == "1")
         {
-                return 0;
+            return 0;
         }
 
         /*
@@ -187,6 +187,7 @@ internal static class Program
             ("角工序:k 列半边不做假阳性", AngleWorkOrderTests.HalfSideKColumnsDoesNotFakeUnstableHalf),
             ("角工序:半边候选 3 多保险丝", AngleWorkOrderTests.HalfSideFuseHandlesMultipleTemporaryBlocks),
             ("角工序:n=4 ≤6 层穷举审计", AngleAuditTests.ExhaustiveFourQuadrantAudit),
+            ("角工序:7–8 层穷举审计", AngleAuditTests.ExhaustiveSevenEightLayerAudit),
             ("角工序:前态紧列审计（§17.7）", AngleAuditTests.PreStateTightnessAudit),
             ("角工序:构造分布与辅助列基线", AngleAuditTests.ConstructionDistributionAudit),
             ("角工序:半边工序 7–9 层审计", AngleAuditTests.HalfSideAudit),
