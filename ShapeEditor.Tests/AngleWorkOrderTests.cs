@@ -627,6 +627,100 @@ internal static class AngleWorkOrderTests
 
     #endregion
 
+    #region 角工序：T4 两列最少化与 T7 FillBreak 标注
+
+    /// <summary>
+    /// T4：构造 D 先试两列（支撑 + 爆破），第三象限整列为空。
+    /// T7：D / G 都做不了时才保留 FillBreak，且必须在 Note 里标注「非论文构造」。
+    /// </summary>
+    public static void DirectionalBreakPrefersTwoColumnsAndAnnotatesFillBreak()
+    {
+        // T4：通用构造 D 的两列布局。
+        foreach (string text in new[] { "cTT..T.c", "T.T..c", "T..T.c" })
+        {
+            int cap = text.Length;
+            ShapeDocument target = FromColumns(4, cap, (0, text));
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+
+            Assert.True(order.IsComplete, order.Note ?? text + " 应可制作");
+            Assert.Equal(AngleConstruction.D, order.Construction, text);
+            Assert.True(order.Note is null, text + " 通过时不应有 Note");
+            Assert.Equal(2, order.AuxiliaryColumns.Count, text + " 应只用两列辅助");
+            Assert.True(
+                order.Limitations.Any(line => line.Contains("辅助列最少化")),
+                text + " 的限制说明应写明辅助列最少化");
+
+            // 前态第三象限（非辅助列）必须整列为空。
+            ShapeDocument preState = NthStep(
+                order,
+                AngleWorkStepKind.PreState,
+                0).Shape!;
+
+            for (int part = 0; part < 4; part++)
+            {
+                if (order.AuxiliaryColumns.Contains(part) || part == 0)
+                {
+                    continue;
+                }
+
+                for (int layer = 0; layer < cap; layer++)
+                {
+                    Assert.Equal(
+                        CellType.Empty,
+                        preState[layer, part].Type,
+                        text + $" 的第 {part + 1} 象限不应有材料");
+                }
+            }
+
+            ReplayGenericAlgorithm4(order, target, 0);
+        }
+
+        // T7：底针 + 普通格可抬升 ⇒ 现在归类成构造 D。
+        {
+            ShapeDocument target = FromColumns(4, 4, (0, "PT.c"));
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, 4);
+
+            Assert.True(order.IsComplete, order.Note ?? "PT.c 应可制作");
+            Assert.Equal(AngleConstruction.D, order.Construction);
+            Assert.True(order.Note is null, "PT.c 用构造 D，不应有 Note");
+            Assert.Equal(2, order.AuxiliaryColumns.Count);
+            AssertColumnCells(
+                Step(order, AngleWorkStepKind.Target).Shape!,
+                0,
+                "PT.c");
+        }
+
+        // T7：缺口夹在针与普通格之间，没有可抬升的普通格 ⇒ D / G 都不行，
+        // 保留 FillBreak，但必须带「非论文构造」标注。
+        foreach (string text in new[] { "P.Tc", "P.TcT" })
+        {
+            int cap = text.Length;
+            ShapeDocument target = FromColumns(4, cap, (0, text));
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+
+            Assert.True(order.IsComplete, order.Note ?? text + " 应可制作");
+            Assert.Equal(AngleConstruction.FillBreak, order.Construction, text);
+            Assert.True(order.Note is not null, text + " 保留 FillBreak 时必须标注");
+            Assert.True(
+                order.Note!.StartsWith(
+                    AngleWorkOrderBuilder.NonPaperConstructionPrefix,
+                    StringComparison.Ordinal),
+                text + " 的 Note 应以「非论文构造：」开头，实际：" + order.Note);
+            Assert.True(
+                order.Limitations.Any(line =>
+                    line.StartsWith(
+                        AngleWorkOrderBuilder.NonPaperConstructionPrefix,
+                        StringComparison.Ordinal)),
+                text + " 的限制说明也应带标注");
+            AssertColumnCells(
+                Step(order, AngleWorkStepKind.Target).Shape!,
+                0,
+                text);
+        }
+    }
+
+    #endregion
+
     #region 角工序：构造 H（n = 4 一次顶针）
 
     /// <summary>
@@ -2810,7 +2904,11 @@ internal static class AngleWorkOrderTests
                 8,
                 false,
                 false,
-                "cTccTcTc|TTTPPTPT|TTTTTTTT|TTTTTcTT")
+                /*
+                 * T4（docs §5.2）：构造 D 先试两列（支撑 + 爆破），第三象限留空。
+                 * 旧断言是四列布局（第三象限满高普通柱），现已按最少化降为 2 列。
+                 */
+                "cTccTcTc|TTTPPTPT|........|TTTTTcTT")
         };
 
         // 预热 JIT：首调用包含 JIT，不能算进「单角耗时 < 50 ms」。
@@ -2864,7 +2962,7 @@ internal static class AngleWorkOrderTests
                 }
             }
 
-            // 前态四列 = 实测布局（目标列 / 支撑 B / 第三列留空 / 保险丝柱 B′）。
+            // 前态布局：G / D 都是「目标列 / 支撑 B / 第三列留空 / 爆破柱（桥柱或保险丝）」。
             // 逐块各一刀时有两条前态，这里取第一条（规范核心列那条）。
             ShapeDocument preState = NthStep(order, AngleWorkStepKind.PreState, 0).Shape!;
 
@@ -3408,6 +3506,330 @@ internal static class AngleWorkOrderTests
                 ShapeOps.Same(targetStep.Shape, target),
                 text + " 的末步应逐格等于目标");
         }
+    }
+
+    /// <summary>
+    /// T3（docs §5.3）：12 个尾部角全部走「核心 + 尾部两步法」。
+    ///
+    /// <para>每一份工序单都要满足：</para>
+    /// <list type="number">
+    /// <item>核心 = 最高晶体及以下（前态的目标列不得含尾部材料）；</item>
+    /// <item>先有构造 C 的「延长托柱」步，再有逐格 <see cref="AngleWorkStepKind.Stack"/>；</item>
+    /// <item>每条 Stack 只加目标尾部的一格，加完后图形稳定；</item>
+    /// <item>空层跳过、非空尾部层每层恰好一条 Stack；</item>
+    /// <item>收尾 <see cref="AngleWorkStepKind.Target"/> 逐格等于目标。</item>
+    /// </list>
+    /// </summary>
+    public static void TailTwoStepAcceptsPaperCorpus()
+    {
+        string[] corpus =
+        {
+            "T.cT", "T.cP", ".TcT", "T.c.T", ".T.cTT", "T.cTP",
+            ".T.cPP", "T.ccT", ".T.ccP", ".T.cT.", ".T.cP.", "T.cT.T"
+        };
+
+        var problems = new List<string>();
+        var rows = new List<string>();
+
+        foreach (string text in corpus)
+        {
+            int cap = text.Length;
+            ShapeDocument target = FromColumns(4, cap, (0, text));
+
+            if (!PillarSCriterion.IsPillarColumn(target, 0))
+            {
+                problems.Add(text + "：不在 n = 4 的 S，无法按角工序制作");
+                continue;
+            }
+
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+
+            if (!order.IsComplete)
+            {
+                problems.Add(text + "：未完成（" + (order.Note ?? "无 Note") + "）");
+                continue;
+            }
+
+            if (order.Note is not null)
+            {
+                problems.Add(text + "：通过却带 Note：" + order.Note);
+            }
+
+            int highest = AngleClassifier.HighestCrystalLayer(target, 0);
+
+            string coreText = text[..(highest + 1)];
+
+            var tailLayers = new List<int>();
+
+            for (int layer = highest + 1; layer < cap; layer++)
+            {
+                if (target[layer, 0].Type != CellType.Empty)
+                {
+                    tailLayers.Add(layer);
+                }
+            }
+
+            if (tailLayers.Count == 0)
+            {
+                problems.Add(text + "：最高晶体以上没有尾部材料");
+                continue;
+            }
+
+            AngleWorkStep? preState = order.Steps.FirstOrDefault(
+                step => step.Kind == AngleWorkStepKind.PreState &&
+                        step.Shape is not null);
+
+            if (preState?.Shape is null)
+            {
+                problems.Add(text + "：没有前态");
+                continue;
+            }
+
+            if (!ShapeOps.IsStable(preState.Shape))
+            {
+                problems.Add(text + "：核心前态不稳定");
+            }
+
+            if (ShapeSignature.ColumnText(preState.Shape, 0) == text)
+            {
+                problems.Add(text + "：前态目标列等于目标（循环）");
+            }
+
+            /*
+             * 前态只覆盖核心：最高晶体以上的层必须整列为空，
+             * 尾部材料只能由后面的 Stack 步一格一格接上来。
+             */
+            for (int layer = highest + 1; layer < cap; layer++)
+            {
+                if (preState.Shape[layer, 0].Type != CellType.Empty)
+                {
+                    problems.Add(
+                        text + $"：前态第 {layer + 1} 层带着尾部材料，尾部应留给 Stack");
+                }
+            }
+
+            var kinds = order.Steps
+                .Select(step => step.Kind)
+                .ToList();
+
+            int firstStack = kinds.IndexOf(AngleWorkStepKind.Stack);
+            int lastSupport = kinds.LastIndexOf(AngleWorkStepKind.Support);
+
+            if (firstStack < 0)
+            {
+                problems.Add(text + "：没有逐格 Stack 接尾部");
+                continue;
+            }
+
+            if (lastSupport < 0)
+            {
+                problems.Add(text + "：Stack 前没有构造 C 的「延长托柱」Support 步");
+                continue;
+            }
+
+            if (lastSupport > firstStack)
+            {
+                problems.Add(text + "：延长托柱的 Support 步出现在 Stack 之后");
+                continue;
+            }
+
+            // 支撑柱必须真的覆盖到目标高度（构造 C：先延长托柱再接尾部）。
+            ShapeDocument supportState = order.Steps[lastSupport].Shape!;
+
+            string supportTargetColumn = ShapeSignature.ColumnText(supportState, 0);
+
+            if (supportTargetColumn[..(highest + 1)] != coreText)
+            {
+                problems.Add(
+                    text + "：延长托柱时目标列应已等于核心 " + coreText + "，实际 " +
+                    supportTargetColumn);
+            }
+
+            if (!HasFullHeightColumn(supportState, 0, cap))
+            {
+                problems.Add(text + "：延长后的托柱没有覆盖到目标高度");
+            }
+
+            if (!ShapeOps.IsStable(supportState))
+            {
+                problems.Add(text + "：延长托柱后不稳定");
+            }
+
+            ShapeDocument previous = supportState;
+            int stackIndex = 0;
+            var stackedLayers = new List<int>();
+
+            for (int index = lastSupport + 1; index < order.Steps.Count; index++)
+            {
+                AngleWorkStep step = order.Steps[index];
+
+                if (step.Kind == AngleWorkStepKind.Stack)
+                {
+                    ShapeDocument? current = step.Shape;
+
+                    if (current is null)
+                    {
+                        problems.Add(text + "：Stack 步没有图形");
+                        break;
+                    }
+
+                    int layer = FindSingleChangedLayer(previous, current);
+
+                    if (layer < 0)
+                    {
+                        problems.Add(
+                            text + "：第 " + (stackIndex + 1) + " 条 Stack 不是「只加一格」");
+                        break;
+                    }
+
+                    if (!tailLayers.Contains(layer))
+                    {
+                        problems.Add(
+                            text + $"：Stack 加在第 {layer + 1} 层，但那一层不是目标尾部");
+                    }
+
+                    if (!ShapeOps.SameCell(current[layer, 0], target[layer, 0]))
+                    {
+                        problems.Add(
+                            text + $"：Stack 第 {layer + 1} 层的格子与目标不一致");
+                    }
+
+                    if (!ShapeOps.IsStable(current))
+                    {
+                        problems.Add(
+                            text + $"：接到第 {layer + 1} 层后不稳定");
+                    }
+
+                    stackedLayers.Add(layer);
+                    previous = current;
+                    stackIndex++;
+                }
+                else if (step.Shape is not null)
+                {
+                    previous = step.Shape;
+                }
+            }
+
+            if (stackIndex != tailLayers.Count)
+            {
+                problems.Add(
+                    text + $"：Stack 数量 {stackIndex} 与尾部非空层数 {tailLayers.Count} 不一致");
+            }
+
+            if (stackedLayers.Count != stackedLayers.Distinct().Count())
+            {
+                problems.Add(text + "：同一尾部层被接到两次");
+            }
+
+            rows.Add(
+                $"{text}：构造={order.Construction}，核心={coreText}，" +
+                $"尾部层={string.Join(",", tailLayers.Select(layer => layer + 1))}，" +
+                $"步骤={string.Join("→", kinds)}，Stack={stackIndex}");
+
+            AngleWorkStep? targetStep = order.Steps.LastOrDefault(
+                step => step.Kind == AngleWorkStepKind.Target);
+
+            if (targetStep?.Shape is null ||
+                !ShapeOps.Same(targetStep.Shape, target))
+            {
+                problems.Add(text + "：末步没有逐格等于目标");
+            }
+
+            if (order.HasIllegalPreState(out _, out _))
+            {
+                problems.Add(text + "：前态含非法列");
+            }
+        }
+
+        Console.WriteLine(
+            $"  TAILCORPUS cases={corpus.Length} problems={problems.Count}");
+
+        foreach (string row in rows)
+        {
+            Console.WriteLine("    " + row);
+        }
+
+        foreach (string problem in problems)
+        {
+            Console.WriteLine("    " + problem);
+        }
+
+        Assert.True(
+            problems.Count == 0,
+            $"12 个尾部角的两步法有 {problems.Count} 个问题：" +
+            string.Join(" | ", problems));
+    }
+
+    /// <summary>除目标列外是否存在一根从地面到 <paramref name="cap"/> 的满高柱。</summary>
+    private static bool HasFullHeightColumn(
+        ShapeDocument document,
+        int column,
+        int cap)
+    {
+        for (int part = 0; part < document.PartCount; part++)
+        {
+            if (part == column)
+            {
+                continue;
+            }
+
+            bool full = true;
+
+            for (int layer = 0; layer < cap; layer++)
+            {
+                if (document[layer, part].Type != CellType.Shape)
+                {
+                    full = false;
+                    break;
+                }
+            }
+
+            if (full)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>两张图恰好只有目标列的一层不同时返回该层号，否则返回 -1。</summary>
+    private static int FindSingleChangedLayer(
+        ShapeDocument before,
+        ShapeDocument after)
+    {
+        if (before.PartCount != after.PartCount ||
+            before.LayerCount != after.LayerCount)
+        {
+            return -1;
+        }
+
+        int changed = -1;
+
+        for (int part = 0; part < before.PartCount; part++)
+        {
+            for (int layer = 0; layer < before.LayerCount; layer++)
+            {
+                if (ShapeOps.SameCell(before[layer, part], after[layer, part]))
+                {
+                    continue;
+                }
+
+                if (part != 0 || changed >= 0)
+                {
+                    return -1;
+                }
+
+                changed = layer;
+
+                if (after[layer, part].Type == CellType.Empty)
+                {
+                    return -1;
+                }
+            }
+        }
+
+        return changed;
     }
 
     /// <summary>

@@ -136,14 +136,16 @@ public enum AngleAlgorithm
 /// 一个角的工序单。
 ///
 /// <para>
-/// <see cref="Note"/> 为 null 表示工序<b>已逐步验证通过</b>；非 null 表示失败，
-/// 且只有两种前缀：
+/// <see cref="Note"/> 为 null 表示工序<b>已逐步验证通过</b>；非 null 时有两种情况：
 /// </para>
 /// <list type="bullet">
 /// <item><see cref="AngleWorkOrderBuilder.NotProduciblePrefix"/>：五项条件不过，
 /// 角本身不合法 ⇒ <b>不可制作</b>；</item>
 /// <item><see cref="AngleWorkOrderBuilder.UncoveredPrefix"/>：角合法，但生成器
-/// 还没覆盖这个形态 ⇒ <b>未覆盖</b>（不代表不可制作）。</item>
+/// 还没覆盖这个形态 ⇒ <b>未覆盖</b>（不代表不可制作）；</item>
+/// <item><see cref="AngleWorkOrderBuilder.NonPaperConstructionPrefix"/>：
+/// 工序已回放通过（<see cref="IsComplete"/> 为 true），但它用的是论文之外的
+/// 兜底构造（目前只有填充+暴破）——这是<b>标注</b>，不是失败。</item>
 /// </list>
 /// <para>
 /// <see cref="Limitations"/> 始终给出 UI 需要展示的限制说明。
@@ -362,6 +364,13 @@ public static partial class AngleWorkOrderBuilder
     /// 任何「还没实现」的情形都不允许写成不可制作。
     /// </summary>
     public const string NotProduciblePrefix = "不可制作：";
+
+    /// <summary>
+    /// 已完成、但用的是论文之外的兜底构造时的标注前缀（T7 / docs §5.2）。
+    /// 带此前缀的工序 <see cref="AngleWorkOrder.IsComplete"/> 仍为 true——
+    /// 标注不是失败，只是如实说明它不属于论文构造 A–H。
+    /// </summary>
+    public const string NonPaperConstructionPrefix = "非论文构造：";
 
     /// <summary>
     /// 未覆盖的含义说明：避免 UI 把它误读成「不可制作」。
@@ -818,8 +827,16 @@ public static partial class AngleWorkOrderBuilder
     }
 
     /// <summary>
-    /// 兜底链：原有的「填充+暴破 → 构造 H / 多轮 G / F / 旧填充方案」。
-    /// 顺序与旧实现逐字一致，只作为论文分档的回退。
+    /// 兜底链：原有的「构造 D（定向碎晶）→ 构造 G → 填充+暴破 → 构造 H / 多轮 G / F」
+    /// 顺序只作为论文分档的回退。
+    ///
+    /// <para>
+    /// T7（docs §5.2）：<see cref="AngleConstruction.FillBreak"/> 不是论文构造，
+    /// 因此先试论文里的 <see cref="AngleConstruction.D"/>（只抬升 + 定向炸晶，
+    /// 不把缺口整段填满），D 不行再试 <see cref="AngleConstruction.G"/>；
+    /// 两者都不行才保留 FillBreak，并在 <see cref="AngleWorkOrder.Note"/> 里标注
+    /// 「非论文构造」。
+    /// </para>
     /// </summary>
     private static AngleWorkOrder BuildLegacyChain(
         ShapeDocument target,
@@ -830,6 +847,44 @@ public static partial class AngleWorkOrderBuilder
         int parts,
         int half)
     {
+        /*
+         * 构造 D（定向碎晶）：只允许「抬升填法」——缺口下方的普通格被抬到
+         * 缺口顶端，让出的位置填成临时晶体，碎掉后普通格落回目标层。
+         * 这条路线不把缺口整段填满，属于论文构造 D；回放不通过时才继续往下试。
+         */
+        if (parts == 4)
+        {
+            AngleWorkOrder directional = TryBuildDirectionalBreak(
+                target,
+                column,
+                layers,
+                parts,
+                half,
+                kind);
+
+            if (directional.IsComplete)
+            {
+                return directional;
+            }
+
+            /*
+             * 构造 G（四象限单孔环下落）：单层缺口、晶体塔至少三连晶、
+             * 且放得下 G 的支撑环时，一次 Cut + 落定就能造出缺口。
+             */
+            AngleWorkOrder? constructG = TryBuildLegacyConstructG(
+                target,
+                column,
+                layers,
+                parts,
+                half,
+                kind);
+
+            if (constructG is not null && constructG.IsComplete)
+            {
+                return constructG;
+            }
+        }
+
         AngleWorkOrder fillBreakOrder = TryBuildFillBreak(
             target,
             column,
@@ -840,7 +895,7 @@ public static partial class AngleWorkOrderBuilder
 
         if (fillBreakOrder.IsComplete)
         {
-            return fillBreakOrder;
+            return AnnotateNonPaperConstruction(fillBreakOrder, parts == 4);
         }
 
         AngleWorkOrder fallbackOrder = BuildLegacy(
@@ -850,13 +905,167 @@ public static partial class AngleWorkOrderBuilder
 
         if (fallbackOrder.IsComplete)
         {
-            return fallbackOrder;
+            return fallbackOrder.Construction == AngleConstruction.FillBreak
+                ? AnnotateNonPaperConstruction(fallbackOrder, parts == 4)
+                : fallbackOrder;
         }
 
         return AppendFailure(
             fallbackOrder,
             "首选填充+暴破也未通过：" +
             StripUncoveredPrefix(fillBreakOrder.Note ?? "未知原因"));
+    }
+
+    /// <summary>构造 D 的兜底尝试：只走「抬升填法」（不把缺口整段填满）。</summary>
+    private static AngleWorkOrder TryBuildDirectionalBreak(
+        ShapeDocument target,
+        int column,
+        int layers,
+        int parts,
+        int half,
+        AngleBuildKind kind)
+    {
+        AngleWorkOrder order = TryBuildFillBreak(
+            target,
+            column,
+            layers,
+            parts,
+            half,
+            kind,
+            FillPlanMode.LiftOnly);
+
+        if (!order.IsComplete)
+        {
+            return order;
+        }
+
+        var limitations = new List<string>(order.Limitations);
+
+        string description =
+            "构造 D（定向碎晶）：缺口下方的普通格先抬升到缺口顶端（§7.5 规则二），" +
+            "让出的位置填成临时晶体后单独炸掉——不把缺口整段填满；" +
+            "真实 Cut + 落定逐格核对通过。";
+
+        if (limitations.Count > 0)
+        {
+            limitations[0] = description;
+        }
+        else
+        {
+            limitations.Add(description);
+        }
+
+        limitations.Add(
+            "辅助列最少化：只保留支撑（托柱）+ 爆破（桥柱）两列，第三象限整列为空。");
+
+        return order with
+        {
+            Construction = AngleConstruction.D,
+            Limitations = limitations
+        };
+    }
+
+    /// <summary>
+    /// 兜底链里的构造 G 尝试（docs §15）：只处理「单层缺口 + 晶体塔 ≥ 3 连晶 +
+    /// t+2 在画布内」的形态，其余返回 null 交给后面的兜底。
+    /// </summary>
+    private static AngleWorkOrder? TryBuildLegacyConstructG(
+        ShapeDocument target,
+        int column,
+        int layers,
+        int parts,
+        int half,
+        AngleBuildKind kind)
+    {
+        int highest = AngleClassifier.HighestCrystalLayer(target, column);
+
+        if (highest < 0)
+        {
+            return null;
+        }
+
+        int t = highest;
+
+        while (t > 0 &&
+               target[t - 1, column].Type == CellType.Crystal)
+        {
+            t--;
+        }
+
+        if (t <= 0)
+        {
+            return null;
+        }
+
+        int s = t - 1;
+
+        if (target[s, column].Type != CellType.Empty)
+        {
+            return null;
+        }
+
+        int d = -1;
+
+        for (int layer = s - 1; layer >= 0; layer--)
+        {
+            if (target[layer, column].Type != CellType.Empty)
+            {
+                d = layer;
+                break;
+            }
+        }
+
+        if (d < 0 || target[d, column].Type != CellType.Shape)
+        {
+            return null;
+        }
+
+        bool singleLayerGap = d == s - 1;
+        bool gTowerOk = highest - t + 1 >= 3;
+        bool gPinRoom = s + 2 < layers;
+
+        if (!singleLayerGap || !gTowerOk || !gPinRoom)
+        {
+            return null;
+        }
+
+        return BuildCutPath(
+            target,
+            column,
+            layers,
+            parts,
+            half,
+            s,
+            d,
+            kind,
+            AngleConstruction.G);
+    }
+
+    /// <summary>
+    /// 给保留下来的 <see cref="AngleConstruction.FillBreak"/> 工序加「非论文构造」标注
+    /// （T7 / docs §5.2）。
+    /// </summary>
+    private static AngleWorkOrder AnnotateNonPaperConstruction(
+        AngleWorkOrder order,
+        bool triedDirectionalAndLoopDown)
+    {
+        string description = triedDirectionalAndLoopDown
+            ? "填充+暴破不是论文里的构造（A–H），" +
+              "该形态上构造 D 与构造 G 都没通过真实回放，只能保留本兜底路线。"
+            : "填充+暴破不是论文里的构造（A–H）；" +
+              "该形态不走 n = 4 的构造 D / G 判据，只能保留本兜底路线。";
+
+        string annotation = NonPaperConstructionPrefix + description;
+
+        var limitations = new List<string>(order.Limitations);
+
+        limitations.Add(annotation);
+
+        return order with
+        {
+            Note = annotation,
+            Limitations = limitations
+        };
     }
 
     #region 分档选择
@@ -1240,7 +1449,8 @@ public static partial class AngleWorkOrderBuilder
             column,
             kind,
             steps,
-            null)
+            // 核心已经完成：把它「非论文构造」之类的标注原样带到整份工序单。
+            coreOrder.Note)
         {
             IsComplete = true,
             TargetColumnHasSubRecipe = true,

@@ -433,6 +433,229 @@ internal static class AngleAuditTests
     }
 
     /// <summary>
+    /// 基线测量（docs §5.2 / §5.3）：≤6 层的 2125 个 S 列，
+    /// 按 <see cref="AngleWorkOrder.Construction"/> 统计构造分布、
+    /// 每种构造的辅助列数量分布、<see cref="AngleConstruction.FillBreak"/> 例数，
+    /// 以及 <see cref="AngleWorkStepKind.Collapse"/> 步的发射次数（应为 0）。
+    ///
+    /// <para>
+    /// 辅助列数量取两种口径，二者都打印，避免把「声明的辅助列」与
+    /// 「前态里真正非空的辅助列」混为一谈：
+    /// </para>
+    /// <list type="bullet">
+    /// <item><c>declared</c> = <see cref="AngleWorkOrder.AuxiliaryColumns"/>.Count（含空象限占位）；</item>
+    /// <item><c>nonEmpty</c> = 初始前态里目标列以外有材料的列数（docs §5.2 的统计口径）。</item>
+    /// </list>
+    /// </summary>
+    public static void ConstructionDistributionAudit()
+    {
+        var constructionCounts = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        var declaredAux = new Dictionary<string, Dictionary<string, int>>(StringComparer.Ordinal);
+        var nonEmptyAux = new Dictionary<string, Dictionary<string, int>>(StringComparer.Ordinal);
+        var fillBreakColumns = new List<string>();
+        var fillBreakUnannotated = new List<string>();
+        int collapseSteps = 0;
+        int success = 0;
+        int dTwoColumns = 0;
+        int dTotal = 0;
+
+        for (int layers = 3; layers <= 6; layers++)
+        {
+            int combinations = (int)Math.Pow(Alphabet.Length, layers);
+            var buffer = new char[layers];
+
+            for (int code = 0; code < combinations; code++)
+            {
+                int remaining = code;
+
+                for (int layer = 0; layer < layers; layer++)
+                {
+                    buffer[layer] = Alphabet[remaining % Alphabet.Length];
+                    remaining /= Alphabet.Length;
+                }
+
+                string text = new(buffer);
+                ShapeDocument target = BuildColumn(text);
+
+                if (!ShapeSignature.CheckColumn(text).IsLegal ||
+                    !PillarSCriterion.IsPillarColumn(target, 0))
+                {
+                    continue;
+                }
+
+                AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers);
+
+                if (!order.IsComplete)
+                {
+                    continue;
+                }
+
+                success++;
+
+                string construction = order.Construction.ToString();
+
+                constructionCounts[construction] =
+                    constructionCounts.GetValueOrDefault(construction) + 1;
+
+                CountAux(declaredAux, construction, order.AuxiliaryColumns.Count);
+                CountAux(
+                    nonEmptyAux,
+                    construction,
+                    CountNonEmptyAuxColumns(order));
+
+                collapseSteps += order.Steps.Count(
+                    step => step.Kind == AngleWorkStepKind.Collapse);
+
+                if (order.Construction == AngleConstruction.D)
+                {
+                    dTotal++;
+
+                    if (CountNonEmptyAuxColumns(order) == 2)
+                    {
+                        dTwoColumns++;
+                    }
+                }
+
+                if (order.Construction == AngleConstruction.FillBreak)
+                {
+                    fillBreakColumns.Add(text);
+
+                    string annotation = order.Note ?? string.Empty;
+
+                    if (!annotation.StartsWith(
+                            AngleWorkOrderBuilder.NonPaperConstructionPrefix,
+                            StringComparison.Ordinal))
+                    {
+                        fillBreakUnannotated.Add(text);
+                    }
+                }
+            }
+        }
+
+        Console.WriteLine(
+            "  CONSTR " + string.Join(
+                " ",
+                constructionCounts.Select(pair => pair.Key + "=" + pair.Value)));
+        Console.WriteLine("  AUXDECL " + FormatAuxTable(declaredAux));
+        Console.WriteLine("  AUXNONEMPTY " + FormatAuxTable(nonEmptyAux));
+        Console.WriteLine(
+            $"  FILLBREAK n={fillBreakColumns.Count}" +
+            (fillBreakColumns.Count > 0
+                ? "：" + string.Join(" ", fillBreakColumns)
+                : string.Empty));
+        Console.WriteLine(
+            $"  FILLBREAKUNANNOTATED n={fillBreakUnannotated.Count}" +
+            (fillBreakUnannotated.Count > 0
+                ? "：" + string.Join(" ", fillBreakUnannotated)
+                : string.Empty));
+        Console.WriteLine($"  COLLAPSE steps={collapseSteps}");
+        Console.WriteLine($"  D2RATIO 2列={dTwoColumns}/{dTotal}");
+
+        Assert.Equal(2125, success, "S 列生成成功数应仍为 2125");
+        Assert.True(
+            constructionCounts.Values.Sum() == success,
+            "构造分布应覆盖全部成功工序");
+        Assert.Equal(
+            0,
+            collapseSteps,
+            "Collapse 步已并入 Cut / Target，生成器不应再发射 Collapse 步");
+
+        /*
+         * T4：D 路径先试 2 根辅助列（支撑 + 爆破）。docs §5.2 的验收是
+         * 「单刀样本 286 个里 125 个可以降成 2 列」；这里要求至少达到 125 例，
+         * 但不禁止个别形态回退到 3 根。
+         */
+        Assert.True(
+            dTwoColumns >= 125,
+            $"构造 D 的两列辅助例数 {dTwoColumns}/{dTotal}，应至少 125（docs §5.2 / T4）");
+
+        // T7：保留下来的 FillBreak 必须全部带「非论文构造」标注。
+        Assert.Equal(
+            0,
+            fillBreakUnannotated.Count,
+            "保留的 FillBreak 必须在 Note 里标注「非论文构造」：" +
+            string.Join(" ", fillBreakUnannotated));
+    }
+
+    private static void CountAux(
+        Dictionary<string, Dictionary<string, int>> table,
+        string construction,
+        int count)
+    {
+        if (!table.TryGetValue(construction, out Dictionary<string, int>? buckets))
+        {
+            buckets = new Dictionary<string, int>(StringComparer.Ordinal);
+            table[construction] = buckets;
+        }
+
+        string key = count switch
+        {
+            0 => "0",
+            1 => "1",
+            2 => "2",
+            3 => "3",
+            _ => ">3"
+        };
+
+        buckets[key] = buckets.GetValueOrDefault(key) + 1;
+    }
+
+    private static int CountNonEmptyAuxColumns(AngleWorkOrder order)
+    {
+        int count = 0;
+
+        foreach (AngleWorkStep step in order.Steps)
+        {
+            if (step.Kind != AngleWorkStepKind.PreState || step.Shape is null)
+            {
+                continue;
+            }
+
+            ShapeDocument pre = step.Shape;
+
+            for (int part = 0; part < pre.PartCount; part++)
+            {
+                if (part == order.Column)
+                {
+                    continue;
+                }
+
+                for (int layer = 0; layer < pre.LayerCount; layer++)
+                {
+                    if (pre[layer, part].Type != CellType.Empty)
+                    {
+                        count++;
+                        break;
+                    }
+                }
+            }
+
+            break;
+        }
+
+        return count;
+    }
+
+    private static string FormatAuxTable(
+        Dictionary<string, Dictionary<string, int>> table)
+    {
+        var parts = new List<string>();
+
+        foreach ((string construction, Dictionary<string, int> buckets) in table
+                     .OrderBy(pair => pair.Key, StringComparer.Ordinal))
+        {
+            parts.Add(
+                construction + "[" + string.Join(
+                    ",",
+                    buckets
+                        .OrderBy(pair => pair.Key, StringComparer.Ordinal)
+                        .Select(pair => pair.Key + "列=" + pair.Value)) + "]");
+        }
+
+        return string.Join(" ", parts);
+    }
+
+    /// <summary>
     /// 半边工序的外部审计：7–9 层、4 象限、字母表 <c>. T P c</c>；
     /// 加上两条论文算法 8 的实测半边（候选 1 / 候选 2）。
     ///

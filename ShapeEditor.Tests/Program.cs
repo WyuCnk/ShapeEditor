@@ -145,6 +145,8 @@ internal static class Program
             ("角工序:用户三个例子分档", AngleWorkOrderTests.FillBreakCoversUserExamples),
             ("角工序:分档优先级与回退", AngleWorkOrderTests.FillBreakIsPreferredOverLegacyConstructions),
             ("角工序:核心/尾部拆分接回尾部", AngleWorkOrderTests.CoreTailSplitAppendsTail),
+            ("角工序:T3 十二个尾部角两步法", AngleWorkOrderTests.TailTwoStepAcceptsPaperCorpus),
+            ("角工序:T4/T7 D 两列与 FillBreak 标注", AngleWorkOrderTests.DirectionalBreakPrefersTwoColumnsAndAnnotatesFillBreak),
             ("角工序:族 A 尾部接回", AngleWorkOrderTests.CoreTailCoversFamilyA),
             ("角工序:族 B 底块提升/底针分档", AngleWorkOrderTests.FamilyBIsConstructible),
             ("角工序:族 C FillBreak 删层", AngleWorkOrderTests.FamilyCColumnIsConstructible),
@@ -186,6 +188,7 @@ internal static class Program
             ("角工序:半边候选 3 多保险丝", AngleWorkOrderTests.HalfSideFuseHandlesMultipleTemporaryBlocks),
             ("角工序:n=4 ≤6 层穷举审计", AngleAuditTests.ExhaustiveFourQuadrantAudit),
             ("角工序:前态紧列审计（§17.7）", AngleAuditTests.PreStateTightnessAudit),
+            ("角工序:构造分布与辅助列基线", AngleAuditTests.ConstructionDistributionAudit),
             ("角工序:半边工序 7–9 层审计", AngleAuditTests.HalfSideAudit),
 
             // 交接规格 §5 的 9 组验收语料。

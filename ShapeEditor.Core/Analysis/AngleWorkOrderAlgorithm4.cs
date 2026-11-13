@@ -137,8 +137,53 @@ public static partial class AngleWorkOrderBuilder
         }
 
         var board = Stopwatch.StartNew();
-        int replays = 0;
 
+        /*
+         * 辅助列最少化（docs §5.2 / T4）：构造 D 只需要「支撑 + 爆破」两列。
+         * 先按两列（第三象限留空）跑完整计划 + 变体搜索；全都没通过回放，
+         * 再退回三列（补一根满高普通柱）。顶针路线（构造 C / H）不走这里。
+         *
+         * 两遍搜索各自有独立的回放预算（320），时间预算共用：
+         * 两列那遍用光预算也不能把三列的退路一起吃掉。
+         */
+        foreach (bool twoAuxiliaryColumns in new[] { true, false })
+        {
+            int replays = 0;
+
+            AngleWorkOrder? order = SearchGenericPlan(
+                target,
+                column,
+                cap,
+                kind,
+                targetColumn,
+                highestCrystal,
+                twoAuxiliaryColumns,
+                board,
+                ref replays);
+
+            if (order is not null)
+            {
+                return order;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// 在给定辅助列数量下搜索 §11 的规范计划 + 有界变体，返回第一份真实回放通过的工序。
+    /// </summary>
+    private static AngleWorkOrder? SearchGenericPlan(
+        ShapeDocument target,
+        int column,
+        int cap,
+        AngleBuildKind kind,
+        string targetColumn,
+        int highestCrystal,
+        bool twoAuxiliaryColumns,
+        Stopwatch board,
+        ref int replays)
+    {
         foreach (int[] destinations in EnumerateLiftPlans(targetColumn, highestCrystal))
         {
             foreach (GenericFillMode fill in new[]
@@ -202,7 +247,8 @@ public static partial class AngleWorkOrderBuilder
                             support,
                             blocks,
                             lifts,
-                            cuts);
+                            cuts,
+                            twoAuxiliaryColumns);
 
                         if (order is not null)
                         {
@@ -788,7 +834,8 @@ public static partial class AngleWorkOrderBuilder
         string supportText,
         List<(int Bottom, int Top)> blocks,
         List<(int Core, int Target)> lifts,
-        GenericCutOrder cuts)
+        GenericCutOrder cuts,
+        bool twoAuxiliaryColumns)
     {
         int parts = target.PartCount;
         int holderColumn = Wrap(column + 1, parts);
@@ -809,7 +856,8 @@ public static partial class AngleWorkOrderBuilder
             crystalColor,
             column,
             holderColumn,
-            farColumn);
+            farColumn,
+            twoAuxiliaryColumns);
 
         for (int cutIndex = 0; cutIndex < schedule.Count; cutIndex++)
         {
@@ -839,8 +887,11 @@ public static partial class AngleWorkOrderBuilder
 
             steps.Add(new AngleWorkStep(
                 cutIndex == 0
-                    ? "前态：规范核心列（提升 + 临时晶体）+ 托柱 + 满高普通柱 + 桥柱" +
-                      AnchorsText(cutBlocks)
+                    ? (twoAuxiliaryColumns
+                        ? "前态：规范核心列（提升 + 临时晶体）+ 托柱 + 桥柱" +
+                          AnchorsText(cutBlocks)
+                        : "前态：规范核心列（提升 + 临时晶体）+ 托柱 + 满高普通柱 + 桥柱" +
+                          AnchorsText(cutBlocks))
                     : "重新装桥柱（" + AnchorsText(cutBlocks) + "），准备下一刀",
                 state,
                 AngleWorkStepKind.PreState));
@@ -890,7 +941,9 @@ public static partial class AngleWorkOrderBuilder
         }
 
         steps.Add(new AngleWorkStep(
-            "构造 C：托柱换成满高普通柱、拆掉桥柱与满高柱，目标列逐格不变",
+            twoAuxiliaryColumns
+                ? "构造 C：托柱换成满高普通柱、拆掉桥柱，目标列逐格不变"
+                : "构造 C：托柱换成满高普通柱、拆掉桥柱与满高柱，目标列逐格不变",
             handover,
             AngleWorkStepKind.Support));
 
@@ -898,6 +951,26 @@ public static partial class AngleWorkOrderBuilder
             "清除辅助象限，得到目标角",
             target,
             AngleWorkStepKind.Target));
+
+        List<string> limitations = GenericLimitations(
+            coreText,
+            supportText,
+            blocks,
+            lifts,
+            cuts);
+
+        if (twoAuxiliaryColumns)
+        {
+            limitations.Add(
+                "辅助列最少化（§5.2）：只保留「支撑（托柱）+ 爆破（桥柱）」两列，" +
+                "第三象限整列为空；真实 Cut + 落定逐格核对通过。");
+        }
+        else
+        {
+            limitations.Add(
+                "两列辅助（支撑 + 爆破）在该形态上回放不通过，退回三列：" +
+                "补一根满高普通柱（第三象限）。");
+        }
 
         return new AngleWorkOrder(
             column,
@@ -910,15 +983,12 @@ public static partial class AngleWorkOrderBuilder
             Construction = AngleConstruction.D,
             Algorithm = AngleAlgorithm.Algorithm4,
             Rotation = rotation,
-            // §4.8 的四列布局：目标列 | 托柱 | 满高普通柱 | 桥柱（按环顺序）。
-            AuxiliaryColumns = new[] { holderColumn, farColumn, bridgeColumn },
+            // §4.8 的布局：目标列 | 托柱 | （满高普通柱）| 桥柱（按环顺序）。
+            AuxiliaryColumns = twoAuxiliaryColumns
+                ? new[] { holderColumn, bridgeColumn }
+                : new[] { holderColumn, farColumn, bridgeColumn },
             Rank = 0,
-            Limitations = GenericLimitations(
-                coreText,
-                supportText,
-                blocks,
-                lifts,
-                cuts)
+            Limitations = limitations
         };
     }
 
@@ -967,7 +1037,10 @@ public static partial class AngleWorkOrderBuilder
         return new string(bridge);
     }
 
-    /// <summary>四列布局：目标列 / 托柱 / 满高普通柱 / 桥柱（§4.8 的实测布局）。</summary>
+    /// <summary>
+    /// 布局：目标列 / 托柱 / （满高普通柱）/ 桥柱（§4.8 的实测布局）。
+    /// <paramref name="twoAuxiliaryColumns"/> 为 true 时第三象限整列为空（T4 的两列最少化）。
+    /// </summary>
     private static ShapeDocument BuildFourColumnState(
         int cap,
         int parts,
@@ -976,13 +1049,22 @@ public static partial class AngleWorkOrderBuilder
         char crystalColor,
         int column,
         int holderColumn,
-        int farColumn)
+        int farColumn,
+        bool twoAuxiliaryColumns)
     {
         var state = new ShapeDocument(cap, parts);
 
         WriteColumn(state, column, coreText, crystalColor);
         WriteColumn(state, holderColumn, supportText, crystalColor);
-        WriteColumn(state, farColumn, new string(ShapeSignature.SolidCode, cap), crystalColor);
+
+        if (!twoAuxiliaryColumns)
+        {
+            WriteColumn(
+                state,
+                farColumn,
+                new string(ShapeSignature.SolidCode, cap),
+                crystalColor);
+        }
 
         return state;
     }

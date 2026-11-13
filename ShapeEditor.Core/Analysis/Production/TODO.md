@@ -1138,3 +1138,103 @@ HOLES totalS=2125 targetHole=46 targetHoleWithSub=41 targetHoleDerived=5 targetH
    填洞用的临时晶体；目标原生晶体一颗不少」；
 6. §15.8 实现要点（第 1055 行起）：补「单发 G 的前态会先填洞 + 抬升，
    用 `TightPreStateWorks` 真实回放终审」。
+
+### 7.15 T3 / T4 / T7：两步法、D 两列最少化、FillBreak 退场（2026-11）
+
+与 `docs/angle-work-order-algorithm.md` §5.2 / §5.3 对齐后的实现契约与实测。
+
+#### T3 带尾部的角：核心 + 尾部两步法（§5.3）
+
+`TryBuildTailOrder` 已经落地这条契约，本轮没有改生成逻辑，只补了严格验收测试
+`TailTwoStepAcceptsPaperCorpus`（12 个语料）并把「非论文构造」标注从核心带到整单：
+
+1. 核心 = 最高晶体所在层（含）及以下；前态目标列在核心以上的层必须整列为空；
+2. 先由 `Build` 递归跑核心（核心自己的前态、Cut/Pin/Support 都保留），
+   然后 `Support` 步把托柱延长到 `cap`（构造 C：只加柱高，不改变目标列）；
+3. 尾部按层 `Stack`：只加目标列那一格，空层跳过；每条 Stack 之后必须稳定；
+4. 末步 `Target` 逐格等于目标；`HasIllegalPreState` 必须为 false。
+
+**实测（12/12 通过）**：`T.cT`、`T.cP`、`.TcT`、`T.c.T`、`.T.cTT`、`T.cTP`、
+`.T.cPP`、`T.ccT`、`.T.ccP`、`.T.cT.`、`.T.cP.`、`T.cT.T`。
+
+#### T4 构造 D：先试 2 列（§5.2）
+
+`AngleWorkOrderAlgorithm4.SearchGenericPlan` 的搜索改成两遍：
+
+```
+foreach twoAuxiliaryColumns in { true, false }:
+    计划 + 变体 + 真实回放
+    true  → 目标列 | 托柱 | 空 | 桥柱     （AuxiliaryColumns = {托柱, 桥柱}）
+    false → 目标列 | 托柱 | 满高普通柱 | 桥柱
+```
+
+两列通过时 `Limitations` 记「辅助列最少化」；两列回放不过才补第三象限的满高普通柱。
+顶针路线（构造 C / H）**不动**：C 仍是 3 列 × 49，H 仍是 3 列 × 18。
+
+| 口径 | 改前 | 改后 |
+|---|---|---|
+| D 的 2 列 / 总例数 | 2 / 291（0.7%） | 324 / 324（100%，其中 33 例是 T7 从 FillBreak 改判为 D） |
+| D 的 3 列 | 289 | 0 |
+
+#### T7 FillBreak 退场（§5.2 / 论文构造表）
+
+`BuildLegacyChain` 的兜底顺序改成：
+
+```
+构造 D（定向碎晶，LiftOnly：只抬升 + 定向炸晶，不把缺口整段填满）
+  → 构造 G（单层缺口 / 晶体塔 ≥3 连晶 / t+2 在画布内）
+  → 填充+暴破（保留，但 Note 必须带「非论文构造：」标注）
+  → 旧兜底（H / 多轮 G / F）
+```
+
+- `AngleWorkOrderBuilder.NonPaperConstructionPrefix = "非论文构造："`；
+  带此前缀的工序 `IsComplete` 仍为 true——**标注不是失败**，
+  `Note` 的契约因此扩成「失败理由 或 非论文构造标注」。
+- 核心是 FillBreak 的尾部角（`P.TcT` 一族）由 `TryBuildTailOrder` 把标注带到整单。
+- 保留下来的 44 例全是「缺口正下方是针 / 空层、没有普通格可抬升」的形态，
+  D 与 G 都做不了（例如 `P.Tc` 的缺口夹在针与普通格之间，只能填临时晶体再炸）；
+  `FILLBREAKUNANNOTATED = 0` 是审计的硬断言。
+
+| 口径 | 改前 | 改后 |
+|---|---|---|
+| FillBreak 例数 | 77 / 2125 | 44 / 2125（全部带 `Note` 标注） |
+| 其中：D 改判 | — | 33 |
+| 其中：G 改判 | — | 0（G 的可适用形态都被 D 先接住） |
+
+#### 基线测量（新增审计 `ConstructionDistributionAudit`）
+
+```
+CONSTR A=1087 C=646 D=324 FillBreak=44 G=6 H=18
+AUXDECL A[0列=1087] C[0列=597,3列=49] D[2列=324] FillBreak[2列=44] G[2列=6] H[3列=18]
+AUXNONEMPTY （与 AUXDECL 一致；辅助列口径不影响结论）
+FILLBREAKUNANNOTATED n=0
+COLLAPSE steps=0
+D2RATIO 2列=324/324
+```
+
+`AUXDECL` = `AngleWorkOrder.AuxiliaryColumns.Count`（含空象限占位），
+`AUXNONEMPTY` = 初始前态里目标列以外**有材料**的列数（docs §5.2 口径）；
+两者在 ≤6 层的 2125 个 S 列上完全一致。
+
+#### 验收数字
+
+| 测试 | 结果 |
+|---|---|
+| 全量测试 | **161/161** 通过（新增 3 项：`构造分布与辅助列基线`、`T3 十二个尾部角两步法`、`T4/T7 D 两列与 FillBreak 标注`；2 项 XFAIL claw / 二择保持不变） |
+| `AUDIT` | `total=5440 legal=2126 s=2125 success=2125 legalNonS=1 failures=0 falsePositives=0`（未退化，worst ≈ 3 ms，要求 < 50 ms） |
+| `TIGHT` | `steps=446 tight=400 onlyTarget=46 onlyAux=0 both=0`（未退化） |
+| `HOLES` | `targetHole=46 targetHoleWithSub=41 targetHoleDerived=5 targetHoleNoSub=0`（未退化） |
+| `HALFAUDIT` | `legalNonS=229 halfTargets=2 halfComplete=6 notProducible=225 uncovered=0 problems=0`（未退化） |
+| `TAILCORPUS` | `cases=12 problems=0` |
+
+**因行为改变更新的断言**：
+
+1. `ConstructGIsStandardRouteForLongCrystalRuns` 的 `cTT..T.c` 前态布局：
+   旧断言是四列（第三象限满高普通柱），T4 后构造 D 只用两列，
+   改成 `cTccTcTc|TTTPPTPT|........|TTTTTcTT`（第三象限整列为空）。
+
+**文档待更新（`docs/` 本次未动）**：
+
+1. §5.2 的 D 数字 2/291 更新为 324/324（两列优先的实现在 `SearchGenericPlan`）；
+2. §5.3 的 12 例表可补「本仓库已全量通过，验收测试 `TailTwoStepAcceptsPaperCorpus`」；
+3. FillBreak 77 例更新为 44 例，并说明「全部带 `Note = 非论文构造：…`」。

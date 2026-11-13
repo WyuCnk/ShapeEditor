@@ -439,7 +439,8 @@ public static partial class AngleWorkOrderBuilder
             color,
             column,
             holderColumn,
-            farColumn);
+            farColumn,
+            twoAuxiliaryColumns: true);
 
         /*
          * 辅助列最少化：farColumn 只是满高普通柱，不参与任何跨刀口晶体连通，
