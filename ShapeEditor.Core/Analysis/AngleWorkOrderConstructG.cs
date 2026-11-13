@@ -441,6 +441,16 @@ public static partial class AngleWorkOrderBuilder
             holderColumn,
             farColumn);
 
+        /*
+         * 辅助列最少化：farColumn 只是满高普通柱，不参与任何跨刀口晶体连通，
+         * 切割时整列丢弃 ⇒ 留空即可。G 只剩「支撑 B + 保险丝 B′」两列，
+         * 与用户要求的「支撑 + 保险丝」一致。
+         */
+        for (int layer = 0; layer < cap; layer++)
+        {
+            preState[layer, farColumn] = ShapeCell.Empty();
+        }
+
         WriteColumn(preState, bridgeColumn, bridgeText, color);
 
         // §6 验收 1–3：前态每列合法、整体稳定、目标列 ≠ 目标。
@@ -588,7 +598,7 @@ public static partial class AngleWorkOrderBuilder
             result,
             handover,
             rotation,
-            new[] { holderColumn, farColumn, bridgeColumn },
+            new[] { holderColumn, bridgeColumn },
             coreText,
             partnerText,
             bridgeText,
@@ -656,7 +666,7 @@ public static partial class AngleWorkOrderBuilder
         {
             new(
                 "构造 G 前态：提升 + 正规核心（临时晶体）+ 环伙伴 B（环内放针、闸门放晶体）" +
-                " + 满高普通柱 + 保险丝柱 B′（锚层放晶体）",
+                " + 保险丝柱 B′（锚层放晶体）；第三列留空（辅助列最少化）",
                 preState,
                 AngleWorkStepKind.PreState),
 
@@ -664,7 +674,7 @@ public static partial class AngleWorkOrderBuilder
                 (rotation == 0
                     ? string.Empty
                     : $"先顺转 {rotation} 个象限，再") +
-                "半破（构造 G）：刀口穿过保险丝与闸门晶体的连接，临时晶体整块碎掉，" +
+                "切割（碎晶并落定）：刀口穿过保险丝与闸门晶体的连接，临时晶体整块碎掉，" +
                 "环内普通材料只降一层",
                 cutResult,
                 AngleWorkStepKind.Cut),

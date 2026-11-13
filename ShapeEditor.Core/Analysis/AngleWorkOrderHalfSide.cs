@@ -756,7 +756,7 @@ public static partial class AngleWorkOrderBuilder
             $"{liftFirst + 1}、{liftSecond + 1} 象限）→ 第 {liftTo + 1} 层；" +
             $"a+1 … b−1 所有列都空。" + DescribeColumns(preState, columns, parts, "前态 Q′："));
         limitations.Add(
-            "步骤链：前态 Q′ → 一次完整下落（真实 Collapse）→ 半边目标；" +
+            "步骤链：前态 Q′ 装配后自动下落一次即半边目标（自动物理，不单列「下落」步骤）；" +
             "没有切割，k 列都通过该 n 的 S 判据。");
         limitations.Add(
             "没有辅助列：另外 " + (parts - width) +
@@ -1324,13 +1324,11 @@ public static partial class AngleWorkOrderBuilder
                 AngleWorkStepKind.PreState)
         };
 
-        if (collapseStep is not null)
-        {
-            halfSteps.Add(new AngleWorkStep(
-                "一次完整下落（真实 Collapse）：k 根 S 列拼合后整组下落，得到目标半边",
-                collapseStep,
-                AngleWorkStepKind.Collapse));
-        }
+        /*
+         * 候选 2 的「一次完整下落」是装配 Q′ 之后自动发生的物理，不是独立操作；
+         * 按新步骤规范并进 Target 步（末步 Shape 就是落定后的结果），
+         * 不再单独输出 Collapse 步。
+         */
 
         halfSteps.Add(new AngleWorkStep(
             $"半边目标（{candidateName}）：{targetText}（k 列逐格核对类型 / 形状码 / 颜色）",
@@ -1360,18 +1358,10 @@ public static partial class AngleWorkOrderBuilder
                 AngleWorkStepKind.PreState)
         };
 
-        if (collapseStep is not null)
-        {
-            steps.Add(new AngleWorkStep(
-                "一次完整下落：k 列各自按 S 单角工序做好后拼合，一次下落到目标半边",
-                collapseStep,
-                AngleWorkStepKind.Collapse));
-        }
-
         steps.Add(new AngleWorkStep(
             collapseStep is null
                 ? "k 列逐格等于目标半边，得到目标角（无需切割）"
-                : "k 列逐格等于目标半边，得到目标角",
+                : "k 列逐格等于目标半边，得到目标角（Q′ 装配后自动下落一次，下落并进本步）",
             target,
             AngleWorkStepKind.Target));
 

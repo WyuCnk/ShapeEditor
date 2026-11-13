@@ -267,7 +267,6 @@ internal static class AngleWorkOrderTests
             order,
             AngleWorkStepKind.PreState,
             AngleWorkStepKind.Cut,
-            AngleWorkStepKind.Collapse,
             AngleWorkStepKind.Note,
             AngleWorkStepKind.Target);
 
@@ -292,12 +291,15 @@ internal static class AngleWorkOrderTests
             ShapeSignature.ColumnText(replayed, 3),
             "真实回放后的目标列应与目标一致");
 
-        // Collapse 步的快照必须等于真实 Cut 的结果（Cut 自带一次下落）。
+        /*
+         * Cut 步现在是「切割 + 落定」的最终态（合成一步），
+         * 必须逐格等于真实 ShapePhysics.Cut 的西半边。
+         */
         Assert.True(
             ShapeOps.Same(
                 replayed,
-                Step(order, AngleWorkStepKind.Collapse).Shape),
-            "Collapse 步应等于真实 Cut 出来的西半边");
+                Step(order, AngleWorkStepKind.Cut).Shape),
+            "Cut 步应等于真实 Cut 出来的西半边（已落定）");
 
         // Cut 步必须真的打碎了辅助列的晶体，且没有误伤目标列晶体。
         ShapeDocument cutStep = Step(order, AngleWorkStepKind.Cut).Shape!;
@@ -390,15 +392,21 @@ internal static class AngleWorkOrderTests
             ShapeSignature.ColumnText(preState, 0),
             "规范核心列应为 cTccTccc（T@3 抬到 4，第 3 层填临时晶体）");
 
-        // §15.9 的实测辅助列：环伙伴第 7 层是针，保险丝柱第 4 层是晶体。
+        // §15.9 的实测辅助列：环伙伴第 7 层是针，最末辅助列是保险丝柱（第 4 层晶体）。
         Assert.Equal(
             "TTTcTTPT",
             ShapeSignature.ColumnText(preState, order.AuxiliaryColumns[0]),
             "环伙伴 B 应为紧列 TTTcTTPT（环内第 7 层放针、闸门层放晶体）");
         Assert.Equal(
             CellType.Crystal,
-            preState[3, order.AuxiliaryColumns[2]].Type,
+            preState[3, order.AuxiliaryColumns[^1]].Type,
             "保险丝柱 B′ 第 4 层应放晶体（与目标列第 4 层的临时晶体跨刀口相连）");
+
+        // 辅助列最少化：第三列（满高普通柱）整列为空。
+        Assert.True(
+            ShapeSignature.ColumnText(preState, 2)
+                .All(code => code == ShapeSignature.EmptyCode),
+            "构造 G 的两列辅助之外，第三列应整列为空");
 
         ReplayGenericAlgorithm4(order, target, 0);
 
@@ -444,15 +452,14 @@ internal static class AngleWorkOrderTests
             Assert.Equal(expected, order.Construction);
 
             /*
-             * n ≥ 6 的列级步骤链：PreState → Cut → Collapse → Support → Target。
-             * Support = 构造 C（装新支撑柱、拆辅助列）；n = 4 的构造 G 仍然是
-             * PreState → Cut → Collapse → Target（见 ConstructionGReplaysToTarget）。
+             * n ≥ 6 的列级步骤链：PreState → Cut（碎晶并落定）→ Support → Target。
+             * Support = 构造 C（装新支撑柱、拆辅助列）；n = 4 的构造 G 是
+             * PreState → Cut（碎晶并落定）→ Target（见 ConstructionGReplaysToTarget）。
              */
             AssertStepKinds(
                 order,
                 AngleWorkStepKind.PreState,
                 AngleWorkStepKind.Cut,
-                AngleWorkStepKind.Collapse,
                 AngleWorkStepKind.Support,
                 AngleWorkStepKind.Target);
 
@@ -568,24 +575,22 @@ internal static class AngleWorkOrderTests
         Assert.True(order.Note is null);
         Assert.Equal(AngleConstruction.G, order.Construction);
 
-        // 缺口高两层 ⇒ 两轮；每轮 PreState/Cut/Collapse，最后 Note + Target。
+        // 缺口高两层 ⇒ 两轮；每轮 PreState/Cut（切 + 落定），最后 Note + Target。
         Assert.Equal(2, order.Steps.Count(step => step.Kind == AngleWorkStepKind.PreState));
         Assert.Equal(2, order.Steps.Count(step => step.Kind == AngleWorkStepKind.Cut));
-        Assert.Equal(2, order.Steps.Count(step => step.Kind == AngleWorkStepKind.Collapse));
-        Assert.Equal(8, order.Steps.Count);
+        Assert.Equal(0, order.Steps.Count(step => step.Kind == AngleWorkStepKind.Collapse));
+        Assert.Equal(6, order.Steps.Count);
 
         AssertStepKinds(
             order,
             AngleWorkStepKind.PreState,
             AngleWorkStepKind.Cut,
-            AngleWorkStepKind.Collapse,
             AngleWorkStepKind.PreState,
             AngleWorkStepKind.Cut,
-            AngleWorkStepKind.Collapse,
             AngleWorkStepKind.Note,
             AngleWorkStepKind.Target);
 
-        // 逐轮核对：源普通格每次只降一层。
+        // 逐轮核对：源普通格每次只降一层（Cut 步即落定后的结果）。
         Assert.Equal(
             "c..Tccc.",
             ShapeSignature.ColumnText(
@@ -595,7 +600,7 @@ internal static class AngleWorkOrderTests
         Assert.Equal(
             "c.T.ccc.",
             ShapeSignature.ColumnText(
-                NthStep(order, AngleWorkStepKind.Collapse, 0).Shape!,
+                NthStep(order, AngleWorkStepKind.Cut, 0).Shape!,
                 0));
 
         Assert.Equal(
@@ -607,7 +612,7 @@ internal static class AngleWorkOrderTests
         Assert.Equal(
             "cT..ccc.",
             ShapeSignature.ColumnText(
-                NthStep(order, AngleWorkStepKind.Collapse, 1).Shape!,
+                NthStep(order, AngleWorkStepKind.Cut, 1).Shape!,
                 0));
 
         VerifyCutRound(order, 0);
@@ -1106,7 +1111,7 @@ internal static class AngleWorkOrderTests
 
             AngleWorkStep lastOperational = order.Steps.Last(step =>
                 step.Shape is not null &&
-                step.Kind is AngleWorkStepKind.Collapse or
+                step.Kind is AngleWorkStepKind.Cut or
                     AngleWorkStepKind.Pin or
                     AngleWorkStepKind.Support);
 
@@ -2668,11 +2673,12 @@ internal static class AngleWorkOrderTests
     /// <list type="number">
     /// <item>把第 7、8 层的间隙洞填成同层临时晶体；</item>
     /// <item>把最底晶体下的洞（第 2 层）用「地面普通格抬到第 2 层、地面填临时晶体」填紧；</item>
-    /// <item>底层临时晶体用环缝另一侧的 N 列保险丝一刀碎掉，普通格落回地面。</item>
+    /// <item>底层临时晶体与闸门晶体都用环缝另一侧的保险丝列一刀碎掉，普通格落回地面。</item>
     /// </list>
     /// <para>
-    /// 前态因此是**全紧列** <c>cTcccTccTccc</c>；Cut 后回到
-    /// <c>.TcccT..Tccc</c>，Collapse 后逐格等于目标 <c>T.cccT.T.ccc</c>。
+    /// 前态因此是**全紧列** <c>cTcccTccTccc</c>，辅助列只有「支撑 + 保险丝」两列
+    /// （第三列整列为空）；Cut 步已经是「碎晶并落定」的最终态，逐格等于
+    /// 目标 <c>T.cccT.T.ccc</c>，不再输出 <c>.TcccT..Tccc</c> 这种「半破后、下落前」快照。
     /// </para>
     /// </summary>
     public static void DoubleGateGapFillsTargetColumn()
@@ -2694,7 +2700,6 @@ internal static class AngleWorkOrderTests
             order,
             AngleWorkStepKind.PreState,
             AngleWorkStepKind.Cut,
-            AngleWorkStepKind.Collapse,
             AngleWorkStepKind.Note,
             AngleWorkStepKind.Target);
 
@@ -2704,6 +2709,20 @@ internal static class AngleWorkOrderTests
             "cTcccTccTccc",
             ShapeSignature.ColumnText(preState, 0),
             "目标列的两个洞应填成同层临时晶体；最底晶体下的洞用「抬普通格 + 地面填晶体」填紧");
+
+        // 验收：前态只有 3 列有料（目标列 + 支撑 + 保险丝），第三列整列为空。
+        Assert.Equal(
+            "cTcccTccTccc|PPTTTTTcTTPT|............|cTTTTTTc....",
+            string.Join(
+                "|",
+                Enumerable.Range(0, 4).Select(part =>
+                    ShapeSignature.ColumnText(preState, part))),
+            "两列辅助：支撑 B + 保险丝 N（c + 中间普通格 + 闸门晶体），第三列留空");
+
+        Assert.Equal(
+            "1,3",
+            string.Join(",", order.AuxiliaryColumns),
+            "辅助列应只有支撑列与保险丝列");
 
         for (int part = 0; part < preState.PartCount; part++)
         {
@@ -2718,7 +2737,7 @@ internal static class AngleWorkOrderTests
             "紧前态不应有非法列：" + badColumn);
         Assert.True(ShapeOps.IsStable(preState), "前态必须稳定");
 
-        // 真实回放：Cut 的西半边（转回后）就是 Collapse 步，且目标列逐格等于目标。
+        // 真实回放：Cut 自带一次下落，Cut 步就是最终态。
         CutResult cut = ShapePhysics.Cut(
             ShapeOps.Rotate(preState, order.Rotation));
 
@@ -2728,34 +2747,23 @@ internal static class AngleWorkOrderTests
             cut.West!,
             -order.Rotation);
 
-        Assert.True(
-            ShapeOps.Same(
-                replayed,
-                Step(order, AngleWorkStepKind.Collapse).Shape),
-            "Collapse 步应等于真实 Cut 出来的西半边");
-        Assert.Equal(
-            text,
-            ShapeSignature.ColumnText(replayed, 0),
-            "碎晶下落之后目标列应逐格等于目标");
+        ShapeDocument cutStep = Step(order, AngleWorkStepKind.Cut).Shape!;
 
         Assert.True(
-            ShapeOps.Same(
-                ShapePhysics.Collapse(
-                    Step(order, AngleWorkStepKind.Cut).Shape!).Document!,
-                replayed),
-            "Cut 步再 Collapse 一次应等于真实西半边");
+            ShapeOps.Same(replayed, cutStep),
+            "Cut 步应等于真实 Cut 出来的西半边（已落定）");
+        Assert.Equal(
+            text,
+            ShapeSignature.ColumnText(cutStep, 0),
+            "碎晶并落定之后目标列应逐格等于目标（不再是半破后快照）");
+
+        Assert.False(
+            order.Steps.Any(step => step.Kind == AngleWorkStepKind.Collapse),
+            "步骤链里不能再出现 Collapse 中间态");
 
         Assert.True(
             ShapeOps.Same(target, Step(order, AngleWorkStepKind.Target).Shape),
             "末步应得到目标角");
-
-        // 临时晶体真的被这一刀碎掉：Cut 后的目标列回到「洞 + 待落 T」的形态。
-        Assert.Equal(
-            ".TcccT..Tccc",
-            ShapeSignature.ColumnText(
-                Step(order, AngleWorkStepKind.Cut).Shape!,
-                0),
-            "Cut 之后临时晶体应被碎掉，抬升的普通格落回地面");
     }
 
     public static void ConstructGIsStandardRouteForLongCrystalRuns()
@@ -2778,25 +2786,25 @@ internal static class AngleWorkOrderTests
                 8,
                 true,
                 true,
-                "cTccTccc|TTTcTTPT|TTTTTTTT|TTTcTTTT"),
+                "cTccTccc|TTTcTTPT|........|TTTcTTTT"),
             (
                 "T.ccc",
                 5,
                 true,
                 true,
-                "cTccc|cTTPT|TTTTT|cTTTT"),
+                "cTccc|cTTPT|.....|cTTTT"),
             (
                 "cTT.cccT.T.ccc",
                 14,
                 true,
                 false,
-                "cTcTcccTccTccc|PPPPTTTTTcTTPT|TTTTTTTTTcTTTT|TTcP.........."),
+                "cTcTcccTccTccc|PPPPTTTTTcTTPT|..............|TTcTTTTTTc...."),
             (
                 "cT.T.T.T...ccc",
                 14,
                 true,
                 true,
-                "cTccTccTccTccc|TTTcTTcTTcTTPT|TTTTTTTTTTTTTT|TTTcTTcTTcTTTT"),
+                "cTccTccTccTccc|TTTcTTcTTcTTPT|..............|TTTcTTcTTcTTTT"),
             (
                 "cTT..T.c",
                 8,
@@ -2846,18 +2854,17 @@ internal static class AngleWorkOrderTests
                 {
                     // 双闸门 + 下方针的环伙伴不能放闸门晶体（针上方出现晶体会
                     // 违反五项条件二），退回等价的单发 G：
-                    // PreState → Cut → Collapse → Note（不结晶）→ Target。
+                    // PreState → Cut（碎晶并落定）→ Note（不结晶）→ Target。
                     AssertStepKinds(
                         order,
                         AngleWorkStepKind.PreState,
                         AngleWorkStepKind.Cut,
-                        AngleWorkStepKind.Collapse,
                         AngleWorkStepKind.Note,
                         AngleWorkStepKind.Target);
                 }
             }
 
-            // 前态四列 = 实测布局（目标列 / 环伙伴 B / 满高柱 / 保险丝柱 B′）。
+            // 前态四列 = 实测布局（目标列 / 支撑 B / 第三列留空 / 保险丝柱 B′）。
             // 逐块各一刀时有两条前态，这里取第一条（规范核心列那条）。
             ShapeDocument preState = NthStep(order, AngleWorkStepKind.PreState, 0).Shape!;
 
@@ -3059,7 +3066,6 @@ internal static class AngleWorkOrderTests
                 order,
                 AngleWorkStepKind.PreState,
                 AngleWorkStepKind.Cut,
-                AngleWorkStepKind.Collapse,
                 AngleWorkStepKind.Support,
                 AngleWorkStepKind.Target);
 
@@ -3099,19 +3105,10 @@ internal static class AngleWorkOrderTests
 
             ShapeDocument cutStep = Step(order, AngleWorkStepKind.Cut).Shape!;
 
-            /*
-             * Cut 步是「半破后、下落前」的快照：对它再做一次真实 Collapse，
-             * 必须逐格等于真实 Cut 出来的西半边（也就是 Collapse 步）。
-             */
+            // Cut 步已经是「切割 + 落定」的最终态。
             Assert.True(
-                ShapeOps.Same(
-                    replayed,
-                    ShapePhysics.Collapse(cutStep).Document!),
-                label + " 的 Cut 步用真实 Collapse 重放后应等于真实 Cut 的西半边");
-
-            Assert.True(
-                ShapeOps.Same(replayed, Step(order, AngleWorkStepKind.Collapse).Shape),
-                label + " 的 Collapse 步应等于真实 Cut 出来的西半边");
+                ShapeOps.Same(replayed, cutStep),
+                label + " 的 Cut 步应等于真实 Cut 出来的西半边（已落定）");
 
             /*
              * 切割只能删掉辅助列/填充的晶体：目标列原有的晶体一颗都不能少。
@@ -3131,16 +3128,18 @@ internal static class AngleWorkOrderTests
                     label + " 的辅助列 " + auxiliary + " 晶体应全部被打碎");
             }
 
-            ShapeDocument collapsed = Step(order, AngleWorkStepKind.Collapse).Shape!;
-
             Assert.Equal(
                 ShapeSignature.ColumnText(target, 0),
-                ShapeSignature.ColumnText(collapsed, 0),
-                label + " 的下落后目标列应逐格等于目标");
+                ShapeSignature.ColumnText(cutStep, 0),
+                label + " 的落定后目标列应逐格等于目标");
 
             Assert.True(
-                ShapeOps.IsStable(collapsed),
-                label + " 下落后的中间态应稳定");
+                ShapeOps.IsStable(cutStep),
+                label + " 落定后的中间态应稳定");
+
+            Assert.False(
+                order.Steps.Any(step => step.Kind == AngleWorkStepKind.Collapse),
+                label + " 的步骤链不应再出现 Collapse 中间态");
 
             // ── 验收：构造 C 交接后仍然稳定、目标列不变 ──
             ShapeDocument handover = Step(order, AngleWorkStepKind.Support).Shape!;
@@ -3188,7 +3187,7 @@ internal static class AngleWorkOrderTests
         Assert.Equal(
             "T..c..",
             ShapeSignature.ColumnText(
-                Step(tall, AngleWorkStepKind.Collapse).Shape!,
+                Step(tall, AngleWorkStepKind.Cut).Shape!,
                 0),
             "cap 高于目标层数时，多出来的层应留空");
         Assert.True(
@@ -3971,9 +3970,11 @@ internal static class AngleWorkOrderTests
             half.TargetColumnsHaveSubRecipe,
             "候选 2 的两列都是带子配方的 S 列");
 
-        Assert.Equal(3, half.Steps.Count);
+        Assert.Equal(2, half.Steps.Count);
         Assert.Equal(AngleWorkStepKind.PreState, half.Steps[0].Kind);
-        Assert.Equal(AngleWorkStepKind.Collapse, half.Steps[1].Kind);
+        Assert.False(
+            half.Steps.Any(step => step.Kind == AngleWorkStepKind.Collapse),
+            "半边步骤链不应再出现 Collapse 中间态");
         Assert.Equal(AngleWorkStepKind.Target, half.Steps[^1].Kind);
 
         ShapeDocument preState = half.Steps[0].Shape
@@ -4014,17 +4015,13 @@ internal static class AngleWorkOrderTests
 
         Assert.True(ShapeOps.Same(collapsed, q), "Q′ 一次下落应恰好得到 Q");
         Assert.True(
-            ShapeOps.Same(half.Steps[1].Shape, collapsed),
-            "Collapse 步必须是真实下落结果");
-        Assert.True(
             ShapeOps.Same(half.Steps[^1].Shape, q),
-            "候选 2 的两列应逐格等于目标半边");
+            "候选 2 的末步（Target）应是真实下落结果并逐格等于目标半边");
 
-        // 外层步骤链：PreState → Collapse → Target（无切割）。
+        // 外层步骤链：PreState → Target（Q′ 装配后自动下落一次，不单列 Collapse 步）。
         AssertStepKinds(
             order,
             AngleWorkStepKind.PreState,
-            AngleWorkStepKind.Collapse,
             AngleWorkStepKind.Target);
 
         Assert.True(
@@ -4266,7 +4263,7 @@ internal static class AngleWorkOrderTests
     #region 回放工具
 
     /// <summary>
-    /// 用真实 Cut 回放订单，断言目标列与目标一致；同时核对 Collapse 快照。
+    /// 用真实 Cut 回放订单，断言目标列与目标一致；Cut 步就是「切割 + 落定」的最终态。
     /// </summary>
     private static void ReplayAndVerifyColumn(
         AngleWorkOrder order,
@@ -4288,13 +4285,15 @@ internal static class AngleWorkOrderTests
             ShapeSignature.ColumnText(replayed, column),
             $"第 {column} 列真实回放后应与目标一致");
 
-        Assert.True(
-            ShapeOps.Same(
-                replayed,
-                Step(order, AngleWorkStepKind.Collapse).Shape),
-            "Collapse 步应等于真实 Cut 出来的西半边");
-
         ShapeDocument cutStep = Step(order, AngleWorkStepKind.Cut).Shape!;
+
+        Assert.True(
+            ShapeOps.Same(replayed, cutStep),
+            "Cut 步应等于真实 Cut 出来的西半边（已落定）");
+
+        Assert.False(
+            order.Steps.Any(step => step.Kind == AngleWorkStepKind.Collapse),
+            "步骤链不应再出现 Collapse 中间态");
 
         foreach (int aux in order.AuxiliaryColumns)
         {
@@ -4393,12 +4392,11 @@ internal static class AngleWorkOrderTests
     }
 
     /// <summary>
-    /// 单轮构造 G 的逐格回放：<c>PreState → Cut（碎片前）→ Collapse → Target</c>。
+    /// 单轮构造 G 的逐格回放：<c>PreState → Cut（碎晶并落定）→ Target</c>。
     ///
     /// <para>
-    /// 与 <see cref="ReplayGenericAlgorithm4"/> 的区别：单轮 G 的 Cut 步是
-    /// <b>碎晶后、下落前</b>的快照，所以先做一次真实 <c>ShapePhysics.Cut</c>
-    /// 得到已下落的西半边，再用 <c>Collapse</c> 核对其与 Cut 步的关系。
+    /// Cut 步已经是「切割 + 落定」的最终态，所以直接与真实
+    /// <c>ShapePhysics.Cut</c> 的西半边逐格比较，不再核对单独的 Collapse 步。
     /// </para>
     /// </summary>
     private static void ReplaySingleRoundG(
@@ -4421,23 +4419,22 @@ internal static class AngleWorkOrderTests
 
         ShapeDocument replayed = ShapeOps.Rotate(cut.West!, -order.Rotation);
 
-        ShapeDocument collapseStep = Step(order, AngleWorkStepKind.Collapse).Shape!;
+        ShapeDocument cutStep = Step(order, AngleWorkStepKind.Cut).Shape!;
 
         Assert.True(
-            ShapeOps.Same(replayed, collapseStep),
-            "单轮 G 的 Collapse 步应等于真实 Cut 出来的西半边");
+            ShapeOps.Same(replayed, cutStep),
+            "单轮 G 的 Cut 步应等于真实 Cut 出来的西半边（已落定）");
 
-        // Cut 步是「碎晶后、下落前」，再 Collapse 一次必须等于真实西半边。
-        Assert.True(
-            ShapeOps.Same(
-                ShapePhysics.Collapse(Step(order, AngleWorkStepKind.Cut).Shape!).Document!,
-                replayed),
-            "单轮 G 的 Cut 步再 Collapse 一次应等于真实西半边");
+        Assert.True(ShapeOps.IsStable(cutStep), "切割并落定后的中间态必须稳定");
 
         Assert.Equal(
             ShapeSignature.ColumnText(target, column),
-            ShapeSignature.ColumnText(collapseStep, column),
-            "单轮 G 下落后目标列应逐格等于目标");
+            ShapeSignature.ColumnText(cutStep, column),
+            "单轮 G 切割并落定后目标列应逐格等于目标");
+
+        Assert.False(
+            order.Steps.Any(step => step.Kind == AngleWorkStepKind.Collapse),
+            "步骤链不应再出现 Collapse 中间态");
 
         Assert.True(
             ShapeOps.Same(target, Step(order, AngleWorkStepKind.Target).Shape),
@@ -4498,26 +4495,14 @@ internal static class AngleWorkOrderTests
                 -order.Rotation);
 
             /*
-             * 两种快照都接受：
-             *   ① 构造 G 的 Cut 步 = 碎晶后、已下落的西半边；
-             *   ② 单发 G 的 Cut 步 = 碎晶后、下落前（还要一步 Collapse）。
+             * Cut 步现在是「切割 + 落定」的最终态：直接与真实
+             * ShapePhysics.Cut 的西半边逐格比较，不再接受「下落前」快照。
              */
-            bool cutIsPostCollapse = ShapeOps.Same(replayed, step.Shape);
-            bool cutMatches =
-                cutIsPostCollapse ||
-                ShapeOps.Same(
-                    replayed,
-                    ShapePhysics.Collapse(step.Shape!).Document!);
-
             Assert.True(
-                cutMatches,
-                $"第 {cuts + 1} 刀应逐格等于真实 Cut 出来的西半边（或再 Collapse 一次）");
+                ShapeOps.Same(replayed, step.Shape),
+                $"第 {cuts + 1} 刀应逐格等于真实 Cut 出来的西半边（已落定）");
 
-            // 「下落前」快照本来就不稳定（材料还没落位），稳定性在 Collapse 步再查。
-            if (cutIsPostCollapse)
-            {
-                Assert.True(ShapeOps.IsStable(step.Shape!), "切割后的中间态必须稳定");
-            }
+            Assert.True(ShapeOps.IsStable(step.Shape!), "切割并落定后的中间态必须稳定");
 
             preState = step;
             cuts++;
@@ -4525,27 +4510,12 @@ internal static class AngleWorkOrderTests
 
         Assert.True(cuts >= 1, "算法 4 至少有一刀");
 
-        ShapeDocument handover;
+        AngleWorkStep? support = order.Steps.LastOrDefault(step =>
+            step.Kind == AngleWorkStepKind.Support && step.Shape is not null);
 
-        AngleWorkStep? collapse = order.Steps.LastOrDefault(step =>
-            step.Kind == AngleWorkStepKind.Collapse);
-
-        if (collapse?.Shape is not null)
-        {
-            Assert.True(
-                ShapeOps.Same(
-                    ShapePhysics.Collapse(preState!.Shape!).Document!,
-                    collapse.Shape),
-                "Collapse 步应等于真实 ShapePhysics.Collapse");
-
-            Assert.True(ShapeOps.IsStable(collapse.Shape), "下落后的中间态必须稳定");
-
-            handover = collapse.Shape;
-        }
-        else
-        {
-            handover = Step(order, AngleWorkStepKind.Support).Shape!;
-        }
+        ShapeDocument handover = support?.Shape
+            ?? order.Steps.Last(step =>
+                step.Kind == AngleWorkStepKind.Cut && step.Shape is not null).Shape!;
 
         Assert.True(ShapeOps.IsStable(handover), "构造 C 交接后的图形应稳定");
         Assert.Equal(
@@ -4714,7 +4684,7 @@ internal static class AngleWorkOrderTests
     }
 
     /// <summary>
-    /// 多轮 G 的逐轮回放：前态稳定 → 真实 Cut → 西半边转回后与 Collapse 快照一致，
+    /// 多轮 G 的逐轮回放：前态稳定 → 真实 Cut → 西半边转回后与 Cut 步一致，
     /// 且辅助列晶体全部被打碎、目标列晶体不丢。
     /// </summary>
     private static void VerifyCutRound(
@@ -4726,9 +4696,6 @@ internal static class AngleWorkOrderTests
 
         ShapeDocument cutStep =
             NthStep(order, AngleWorkStepKind.Cut, round).Shape!;
-
-        ShapeDocument collapse =
-            NthStep(order, AngleWorkStepKind.Collapse, round).Shape!;
 
         Assert.True(
             ShapeOps.IsStable(preState),
@@ -4743,8 +4710,8 @@ internal static class AngleWorkOrderTests
         ShapeDocument replayed = ShapeOps.Rotate(cut.West!, -order.Rotation);
 
         Assert.True(
-            ShapeOps.Same(replayed, collapse),
-            $"第 {round + 1} 轮 Collapse 步应等于真实 Cut 出来的西半边");
+            ShapeOps.Same(replayed, cutStep),
+            $"第 {round + 1} 轮 Cut 步应等于真实 Cut 出来的西半边（已落定）");
 
         foreach (int aux in order.AuxiliaryColumns)
         {

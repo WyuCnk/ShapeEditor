@@ -24,7 +24,11 @@ public enum AngleWorkStepKind
     /// <summary>切割（半破）：沿刀口打碎桥柱/辅助列里的晶体。</summary>
     Cut,
 
-    /// <summary>下落：碎晶后材料落位。</summary>
+    /// <summary>
+    /// 下落（<b>已废弃</b>）：保留枚举值只为兼容 UI。
+    /// 生成的步骤链不再输出这个 Kind——切割后的一次下落并进
+    /// <see cref="Cut"/> 步的结果，纯下落（半边候选 2）并进 <see cref="Target"/> 步。
+    /// </summary>
     Collapse,
 
     /// <summary>顶针：一次顶针完成批量下落（构造 H）。</summary>
@@ -4679,18 +4683,34 @@ public static partial class AngleWorkOrderBuilder
                 auxiliaryColumns);
         }
 
-        ShapeDocument rawBack = ShapeOps.Rotate(rawWest, -rotation);
-
-        steps.Add(new AngleWorkStep(
-            rotation == 0
-                ? "切割：沿 n/2 刀口半破，打碎填充晶体与桥柱晶体"
-                : $"切割：先顺转 {rotation} 个象限，再沿 n/2 刀口半破，" +
-                  "打碎填充晶体与桥柱晶体",
-            rawBack,
-            AngleWorkStepKind.Cut));
-
         ShapeDocument collapsedBack =
             ShapeOps.Rotate(rawCollapsed, -rotation);
+
+        /*
+         * 验收（§6 第 3 条）：落定后的中间态必须稳定。
+         */
+        if (!ShapeOps.IsStable(collapsedBack))
+        {
+            return Incomplete(
+                column,
+                kind,
+                "填充+暴破落定后的中间态不稳定（还会继续落），不能作为停稳的落点。",
+                limitations,
+                steps,
+                AngleConstruction.FillBreak,
+                rotation,
+                auxiliaryColumns);
+        }
+
+        // 「切 + 落」合成一个 Cut 步：Shape 用落定后的真实结果。
+        steps.Add(new AngleWorkStep(
+            rotation == 0
+                ? "切割（碎晶并落定）：沿 n/2 刀口半破，打碎填充晶体与桥柱晶体，" +
+                  "材料落位后缺口由切割造出"
+                : $"切割（碎晶并落定）：先顺转 {rotation} 个象限，再沿 n/2 刀口半破，" +
+                  "打碎填充晶体与桥柱晶体，材料落位后缺口由切割造出",
+            collapsedBack,
+            AngleWorkStepKind.Cut));
 
         if (!MatchesTargetColumn(
                 collapsedBack,
@@ -4712,28 +4732,6 @@ public static partial class AngleWorkOrderBuilder
                     "填充+暴破结果（未通过验证，仅供参考）",
                     collapsedBack,
                     AngleWorkStepKind.Note));
-        }
-
-        steps.Add(new AngleWorkStep(
-            "下落：碎晶后材料落位，目标列的缺口由切割造出",
-            collapsedBack,
-            AngleWorkStepKind.Collapse));
-
-        /*
-         * 验收（§6 第 3 条）：下落后的中间态必须稳定。
-         * 这里用真实 Collapse 再跑一次，结果与自身相同才算停稳。
-         */
-        if (!ShapeOps.IsStable(collapsedBack))
-        {
-            return Incomplete(
-                column,
-                kind,
-                "填充+暴破下落后的中间态不稳定（还会继续落），不能作为停稳的落点。",
-                limitations,
-                steps,
-                AngleConstruction.FillBreak,
-                rotation,
-                auxiliaryColumns);
         }
 
         if (withHandover)
@@ -5014,18 +5012,15 @@ public static partial class AngleWorkOrderBuilder
                     AngleWorkStepKind.Note));
         }
 
+        // 「切 + 落」合成一个 Cut 步：满高托柱把目标格侧向托住，落定后逐格等于目标。
         steps.Add(new AngleWorkStep(
             rotation == 0
-                ? "切割：沿 n/2 刀口半破，保留目标列与满高托柱，丢弃东侧辅助柱"
-                : $"切割：先顺转 {rotation} 个象限，再沿 n/2 刀口半破，" +
-                  "保留目标列与满高托柱，丢弃东侧辅助柱",
-            rawBack,
-            AngleWorkStepKind.Cut));
-
-        steps.Add(new AngleWorkStep(
-            "下落：目标列每一格都由同层托柱侧向托住，不会下落",
+                ? "切割（碎晶并落定）：沿 n/2 刀口半破，保留目标列与满高托柱，" +
+                  "丢弃东侧辅助柱；目标列每一格都由同层托柱侧向托住，不会下落"
+                : $"切割（碎晶并落定）：先顺转 {rotation} 个象限，再沿 n/2 刀口半破，" +
+                  "保留目标列与满高托柱，丢弃东侧辅助柱；目标列每一格都由同层托柱侧向托住，不会下落",
             collapsedBack,
-            AngleWorkStepKind.Collapse));
+            AngleWorkStepKind.Cut));
 
         steps.Add(new AngleWorkStep(
             "清除辅助象限，得到目标角",
@@ -5618,17 +5613,7 @@ public static partial class AngleWorkOrderBuilder
                 auxiliaryColumns);
         }
 
-        ShapeDocument rawBack = ShapeOps.Rotate(rawWest, -rotation);
-
-        steps.Add(new AngleWorkStep(
-            rotation == 0
-                ? "切割：沿半破轴（保留侧 N | A | B）切一刀，打碎 B 的晶体通道与 E 的桥晶体"
-                : $"切割：先顺转 {rotation} 个象限，再沿半破轴（保留侧 N | A | B）切一刀，" +
-                  "打碎 B 的晶体通道与 E 的桥晶体",
-            rawBack,
-            AngleWorkStepKind.Cut));
-
-        // ── 验收五（Collapse）：逐格等于目标；中间态稳定 ──
+        // ── 验收五：落定后逐格等于目标；中间态稳定 ──
 
         ShapeDocument collapsedBack = ShapeOps.Rotate(rawCollapsed, -rotation);
 
@@ -5659,7 +5644,7 @@ public static partial class AngleWorkOrderBuilder
             return Incomplete(
                 column,
                 kind,
-                "构造 F 下落后的中间态不稳定（还会继续落），不能作为停稳的落点。",
+                "构造 F 落定后的中间态不稳定（还会继续落），不能作为停稳的落点。",
                 limitations,
                 steps,
                 AngleConstruction.F,
@@ -5667,11 +5652,15 @@ public static partial class AngleWorkOrderBuilder
                 auxiliaryColumns);
         }
 
+        // 「切 + 落」合成一个 Cut 步：Shape 用落定后的真实结果。
         steps.Add(new AngleWorkStep(
-            $"下落：B 的晶体通道整段碎掉，A 第 {s + 1} 层的普通格与 B 的同层普通格粘成双格一起下落，" +
-            $"被 B 第 {d} 层的普通格（刹车）托住，双格停在第 {d + 1} 层",
+            (rotation == 0
+                ? "切割（碎晶并落定）：沿半破轴（保留侧 N | A | B）切一刀，"
+                : $"切割（碎晶并落定）：先顺转 {rotation} 个象限，再沿半破轴（保留侧 N | A | B）切一刀，") +
+            $"打碎 B 的晶体通道与 E 的桥晶体；A 第 {s + 1} 层的普通格与 B 的同层普通格" +
+            $"粘成双格一起下落，被 B 第 {d} 层的普通格（刹车）托住，双格停在第 {d + 1} 层",
             collapsedBack,
-            AngleWorkStepKind.Collapse));
+            AngleWorkStepKind.Cut));
 
         // ── 验收六（Support）：构造 C 交接回普通柱，拆掉 N | B | E ──
 
@@ -5819,7 +5808,7 @@ public static partial class AngleWorkOrderBuilder
     #region 构造 G / F（切割路径）
 
     /// <summary>
-    /// 构造 G（单层）或 F（n ≥ 6）的切割路径：前态 → Cut → Collapse → Target。
+    /// 构造 G（单层）或 F（n ≥ 6）的切割路径：前态 → Cut（碎晶并落定）→ Target。
     /// </summary>
     /// <summary>
     /// 把目标列里<b>与某个空层连通的那一段空洞</b>填成同层临时晶体，得到紧列。
@@ -6021,6 +6010,9 @@ public static partial class AngleWorkOrderBuilder
         return new string(result);
     }
 
+    /// <summary>
+    /// 构造 G（单层）或 F（n ≥ 6）的切割路径：前态 → Cut（碎晶并落定）→ Target。
+    /// </summary>
     private static AngleWorkOrder BuildCutPath(
         ShapeDocument target,
         int column,
@@ -6031,6 +6023,80 @@ public static partial class AngleWorkOrderBuilder
         int d,
         AngleBuildKind kind,
         AngleConstruction construction)
+    {
+        if (construction != AngleConstruction.G)
+        {
+            return BuildCutPathCandidate(
+                target,
+                column,
+                layers,
+                parts,
+                half,
+                s,
+                d,
+                kind,
+                construction,
+                twoAuxiliaryColumns: false);
+        }
+
+        AngleWorkOrder twoAux = BuildCutPathCandidate(
+            target,
+            column,
+            layers,
+            parts,
+            half,
+            s,
+            d,
+            kind,
+            construction,
+            twoAuxiliaryColumns: true);
+
+        if (twoAux.IsComplete)
+        {
+            return AddLimitation(
+                twoAux,
+                "辅助列最少化：只保留支撑列 B 与保险丝列 N（c + 中间普通格 + 闸门晶体），" +
+                "第三列整列为空；真实 Cut + 落定逐格核对通过。");
+        }
+
+        AngleWorkOrder threeAux = BuildCutPathCandidate(
+            target,
+            column,
+            layers,
+            parts,
+            half,
+            s,
+            d,
+            kind,
+            construction,
+            twoAuxiliaryColumns: false);
+
+        if (threeAux.IsComplete)
+        {
+            return AddLimitation(
+                threeAux,
+                "两列辅助（支撑 + 保险丝）在该形态上回放不通过" +
+                "（闸门晶体需要中间桥柱才能与目标列跨刀口同簇），" +
+                "因此退回三列辅助：支撑 + 满高桥柱 + 保险丝。");
+        }
+
+        return AppendFailure(
+            twoAux,
+            "三列辅助也未通过：" +
+            StripUncoveredPrefix(threeAux.Note ?? "未知原因"));
+    }
+
+    private static AngleWorkOrder BuildCutPathCandidate(
+        ShapeDocument target,
+        int column,
+        int layers,
+        int parts,
+        int half,
+        int s,
+        int d,
+        AngleBuildKind kind,
+        AngleConstruction construction,
+        bool twoAuxiliaryColumns)
     {
         /*
          * 目标列的洞先在「前态」里填成同层临时晶体（紧列），
@@ -6056,12 +6122,20 @@ public static partial class AngleWorkOrderBuilder
             s,
             d,
             construction,
+            twoAuxiliaryColumns,
             out int bColumn,
             out int eColumn,
             out int nColumn);
 
+        /*
+         * 辅助列最少化：G 优先「支撑 B + 保险丝 N」两列（E 留空）；
+         * 回放不通过时退回「支撑 B + 满高桥柱 E」三列（N 留空）。
+         * F 的 E 是跨刀口的桥柱，必须保留，因此仍是三列。
+         */
         var auxiliaryColumns = construction == AngleConstruction.G
-            ? new[] { bColumn, eColumn }
+            ? (twoAuxiliaryColumns
+                ? new[] { bColumn, nColumn }
+                : new[] { bColumn, eColumn })
             : new[] { nColumn, bColumn, eColumn };
 
         bool filledTargetHoles = false;
@@ -6090,12 +6164,11 @@ public static partial class AngleWorkOrderBuilder
                 if (lowerHoleLayers.Count > 0)
                 {
                     /*
-                     * 下方洞的临时晶体放在「环缝另一侧」的 N 列（旋转后是第 4 象限），
-                     * 目标列（旋转后第 1 象限）与它跨 3–0 环缝横向相连，一刀即碎。
+                     * 下方洞的临时晶体放在「环缝另一侧」的保险丝列，
+                     * 目标列与它跨 3–0 环缝横向相连，一刀即碎。
                      *
                      * B 列的底部整段放针：针不与目标列的普通格横向粘连，
                      * 抬升的普通格才能落回；B 上方的普通格仍托住目标列的原生晶体。
-                     * N 列底部用普通格顶住保险丝晶体，洞层放针避免托住抬升格。
                      */
                     int maxHole = lowerHoleLayers.Max();
                     int maxSource = lowerFuseLayers.Max();
@@ -6105,21 +6178,52 @@ public static partial class AngleWorkOrderBuilder
                         tightPreState[layer, bColumn] = ShapeCell.Pin();
                     }
 
-                    int supportTop = Math.Max(maxHole, maxSource);
-
-                    for (int layer = 0; layer <= supportTop; layer++)
+                    if (construction == AngleConstruction.G &&
+                        twoAuxiliaryColumns)
                     {
-                        tightPreState[layer, nColumn] = ShapeCell.Shape('C', 'u');
+                        /*
+                         * G 的保险丝列：0..max(d, 洞层, 让出层) 全是普通格（紧列），
+                         * 让出层与闸门层 d 各放一颗晶体。整列在切割时被丢弃，
+                         * 不再需要顶针（顶针会在紧列里造洞），
+                         * 形态即用户实测的「c + 中间 T + 顶层 c」。
+                         */
+                        int supportTop = Math.Max(d, Math.Max(maxHole, maxSource));
+
+                        for (int layer = 0;
+                             layer <= supportTop && layer < layers;
+                             layer++)
+                        {
+                            tightPreState[layer, nColumn] = ShapeCell.Shape('C', 'u');
+                        }
+
+                        foreach (int fuse in lowerFuseLayers)
+                        {
+                            tightPreState[fuse, nColumn] =
+                                ShapeCell.Crystal(crystalColor);
+                        }
+
+                        tightPreState[d, nColumn] =
+                            ShapeCell.Crystal(crystalColor);
                     }
-
-                    foreach (int fuse in lowerFuseLayers)
+                    else
                     {
-                        tightPreState[fuse, nColumn] = ShapeCell.Crystal(crystalColor);
-                    }
+                        int supportTop = Math.Max(maxHole, maxSource);
 
-                    foreach (int hole in lowerHoleLayers)
-                    {
-                        tightPreState[hole, nColumn] = ShapeCell.Pin();
+                        for (int layer = 0; layer <= supportTop; layer++)
+                        {
+                            tightPreState[layer, nColumn] = ShapeCell.Shape('C', 'u');
+                        }
+
+                        foreach (int fuse in lowerFuseLayers)
+                        {
+                            tightPreState[fuse, nColumn] =
+                                ShapeCell.Crystal(crystalColor);
+                        }
+
+                        foreach (int hole in lowerHoleLayers)
+                        {
+                            tightPreState[hole, nColumn] = ShapeCell.Pin();
+                        }
                     }
                 }
             }
@@ -6306,17 +6410,6 @@ public static partial class AngleWorkOrderBuilder
                 auxiliaryColumns);
         }
 
-        ShapeDocument rawBack = ShapeOps.Rotate(rawWest, -rotation);
-
-        steps.Add(new AngleWorkStep(
-            rotation == 0
-                ? "切割：沿 n/2 刀口半破，打碎桥柱晶体"
-                : $"切割：先顺转 {rotation} 个象限，再沿 n/2 刀口半破，打碎桥柱晶体",
-            rawBack,
-            AngleWorkStepKind.Cut));
-
-        // === 下落 ===
-
         ShapeDocument collapsedBack =
             ShapeOps.Rotate(rawCollapsed, -rotation);
 
@@ -6342,10 +6435,31 @@ public static partial class AngleWorkOrderBuilder
                     AngleWorkStepKind.Note));
         }
 
+        if (!ShapeOps.IsStable(collapsedBack))
+        {
+            return Incomplete(
+                column,
+                kind,
+                "切割（碎晶并落定）后的中间态不稳定（还会继续落），不能作为停稳的落点。",
+                limitations,
+                steps,
+                construction,
+                rotation,
+                auxiliaryColumns);
+        }
+
+        /*
+         * 「切 + 落」是同一个操作节点的两步物理：合成一个 Cut 步，
+         * Shape 用真实 Cut 的最终态（已落定），不再单独输出 Collapse 步。
+         */
         steps.Add(new AngleWorkStep(
-            "下落：材料落位，缺口移到晶体塔正下方",
+            rotation == 0
+                ? "切割（碎晶并落定）：沿 n/2 刀口半破，打碎桥柱晶体后材料落位，" +
+                  "缺口移到晶体塔正下方"
+                : $"切割（碎晶并落定）：先顺转 {rotation} 个象限，再沿 n/2 刀口半破，" +
+                  "打碎桥柱晶体后材料落位，缺口移到晶体塔正下方",
             collapsedBack,
-            AngleWorkStepKind.Collapse));
+            AngleWorkStepKind.Cut));
 
         steps.Add(CrystallizeNote());
 
@@ -6861,8 +6975,6 @@ public static partial class AngleWorkOrderBuilder
             bool bridgeGone =
                 rawWest[h, bRotated].Type != CellType.Crystal;
 
-            ShapeDocument rawBack = ShapeOps.Rotate(rawWest, -rotation);
-
             ShapeDocument collapsedBack =
                 ShapeOps.Rotate(rawCollapsed, -rotation);
 
@@ -6892,15 +7004,6 @@ public static partial class AngleWorkOrderBuilder
                     auxiliaryColumns);
             }
 
-            steps.Add(new AngleWorkStep(
-                rounds == 1
-                    ? (rotation == 0
-                        ? "切割：沿 n/2 刀口半破，打碎桥柱晶体"
-                        : $"切割：先顺转 {rotation} 个象限，再沿 n/2 刀口半破，打碎桥柱晶体")
-                    : $"第 {round + 1}/{rounds} 轮切割：打碎桥柱晶体",
-                rawBack,
-                AngleWorkStepKind.Cut));
-
             if (!MatchesColumn(
                     collapsedBack,
                     expected,
@@ -6923,12 +7026,17 @@ public static partial class AngleWorkOrderBuilder
                         AngleWorkStepKind.Note));
             }
 
+            // 每一刀 = 一次 Cut + 一次落定，合成一个 Cut 步，各带该刀落定后的结果。
             steps.Add(new AngleWorkStep(
                 rounds == 1
-                    ? "下落：材料落位，缺口移到晶体塔正下方"
-                    : $"第 {round + 1}/{rounds} 轮下落：源普通格下降一层",
+                    ? (rotation == 0
+                        ? "切割（碎晶并落定）：沿 n/2 刀口半破，打碎桥柱晶体，材料落位"
+                        : $"切割（碎晶并落定）：先顺转 {rotation} 个象限，再沿 n/2 刀口半破，" +
+                          "打碎桥柱晶体，材料落位")
+                    : $"第 {round + 1}/{rounds} 轮切割（碎晶并落定）：打碎桥柱晶体，" +
+                      "源普通格下降一层",
                 collapsedBack,
-                AngleWorkStepKind.Collapse));
+                AngleWorkStepKind.Cut));
 
             current = new ShapeDocument(layers, parts);
 
@@ -7266,8 +7374,6 @@ public static partial class AngleWorkOrderBuilder
 
         int pRotated = Wrap(p, parts);
 
-        ShapeDocument rawBack = ShapeOps.Rotate(rawWest, -rotation);
-
         ShapeDocument collapsedBack =
             ShapeOps.Rotate(rawCollapsed, -rotation);
 
@@ -7295,11 +7401,14 @@ public static partial class AngleWorkOrderBuilder
                 auxiliaryColumns);
         }
 
+        // 「切 + 落」合成一个 Cut 步：Shape 用落定后的真实结果。
         steps.Add(new AngleWorkStep(
             rotation == 0
-                ? "切割：沿 n/2 刀口半破，打碎填充晶体与桥柱晶体"
-                : $"切割：先顺转 {rotation} 个象限，再沿 n/2 刀口半破，打碎填充晶体与桥柱晶体",
-            rawBack,
+                ? "切割（碎晶并落定）：沿 n/2 刀口半破，打碎填充晶体与桥柱晶体，" +
+                  "材料落位后缺口由切割造出"
+                : $"切割（碎晶并落定）：先顺转 {rotation} 个象限，再沿 n/2 刀口半破，" +
+                  "打碎填充晶体与桥柱晶体，材料落位后缺口由切割造出",
+            collapsedBack,
             AngleWorkStepKind.Cut));
 
         if (!MatchesTargetColumn(
@@ -7323,11 +7432,6 @@ public static partial class AngleWorkOrderBuilder
                     collapsedBack,
                     AngleWorkStepKind.Note));
         }
-
-        steps.Add(new AngleWorkStep(
-            "下落：碎晶后材料落位，目标列的缺口由切割造出",
-            collapsedBack,
-            AngleWorkStepKind.Collapse));
 
         steps.Add(new AngleWorkStep(
             "清除辅助象限，得到目标角",
@@ -7360,6 +7464,7 @@ public static partial class AngleWorkOrderBuilder
         int s,
         int d,
         AngleConstruction construction,
+        bool twoAuxiliaryColumns,
         out int bColumn,
         out int eColumn,
         out int nColumn)
@@ -7392,12 +7497,31 @@ public static partial class AngleWorkOrderBuilder
 
             if (s + 2 < layers)
             {
-                // G 的 B 列：第 h 层晶体、第 t+1 层针、其他层普通格。
                 preState[s + 2, bColumn] = ShapeCell.Pin();
             }
 
-            FillPillar(preState, eColumn);
-            preState[d, eColumn] = ShapeCell.Crystal(color);
+            if (twoAuxiliaryColumns)
+            {
+                /*
+                 * 两列辅助（支撑 B + 保险丝 N）：第三列 E 留空。
+                 * N 是「底部晶体 + 中间普通格 + 闸门层晶体」的紧列：
+                 * 闸门晶体与目标列的临时晶体跨 3–0 环缝横向相连，一刀同碎。
+                 * 旧实现把闸门晶体放在 E、N 只放顶针；整根 N 在切割时被丢弃，
+                 * 顶针与 E 都是纯冗余，实测（12 / 14 层双闸门）删掉后回放逐格不变。
+                 */
+                for (int layer = 0; layer <= d && layer < layers; layer++)
+                {
+                    preState[layer, nColumn] = ShapeCell.Shape('C', 'u');
+                }
+
+                preState[d, nColumn] = ShapeCell.Crystal(color);
+            }
+            else
+            {
+                // 三列辅助（回退）：闸门晶体放在满高桥柱 E 上，N 先留空。
+                FillPillar(preState, eColumn);
+                preState[d, eColumn] = ShapeCell.Crystal(color);
+            }
         }
         else
         {

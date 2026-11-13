@@ -808,12 +808,16 @@ internal static class AngleAuditTests
             }
             else
             {
-                if (half.Steps.Count != 3 ||
+                if (half.Steps.Count != 2 ||
                     half.Steps[0].Kind != AngleWorkStepKind.PreState ||
-                    half.Steps[1].Kind != AngleWorkStepKind.Collapse ||
                     half.Steps[^1].Kind != AngleWorkStepKind.Target)
                 {
-                    problems.Add(label + "：候选 2 的步骤链应为 PreState → Collapse → Target");
+                    problems.Add(label + "：候选 2 的步骤链应为 PreState → Target（自动下落并进 Target）");
+                }
+
+                if (half.Steps.Any(step => step.Kind == AngleWorkStepKind.Collapse))
+                {
+                    problems.Add(label + "：候选 2 的步骤链不应再出现 Collapse 中间态");
                 }
 
                 if (ShapeOps.Same(pre, q))
@@ -828,9 +832,9 @@ internal static class AngleAuditTests
                     problems.Add(label + "：候选 2 的 Q′ 一次下落没有得到 Q");
                 }
 
-                if (!ShapeOps.Same(half.Steps[1].Shape, collapsed))
+                if (!ShapeOps.Same(half.Steps[^1].Shape, q))
                 {
-                    problems.Add(label + "：候选 2 的 Collapse 步不是真实下落结果");
+                    problems.Add(label + "：候选 2 的 Target 步不是真实下落结果");
                 }
 
                 if (!IsSinglePairLift(q, pre, out int liftFrom, out int liftTo))
