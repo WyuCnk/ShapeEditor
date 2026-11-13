@@ -8,9 +8,16 @@ namespace ShapeEditor.Web.Services;
 /// <summary>
 /// 「角的工序」里的一个步骤节点。
 ///
-/// 有图形的步骤节点与制作路径节点尺寸一致：宽 = 象限数 × 30 + 16，
-/// 高 = 50 + 层数 × 30；纯说明步骤（Shape 为 null）用固定大小的小卡片。
+/// 只有带图形快照的操作步骤才会生成节点，尺寸与制作路径节点一致：
+/// 宽 = 象限数 × 30 + 16，高 = 50 + 层数 × 30。
 /// 预览始终按 30px 单元格 1:1 绘制，不做缩放。
+///
+/// <para>
+/// <see cref="AngleWorkStepKind.Note"/> 只作为文字说明（见
+/// <see cref="AngleWorkColumn.StepNotes"/> / <see cref="AngleHalfWork.StepNotes"/>），
+/// <see cref="AngleWorkStepKind.Collapse"/> 已在排版前并入前一个操作步，
+/// 两者都不会出现在节点链里。
+/// </para>
 /// </summary>
 public sealed class AngleWorkNode
 {
@@ -23,20 +30,14 @@ public sealed class AngleWorkNode
     /// <summary>节点左右内边距合计。</summary>
     public const int HorizontalPadding = 16;
 
-    /// <summary>纯说明节点的宽度。</summary>
-    public const int NoteWidth = 260;
-
-    /// <summary>纯说明节点的高度：足够放下常见的多行说明文字。</summary>
-    public const int NoteHeight = 122;
-
     public string Id { get; init; } = "";
 
     public string Title { get; init; } = "";
 
     public AngleWorkStepKind Kind { get; init; }
 
-    /// <summary>该步骤执行完后的图形；纯说明步骤为 null。</summary>
-    public ShapeDocument? Shape { get; init; }
+    /// <summary>该步骤执行完后的图形。</summary>
+    public required ShapeDocument Shape { get; init; }
 
     public double X { get; init; }
 
@@ -46,15 +47,15 @@ public sealed class AngleWorkNode
 
     public double Height { get; init; }
 
-    /// <summary>纯说明节点：没有竖式图，正文直接画说明文字。</summary>
-    public bool IsNote => Kind == AngleWorkStepKind.Note;
-
-    /// <summary>页面与导出共用的节点样式类。</summary>
+    /// <summary>
+    /// 页面与导出共用的节点样式类。
+    /// Collapse 已并入前一步、Note 只出文字，两者都不会生成节点，
+    /// 因此这里只保留实际操作步骤的映射。
+    /// </summary>
     public string KindClass => Kind switch
     {
         AngleWorkStepKind.PreState => "angle-kind-prestate",
         AngleWorkStepKind.Cut => "angle-kind-cut",
-        AngleWorkStepKind.Collapse => "angle-kind-collapse",
         AngleWorkStepKind.Pin => "angle-kind-pin",
         AngleWorkStepKind.Stack => "angle-kind-stack",
         AngleWorkStepKind.Support => "angle-kind-support",
@@ -63,12 +64,11 @@ public sealed class AngleWorkNode
         _ => "angle-kind-note"
     };
 
-    /// <summary>右上角步骤类型小标签；说明节点不显示标签。</summary>
+    /// <summary>右上角步骤类型小标签；只有实际操作步骤才有标签。</summary>
     public string KindTag => Kind switch
     {
         AngleWorkStepKind.PreState => "前态",
         AngleWorkStepKind.Cut => "切",
-        AngleWorkStepKind.Collapse => "落",
         AngleWorkStepKind.Pin => "顶",
         AngleWorkStepKind.Stack => "堆",
         AngleWorkStepKind.Support => "撑",
@@ -82,7 +82,6 @@ public sealed class AngleWorkNode
     {
         AngleWorkStepKind.PreState => "angle-pre",
         AngleWorkStepKind.Cut => "angle-cut",
-        AngleWorkStepKind.Collapse => "angle-collapse",
         AngleWorkStepKind.Pin => "angle-pin",
         AngleWorkStepKind.Stack => "angle-stack",
         AngleWorkStepKind.Support => "angle-support",
@@ -137,6 +136,12 @@ public sealed class AngleHalfWork
     /// <summary>半边步骤链的节点（与主步骤链同款样式、30px 单元格 1:1 预览）。</summary>
     public IReadOnlyList<AngleWorkNode> Nodes { get; init; } = Array.Empty<AngleWorkNode>();
 
+    /// <summary>
+    /// 半边步骤链里的说明文字（Kind == Note）。按出现顺序逐行显示，
+    /// 不画成节点，也不占用节点链的画布宽度。
+    /// </summary>
+    public IReadOnlyList<string> StepNotes { get; init; } = Array.Empty<string>();
+
     /// <summary>半边步骤链的箭头。</summary>
     public IReadOnlyList<AngleWorkEdge> Edges { get; init; } = Array.Empty<AngleWorkEdge>();
 
@@ -183,6 +188,12 @@ public sealed class AngleWorkColumn
     public IReadOnlyList<string> Limitations { get; init; } = Array.Empty<string>();
 
     public IReadOnlyList<AngleWorkNode> Nodes { get; init; } = Array.Empty<AngleWorkNode>();
+
+    /// <summary>
+    /// 主步骤链里的说明文字（Kind == Note）。按出现顺序逐行显示，
+    /// 不画成节点，也不占用节点链的画布宽度。
+    /// </summary>
+    public IReadOnlyList<string> StepNotes { get; init; } = Array.Empty<string>();
 
     public IReadOnlyList<AngleWorkEdge> Edges { get; init; } = Array.Empty<AngleWorkEdge>();
 
@@ -429,6 +440,7 @@ public static class AngleWorkColumnBuilder
             Note = order.Note,
             Limitations = order.Limitations,
             Nodes = chain.Nodes,
+            StepNotes = chain.Notes,
             Edges = chain.Edges,
             GraphWidth = chain.Width,
             GraphHeight = chain.Height
@@ -466,6 +478,7 @@ public static class AngleWorkColumnBuilder
             Note = half.Note,
             Limitations = half.Limitations,
             Nodes = chain.Nodes,
+            StepNotes = chain.Notes,
             Edges = chain.Edges,
             GraphWidth = chain.Width,
             GraphHeight = chain.Height
@@ -529,6 +542,9 @@ public static class AngleWorkColumnBuilder
         public IReadOnlyList<AngleWorkNode> Nodes { get; init; } =
             Array.Empty<AngleWorkNode>();
 
+        /// <summary>说明步骤（Kind == Note）的文字，按出现顺序逐行显示。</summary>
+        public IReadOnlyList<string> Notes { get; init; } = Array.Empty<string>();
+
         public IReadOnlyList<AngleWorkEdge> Edges { get; init; } =
             Array.Empty<AngleWorkEdge>();
 
@@ -540,6 +556,16 @@ public static class AngleWorkColumnBuilder
     /// <summary>
     /// 把 Core 的步骤链排成一行节点：同一行从左到右，节点之间留出画箭头的间距。
     ///
+    /// <para>
+    /// 排版前先按当前渲染规则归一化步骤：
+    /// <list type="bullet">
+    /// <item><see cref="AngleWorkStepKind.Note"/> 只收集成文字，不生成节点；</item>
+    /// <item><see cref="AngleWorkStepKind.Collapse"/> 是历史数据里才可能出现的「下落」，
+    /// 并入前一个操作步（沿用下落后的图形快照），不单独生成节点；</item>
+    /// <item>其余操作步必须带图形快照，否则也降级为文字说明。</item>
+    /// </list>
+    /// </para>
+    ///
     /// <paramref name="idPrefix"/> 用来拼节点 id（主链 <c>angle-3</c>、
     /// 半边链 <c>angle-3-half</c>），同一张卡片里的两条链因此互不冲突。
     /// </summary>
@@ -547,30 +573,61 @@ public static class AngleWorkColumnBuilder
         IReadOnlyList<AngleWorkStep> steps,
         string idPrefix)
     {
-        var nodes = new List<AngleWorkNode>(steps.Count);
-        double x = GraphMargin;
-        double graphHeight = 0;
+        var layoutSteps = new List<AngleWorkStep>(steps.Count);
+        var notes = new List<string>();
 
         foreach (AngleWorkStep step in steps)
         {
-            bool hasShape = step.Shape is not null;
+            if (step.Kind == AngleWorkStepKind.Collapse)
+            {
+                /*
+                 * Core 已把「切割后的一次下落」并进 Cut 步的结果，
+                 * 正常不会输出 Collapse；这里只兜底历史数据：
+                 * 把下落后的图形补给前一个操作步，节点本身不画。
+                 */
+                if (step.Shape is not null && layoutSteps.Count > 0)
+                {
+                    layoutSteps[^1] = layoutSteps[^1] with { Shape = step.Shape };
+                }
 
-            double width = hasShape
-                ? step.Shape!.PartCount * AngleWorkNode.CellSize +
-                  AngleWorkNode.HorizontalPadding
-                : AngleWorkNode.NoteWidth;
+                continue;
+            }
 
-            double height = hasShape
-                ? AngleWorkNode.HeaderHeight +
-                  step.Shape!.LayerCount * AngleWorkNode.CellSize
-                : AngleWorkNode.NoteHeight;
+            if (step.Kind == AngleWorkStepKind.Note || step.Shape is null)
+            {
+                if (!string.IsNullOrWhiteSpace(step.Title))
+                {
+                    notes.Add(step.Title);
+                }
+
+                continue;
+            }
+
+            layoutSteps.Add(step);
+        }
+
+        var nodes = new List<AngleWorkNode>(layoutSteps.Count);
+        double x = GraphMargin;
+        double graphHeight = 0;
+
+        foreach (AngleWorkStep step in layoutSteps)
+        {
+            ShapeDocument shape = step.Shape!;
+
+            double width =
+                shape.PartCount * AngleWorkNode.CellSize +
+                AngleWorkNode.HorizontalPadding;
+
+            double height =
+                AngleWorkNode.HeaderHeight +
+                shape.LayerCount * AngleWorkNode.CellSize;
 
             nodes.Add(new AngleWorkNode
             {
                 Id = $"{idPrefix}-{nodes.Count}",
                 Title = step.Title,
                 Kind = step.Kind,
-                Shape = step.Shape,
+                Shape = shape,
                 X = x,
                 Y = GraphMargin,
                 Width = width,
@@ -597,6 +654,7 @@ public static class AngleWorkColumnBuilder
         return new NodeChainLayout
         {
             Nodes = nodes,
+            Notes = notes,
             Edges = edges,
             Width = graphWidth,
             Height = nodes.Count == 0

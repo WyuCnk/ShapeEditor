@@ -80,6 +80,7 @@ public sealed class AnalysisExportSection
 /// 导出图里的一列角工序。
 ///
 /// <see cref="Graph"/> 是这一列的步骤节点链（坐标从 0 开始），
+/// <see cref="StepNotes"/> 是说明步骤的文字（不画节点），
 /// 未完全验证时 <see cref="Note"/> 与 <see cref="Limitations"/> 用小字画在节点链下方。
 /// </summary>
 public sealed class AnalysisExportAngleColumn
@@ -141,6 +142,12 @@ public sealed class AnalysisExportAngleColumn
     /// <summary>半边步骤链（n/2 列一起做的步骤）；没有半边工序时为 null。</summary>
     public AnalysisExportGraph? HalfGraph { get; set; }
 
+    /// <summary>
+    /// 半边步骤链里的说明文字（Kind == Note）。导出时在节点链下方
+    /// 以一行小字绘制，不画节点。
+    /// </summary>
+    public List<string> HalfStepNotes { get; set; } = new();
+
     /// <summary>简单角只画一行说明，不画节点链。</summary>
     public bool IsSimple { get; set; }
 
@@ -155,6 +162,12 @@ public sealed class AnalysisExportAngleColumn
 
     /// <summary>未完成原因；已通过时为 null。</summary>
     public string? Note { get; set; }
+
+    /// <summary>
+    /// 主步骤链里的说明文字（Kind == Note）。导出时在节点链下方
+    /// 以一行小字绘制，不画节点。
+    /// </summary>
+    public List<string> StepNotes { get; set; } = new();
 
     /// <summary>UI 展示用的限制/前提说明，只在未完成时绘制。</summary>
     public List<string> Limitations { get; set; } = new();
@@ -208,14 +221,15 @@ public sealed class AnalysisExportGraphNode
 
     /// <summary>
     /// 节点类型：pin / stack / block（制作路径），
-    /// 或 angle-pre / angle-cut / angle-collapse / angle-pin / angle-support /
-    /// angle-crystallize / angle-target / angle-note（角的工序）。
+    /// 或 angle-pre / angle-cut / angle-pin / angle-support /
+    /// angle-stack / angle-crystallize / angle-target（角的工序）。
+    /// 角工序的 Collapse 已并入前一步、Note 只出文字，两者都不会生成节点。
     /// </summary>
     public string Kind { get; set; } = "";
 
     /// <summary>
     /// 右上角类型小标签：顶P / 堆 / 块；
-    /// 角工序为 前态/切/落/顶/撑/晶/目标。
+    /// 角工序为 前态/切/顶/撑/堆/晶/目标。
     /// </summary>
     public string KindTag { get; set; } = "";
 }

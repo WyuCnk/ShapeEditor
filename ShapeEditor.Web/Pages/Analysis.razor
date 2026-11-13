@@ -425,9 +425,10 @@
                                     <p class="analysis-summary">@AngleWorkSummary</p>
 
                                     <p class="analysis-note">
-                                        碎晶角按「前态 → 切割 → 下落 → 顶针 → 支柱交接（撑）→ 目标」列出；
+                                        碎晶角按「前态 → 切割（含下落）→ 顶针 → 支柱交接（撑）→ 目标」列出；
                                         标题显示论文分档算法与构造（无晶体 / 简单角 / 算法 1–6 / 兜底构造）。
                                         节点预览固定 30px 单元格、1:1 不缩放。
+                                        没有图形快照的说明步骤（Note）只在节点链下方以一行小字列出，不画节点。
                                         工序前态按目标图形层数作为画布高度，需要更高脚手架才能成立的构造会标为尚未完全验证。
                                         造塔子配方（交换链，rank 0）可折叠展开，展开状态由标题栏的开关统一控制。
                                         单列做不出来的角会带「半边工序」标签：候选名与配对列写在标题行，
@@ -491,6 +492,17 @@
                                                                             Height="work.GraphHeight" />
                                                     }
 
+                                                    @* Note 步骤只作为一行小字说明，不画节点、也不参与节点链排版。 *@
+                                                    @if (work.StepNotes.Count > 0)
+                                                    {
+                                                        <div class="angle-work-step-notes">
+                                                            @foreach (string stepNote in work.StepNotes)
+                                                            {
+                                                                <p class="angle-work-step-note">@stepNote</p>
+                                                            }
+                                                        </div>
+                                                    }
+
                                                     @if (!work.IsComplete)
                                                     {
                                                         @* 未通过验证时如实展示原因和限制，不伪造后续步骤。 *@
@@ -535,6 +547,17 @@
                                                                                 Edges="work.Half.Edges"
                                                                                 Width="work.Half.GraphWidth"
                                                                                 Height="work.Half.GraphHeight" />
+                                                        }
+
+                                                        @* 半边链的 Note 步骤同样只在链下方以一行小字列出。 *@
+                                                        @if (work.Half.StepNotes.Count > 0)
+                                                        {
+                                                            <div class="angle-work-step-notes">
+                                                                @foreach (string stepNote in work.Half.StepNotes)
+                                                                {
+                                                                    <p class="angle-work-step-note">@stepNote</p>
+                                                                }
+                                                            </div>
                                                         }
 
                                                         @if (!work.Half.IsComplete)
@@ -1118,6 +1141,7 @@
     /// 角的工序板块：与页面一致，每个角一张卡片。
     ///
     /// 简单角只导出一行说明；碎晶角导出步骤节点链（每条链一个图，保持 30px 单元格 1:1）；
+    /// Note 步骤不画节点，只在对应节点链下方导出为一行小字；
     /// 卡片标题带分类 / 算法 / 构造 / 顶针次数；造塔子配方只以小字列步骤名，不画预览；
     /// 未完全验证时在节点链后追加「该列工序尚未完全验证」、Note 与 Limitations。
     /// 只有该区域已展开并完成按列构建时才导出；隐藏或构建中不会触发额外计算。
@@ -1133,8 +1157,10 @@
 
         section.Lines.Add(AngleWorkSummary);
         section.Lines.Add(
-            "碎晶角按「前态 → 切割 → 下落 → 顶针 → 支柱交接 → 目标」列出；" +
+            "碎晶角按「前态 → 切割（含下落）→ 顶针 → 支柱交接 → 目标」列出；" +
             "标题包含论文分档算法与构造，节点预览为 30px 单元格的 1:1 竖式图。");
+        section.Lines.Add(
+            "没有图形快照的说明步骤（Note）只在节点链下方以一行小字列出，不画节点。");
         section.Lines.Add(
             "工序前态按目标图形层数作为画布高度，需要更高脚手架才能成立的构造会标为尚未完全验证。");
 
@@ -1173,6 +1199,7 @@
                 StatusText = work.StatusText ?? "",
                 SimpleText = work.IsSimple ? work.SimpleText : "",
                 Note = work.Note,
+                StepNotes = work.StepNotes.ToList(),
                 Limitations = work.Limitations.ToList(),
                 SubRecipeLines = work.SubRecipe is null
                     ? new List<string>()
@@ -1207,6 +1234,7 @@
                 column.HalfIsComplete = work.Half.IsComplete;
                 column.HalfStatusText = work.Half.StatusText ?? "";
                 column.HalfNote = work.Half.Note;
+                column.HalfStepNotes = work.Half.StepNotes.ToList();
                 column.HalfLimitations = work.Half.Limitations.ToList();
 
                 if (work.Half.Nodes.Count > 0)
@@ -1251,9 +1279,8 @@
                 Y = node.Y,
                 Width = node.Width,
                 Height = node.Height,
-                State = node.Shape is null
-                    ? null
-                    : ShapeCanvasState.Create(node.Shape),
+                // 节点链里的都是带图形快照的操作步（Note 已单独收集为文字）。
+                State = ShapeCanvasState.Create(node.Shape),
                 Kind = node.KindName,
                 KindTag = node.KindTag
             });

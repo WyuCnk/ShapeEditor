@@ -5,6 +5,9 @@
 @*
     角工序的步骤节点链：主步骤链与「半边工序」链共用同一套渲染。
 
+    节点链里只会有带图形快照的操作步骤：Note 步骤不画节点，由页面在链下方
+    以「一行小字」列出；历史数据里的 Collapse 步骤已在 C# 排版前并入前一步。
+
     节点坐标由 AngleWorkColumnBuilder 排好（同一行从左到右，箭头位置留空），
     这里只负责按绝对坐标摆放；箭头的最终几何由页面 OnAfterRenderAsync 里的
     shapeGridLayoutEdges 按真实矩形校正，和交换工序的节点图完全一致。
@@ -34,27 +37,16 @@
             <div class="graph-node path-node angle-node @node.KindClass"
                  data-node-id="@node.Id"
                  style="left:@Px(node.X)px;top:@Px(node.Y)px;width:@Px(node.Width)px;height:@Px(node.Height)px">
-                @if (node.IsNote && node.Shape is null)
+                @if (node.KindTag.Length > 0)
                 {
-                    @* 纯说明步骤没有竖式图，正文直接展示说明文字。 *@
-                    <div class="angle-note-body">@node.Title</div>
+                    <span class="path-node-kind">@node.KindTag</span>
                 }
-                else
-                {
-                    @if (node.KindTag.Length > 0)
-                    {
-                        <span class="path-node-kind">@node.KindTag</span>
-                    }
 
-                    <div class="path-node-head" title="@node.Title">@node.Title</div>
+                <div class="path-node-head" title="@node.Title">@node.Title</div>
 
-                    <div class="graph-node-body path-node-body">
-                        @if (node.Shape is not null)
-                        {
-                            <PathNodePreview Document="node.Shape" />
-                        }
-                    </div>
-                }
+                <div class="graph-node-body path-node-body">
+                    <PathNodePreview Document="node.Shape" />
+                </div>
             </div>
         }
     </div>

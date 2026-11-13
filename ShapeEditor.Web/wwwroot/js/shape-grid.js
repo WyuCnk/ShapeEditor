@@ -2943,13 +2943,11 @@ function drawAnalysisNodeKindTag(ctx, rect, tag, kind) {
         block: "#2E7D32",
         "angle-pre": "#6A4CC3",
         "angle-cut": "#C62828",
-        "angle-collapse": "#B26A00",
         "angle-pin": "#0E7C86",
         "angle-stack": "#B26A00",
         "angle-support": "#3F51B5",
         "angle-crystallize": "#1565C0",
-        "angle-target": "#2E7D32",
-        "angle-note": "#9A9AA5"
+        "angle-target": "#2E7D32"
     };
 
     ctx.save();
@@ -2983,6 +2981,7 @@ function drawAnalysisNodeKindTag(ctx, rect, tag, kind) {
  * 预览固定 30px 单元格、1:1 绘制；图有多宽就画多宽，不缩放、不分片。
  * 废料节点淡显、虚线边框，指向废料的箭头为灰色虚线。
  * 顶针 / 堆叠 / 块用不同边框色与右上角小标签区分。
+ * 角工序的节点只会有带图形的操作步：Collapse 已并入前一步、Note 只画小字行。
  */
 function drawAnalysisPathGraph(ctx, graph, left, top) {
     const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
@@ -3090,11 +3089,6 @@ function drawAnalysisPathGraph(ctx, graph, left, top) {
             strokeColor = "#C62828";
             lineWidth = 2;
         }
-        else if (node.kind === "angle-collapse") {
-            fillColor = "#FFF8EE";
-            strokeColor = "#B26A00";
-            lineWidth = 2;
-        }
         else if (node.kind === "angle-pin") {
             fillColor = "#F2FBFB";
             strokeColor = "#0E7C86";
@@ -3122,10 +3116,6 @@ function drawAnalysisPathGraph(ctx, graph, left, top) {
             strokeColor = "#2E7D32";
             lineWidth = 2;
         }
-        else if (node.kind === "angle-note") {
-            fillColor = "#FBFBFC";
-            strokeColor = "#9A9AA5";
-        }
 
         ctx.fillStyle = fillColor;
         ctx.strokeStyle = strokeColor;
@@ -3133,8 +3123,8 @@ function drawAnalysisPathGraph(ctx, graph, left, top) {
 
         ctx.save();
 
-        // 废料节点与角工序的纯说明节点都使用虚线边框。
-        if (node.isWaste || node.kind === "angle-note") {
+        // 废料节点使用虚线边框。
+        if (node.isWaste) {
             ctx.setLineDash([5, 4]);
         }
 
@@ -3144,40 +3134,6 @@ function drawAnalysisPathGraph(ctx, graph, left, top) {
         ctx.stroke();
 
         ctx.restore();
-
-        /*
-         * 角工序的纯说明节点没有竖式图：整张卡片直接画说明文字，
-         * 不再画标题行与预览，保证与页面上的说明卡片一致。
-         */
-        if (node.kind === "angle-note" && !node.state) {
-            const NOTE_FONT = '400 11px "Microsoft YaHei", "Noto Sans SC", sans-serif';
-
-            const noteLines = wrapAnalysisText(
-                ctx,
-                node.title || "",
-                NOTE_FONT,
-                Math.max(20, r.width - 16),
-                false);
-
-            ctx.font = NOTE_FONT;
-            ctx.fillStyle = "#5B5B66";
-            ctx.textAlign = "left";
-            ctx.textBaseline = "top";
-
-            const maxLines = Math.max(1, Math.floor((r.height - 16) / 15));
-
-            for (let line = 0; line < Math.min(maxLines, noteLines.length); line++) {
-                let text = noteLines[line];
-
-                if (line === maxLines - 1 && noteLines.length > maxLines) {
-                    text += "…";
-                }
-
-                ctx.fillText(text, r.x + 8, r.y + 8 + line * 15);
-            }
-
-            continue;
-        }
 
         // 标题最多两行，与页面卡片一致
         ctx.font = TITLE_FONT;
@@ -3812,8 +3768,9 @@ function drawAnalysisAxisBlocks(ctx, layout, left, top, cardWidth) {
  * 角的工序导出：每列一张卡片。
  *
  * 卡片 = 标题行（角 N · 简单角 / 碎晶角 · 构造 X）+ 内容：
- * 简单角一行说明；碎晶角一条步骤节点链（Graph）；未完全验证时在节点链后
- * 追加「该列工序尚未完全验证」、Note 与 Limitations 小字。
+ * 简单角一行说明；碎晶角一条步骤节点链（Graph）+ Note 步骤的小字行；
+ * 未完全验证时在节点链后追加「该列工序尚未完全验证」、Note 与 Limitations 小字。
+ * Collapse 在 C# 排版时已并入前一步、Note 只出文字，节点链里不会出现这两种节点。
  */
 const ANALYSIS_ANGLE_CARD_PADDING = 12;
 
@@ -3864,6 +3821,21 @@ const ANALYSIS_ANGLE_STATUS_COLOR = "#C62828";
 
 const ANALYSIS_ANGLE_NOTE_COLOR = "#6B6B76";
 
+/* 把导出 payload 里的字符串数组归一化成去掉空项的数组。 */
+function normalizeAnalysisStringList(raw) {
+    if (!Array.isArray(raw)) {
+        return [];
+    }
+
+    return raw
+        .map(function (value) {
+            return value === null || value === undefined ? "" : String(value);
+        })
+        .filter(function (value) {
+            return value !== "";
+        });
+}
+
 /* 把 section.angleColumns 归一化成页面/导出共用的字段，跳过空项。 */
 function normalizeAnalysisAngleColumns(rawColumns) {
     if (!Array.isArray(rawColumns)) {
@@ -3905,6 +3877,14 @@ function normalizeAnalysisAngleColumns(rawColumns) {
                     return value !== "";
                 })
             : [];
+
+        /*
+         * 说明步骤（Kind == Note）只作为文字：主链与半边链各一组，
+         * 导出时画在节点链下方，不生成节点。
+         */
+        const stepNotes = normalizeAnalysisStringList(raw.stepNotes);
+
+        const halfStepNotes = normalizeAnalysisStringList(raw.halfStepNotes);
 
         /* 半边工序：标题为空表示这一列没有半边工序，整块跳过。 */
         const halfGraph = raw.halfGraph &&
@@ -3960,6 +3940,7 @@ function normalizeAnalysisAngleColumns(rawColumns) {
                 ? ""
                 : String(raw.halfNote),
             halfLimitations: halfLimitations,
+            halfStepNotes: halfStepNotes,
             halfGraph: halfGraph,
             isSimple: !!raw.isSimple,
             isComplete: !!raw.isComplete,
@@ -3970,12 +3951,40 @@ function normalizeAnalysisAngleColumns(rawColumns) {
                 ? ""
                 : String(raw.simpleText),
             note: raw.note === null || raw.note === undefined ? "" : String(raw.note),
+            stepNotes: stepNotes,
             limitations: limitations,
             graph: graph
         });
     }
 
     return result;
+}
+
+/*
+ * 把说明步骤（Kind == Note）的文字按小字宽度换行，行首统一加「说明 · 」，
+ * 与页面上的 .angle-work-step-note 文案保持一致。不产生节点。
+ */
+function wrapAngleStepNotes(measure, notes, width) {
+    const lines = [];
+
+    if (!Array.isArray(notes)) {
+        return lines;
+    }
+
+    for (let i = 0; i < notes.length; i++) {
+        const wrapped = wrapAnalysisText(
+            measure,
+            "说明 · " + notes[i],
+            ANALYSIS_ANGLE_NOTE_FONT,
+            width,
+            false);
+
+        for (let k = 0; k < wrapped.length; k++) {
+            lines.push(wrapped[k]);
+        }
+    }
+
+    return lines;
 }
 
 /*
@@ -4083,12 +4092,19 @@ function layoutAnalysisAngleColumns(measure, rawColumns, maxWidth) {
         let bodyHeight = 0;
 
         /*
+         * 说明步骤（Kind == Note）只是一行小字：不画节点，也不占节点链宽度。
+         * 主链与半边链各自一组，换行后按小字行高计入卡片高度。
+         */
+        const stepNoteLines = wrapAngleStepNotes(measure, column.stepNotes, innerWidth);
+
+        /*
          * 半边工序：一行小标题（「半边工序 · 配对列 列 1、列 2」）+ 步骤节点链
          * + 未完成时的小字。候选名与配对列提示已经写进卡片标题行，这里不重复。
          */
         const halfTitleLines = [];
         const halfStatusLines = [];
         const halfNoteLines = [];
+        const halfStepNoteLines = [];
         const halfLimitTitleLines = [];
         const halfLimitLines = [];
         let halfGraph = null;
@@ -4120,6 +4136,18 @@ function layoutAnalysisAngleColumns(measure, rawColumns, maxWidth) {
                 halfGraphHeight = Number(halfGraph.height) || 0;
                 halfHeight += halfGraphHeight + ANALYSIS_ANGLE_GRAPH_GAP;
             }
+
+            // 半边链的说明步骤同样只在链下方以小字列出。
+            const halfStepWrapped = wrapAngleStepNotes(
+                measure,
+                column.halfStepNotes,
+                innerWidth);
+
+            for (let k = 0; k < halfStepWrapped.length; k++) {
+                halfStepNoteLines.push(halfStepWrapped[k]);
+            }
+
+            halfHeight += halfStepNoteLines.length * ANALYSIS_ANGLE_NOTE_LINE_HEIGHT;
 
             if (!column.halfIsComplete) {
                 const halfStatusText = column.halfStatusText || "该半边工序尚未完全验证";
@@ -4211,6 +4239,9 @@ function layoutAnalysisAngleColumns(measure, rawColumns, maxWidth) {
                 bodyHeight += graphHeight + ANALYSIS_ANGLE_GRAPH_GAP;
             }
 
+            // 说明步骤（Note）不画节点，只按小字行追加在节点链下方。
+            bodyHeight += stepNoteLines.length * ANALYSIS_ANGLE_NOTE_LINE_HEIGHT;
+
             // 半边工序的步骤链画在主链之后、子配方步骤名之前，与页面卡片顺序一致。
             bodyHeight += halfHeight;
 
@@ -4292,6 +4323,7 @@ function layoutAnalysisAngleColumns(measure, rawColumns, maxWidth) {
             simpleLines: simpleLines,
             statusLines: statusLines,
             noteLines: noteLines,
+            stepNoteLines: stepNoteLines,
             limitationTitleLines: limitationTitleLines,
             limitationLines: limitationLines,
             subRecipeLines: subRecipeLines,
@@ -4300,6 +4332,7 @@ function layoutAnalysisAngleColumns(measure, rawColumns, maxWidth) {
             halfTitleLines: halfTitleLines,
             halfStatusLines: halfStatusLines,
             halfNoteLines: halfNoteLines,
+            halfStepNoteLines: halfStepNoteLines,
             halfLimitTitleLines: halfLimitTitleLines,
             halfLimitLines: halfLimitLines,
             halfGraph: halfGraph,
@@ -4378,6 +4411,19 @@ function drawAnalysisAngleColumns(ctx, layout, left, top, cardWidth) {
             if (card.graph) {
                 drawAnalysisPathGraph(ctx, card.graph, innerLeft, cursorY);
                 cursorY += card.graphHeight + ANALYSIS_ANGLE_GRAPH_GAP;
+            }
+
+            // Note 步骤只在节点链下方画一行小字，不画节点。
+            if (card.stepNoteLines.length > 0) {
+                ctx.font = ANALYSIS_ANGLE_NOTE_FONT;
+                ctx.fillStyle = ANALYSIS_ANGLE_NOTE_COLOR;
+                ctx.textAlign = "left";
+                ctx.textBaseline = "top";
+
+                for (let j = 0; j < card.stepNoteLines.length; j++) {
+                    ctx.fillText(card.stepNoteLines[j], innerLeft, cursorY);
+                    cursorY += ANALYSIS_ANGLE_NOTE_LINE_HEIGHT;
+                }
             }
 
             // 半边工序的步骤链紧跟在主链下方，与页面卡片顺序一致。
@@ -4476,6 +4522,19 @@ function drawAnalysisAngleHalf(ctx, card, left, top) {
     if (card.halfGraph) {
         drawAnalysisPathGraph(ctx, card.halfGraph, left, cursorY);
         cursorY += card.halfGraphHeight + ANALYSIS_ANGLE_GRAPH_GAP;
+    }
+
+    // 半边链的 Note 步骤同样只在链下方画一行小字，不画节点。
+    if (card.halfStepNoteLines.length > 0) {
+        ctx.font = ANALYSIS_ANGLE_NOTE_FONT;
+        ctx.fillStyle = ANALYSIS_ANGLE_NOTE_COLOR;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+
+        for (let j = 0; j < card.halfStepNoteLines.length; j++) {
+            ctx.fillText(card.halfStepNoteLines[j], left, cursorY);
+            cursorY += ANALYSIS_ANGLE_NOTE_LINE_HEIGHT;
+        }
     }
 
     if (!card.halfIsComplete) {

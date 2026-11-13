@@ -2746,16 +2746,25 @@ button {
     padding-right: 34px;
 }
 
-/* 纯说明步骤：没有竖式图，整张卡片展示说明文字 */
-.angle-note-body {
-    flex: 1 1 auto;
-    min-width: 0;
-    min-height: 0;
-    overflow: hidden;
+/*
+ * Note 步骤只作为文字说明：在节点链下方逐行显示小字，不画节点。
+ * 行首的「说明 · 」由 CSS 统一加上，页面与导出图保持同一措辞。
+ */
+.angle-work-step-notes {
+    margin: 6px 0 0;
+}
+
+.angle-work-step-note {
+    margin: 0;
     font-size: 11px;
-    line-height: 15px;
-    color: #5b5b66;
+    line-height: 17px;
+    color: #6b6b76;
     word-break: break-word;
+}
+
+.angle-work-step-note::before {
+    content: "说明 · ";
+    color: #9a9aa5;
 }
 
 /* 步骤类型：边框与右上角标签都使用不同颜色 */
@@ -2771,12 +2780,6 @@ button {
     background: #fff1f1;
 }
 
-.angle-node.angle-kind-collapse {
-    border-color: #b26a00;
-    border-width: 2px;
-    background: #fff8ee;
-}
-
 .angle-node.angle-kind-pin {
     border-color: #0e7c86;
     border-width: 2px;
@@ -2790,7 +2793,7 @@ button {
     background: #eef1fc;
 }
 
-/* 构造 C 的逐层堆叠步骤：与「堆」标签同一橙色，靠标签与「落」区分 */
+/* 构造 C 的逐层堆叠步骤：与「堆」标签同一橙色 */
 .angle-node.angle-kind-stack {
     border-color: #b26a00;
     border-width: 2px;
@@ -2821,10 +2824,6 @@ button {
 
 .angle-node.angle-kind-cut .path-node-kind {
     background: #c62828;
-}
-
-.angle-node.angle-kind-collapse .path-node-kind {
-    background: #b26a00;
 }
 
 .angle-node.angle-kind-pin .path-node-kind {
