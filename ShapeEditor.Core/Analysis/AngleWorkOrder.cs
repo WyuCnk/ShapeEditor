@@ -1165,6 +1165,24 @@ public static partial class AngleWorkOrderBuilder
             case AngleAlgorithm.Algorithm5:
             {
                 /*
+                 * 算法 5（底格是针）：先试构造性构造 H（docs §18.4）。
+                 * 底针位置用临时晶体顶住（Pin 会把它补成针），其余按 I/J 算。
+                 */
+                AngleWorkOrder? constructedH = TryBuildConstructedH(
+                    target,
+                    column,
+                    layers,
+                    parts,
+                    kind,
+                    AngleAlgorithm.Algorithm5,
+                    out string? constructedHFailure);
+
+                if (constructedH is not null)
+                {
+                    return constructedH;
+                }
+
+                /*
                  * 算法 5 的正解（TODO.md §7.2 的 P.T.c）：底针位置用临时晶体
                  * 顶住（前态 ccTc.），一次 Pin 把底层晶体换成顶针、同时让
                  * 引爆柱超限碎晶，再由构造 C 换回满高支撑。先试这条塔式构造，
@@ -1206,7 +1224,7 @@ public static partial class AngleWorkOrderBuilder
 
                 return h.IsComplete
                     ? Label(h, AngleAlgorithm.Algorithm5, attempt: true)
-                    : null;
+                    : ConstructHUncovered(column, kind, constructedHFailure);
             }
 
             case AngleAlgorithm.Algorithm6:
@@ -1748,6 +1766,26 @@ public static partial class AngleWorkOrderBuilder
             return null;
         }
 
+        /*
+         * 构造 H 的构造性入口（docs §18.4）：先按 I/J 直接生成前态 A/B/E/N，
+         * 再用真实 Pin 回放验收。它覆盖「D ✔ + 多个短晶体段」这一族
+         * （.T.cTc / .T.cTT.c / .T.cT.Tc / .T.T.T.cT.Tc），
+         * 不再走 support × block × fuse × 列编码的枚举。
+         */
+        AngleWorkOrder? constructedH = TryBuildConstructedH(
+            target,
+            column,
+            layers,
+            parts,
+            kind,
+            AngleAlgorithm.Algorithm6,
+            out string? constructedHFailure);
+
+        if (constructedH is not null)
+        {
+            return constructedH;
+        }
+
         // ── 第一步：底块提升 + 正规化（晶体下移一层，普通格留原位）──
         string? shiftedTower = BuildShiftedTowerColumn(
             target,
@@ -1848,87 +1886,20 @@ public static partial class AngleWorkOrderBuilder
 
         if (normalizedTower is null)
         {
-            return TryAlternativeAlgorithm6(
+            AngleWorkOrder? alternativeTower = TryAlternativeAlgorithm6(
                 target,
                 column,
                 layers,
                 kind);
+
+            return alternativeTower ?? ConstructHUncovered(column, kind, constructedHFailure);
         }
-
-        int[] aux =
-        {
-            Wrap(column - 1, parts),
-            Wrap(column + 1, parts),
-            Wrap(column + 2, parts)
-        };
-
-        var limitations = BaseLimitations(
-            "算法 6：底块提升 → 正规化 → 构造 H（一次顶针）→ 构造 C（支柱交接）。" +
-            "造塔 X 用交换链装配（rank 0），角工序的 rank 只统计这一次顶针。");
-
-        limitations.Add(
-            "X 的每一列在补一根满层柱之后都稳定，所以可以用交换链装配（§5.2 的前提）。");
-
-        limitations.Add(
-            "本档不含末步结晶：Crystallize 是全局操作，会把刚做出来的缺口填平。");
 
         /*
-         * 「缺口形态」预筛：构造 H 的落块柱每个下降通道只搬运一枚普通格。
-         * 正规化塔的晶体正下方若叠着两枚以上普通格，顶针后它们要各自落到
-         * 不同层、而晶体还必须留在原位——一次顶针做不到。
-         *
-         * 这类形态不再交给「填充+暴破」糊过去：按 TODO.md §7.4 的实测配方，
-         * 走「抬升一格（§7.5 规则二）+ 定点碎晶两刀（构造 D）+ 托柱该层换
-         * 顶针（规则一/构造 E）+ 构造 C」。`.TT.c` 就是这条链。
+         * 构造 H 已在函数开头按 I/J 构造性生成并回放验证过；走到这里说明它没覆盖
+         * 该形态。算法 6 还剩两条<b>确定性</b>构造，按顺序试，不做候选枚举：
+         * 两刀级联（构造 D）与 §11 通用计划（提升 + 定向碎晶）。
          */
-        /*
-         * 晶体下方有两层以上缺口时，规范托柱可能够不着顶针后的晶体。
-         * 只要不是「.T..c」这种单个普通格、单个晶体、缺口紧贴晶体的最简形态，
-         * 就先试「全高度托柱 + 结构化落块柱」的塔式枚举；
-         * 最简形态仍走规范塔 `..Tc.`，避免自子形态。
-         */
-        int leadingEmpty = 0;
-
-        while (leadingEmpty < target.LayerCount &&
-               target[leadingEmpty, column].Type == CellType.Empty)
-        {
-            leadingEmpty++;
-        }
-
-        int crystalCount = 0;
-
-        for (int probe = 0; probe < target.LayerCount; probe++)
-        {
-            if (target[probe, column].Type == CellType.Crystal)
-            {
-                crystalCount++;
-            }
-        }
-
-        bool simpleSingle =
-            CountSolids(normalizedTower) <= 1 &&
-            crystalCount <= 1 &&
-            leadingEmpty <= 1;
-
-        if (CountGapsBelowHighest(target, column) >= 2 &&
-            !simpleSingle)
-        {
-            AngleWorkOrder? broadTower = TryBuildTowerStyleOrder(
-                target,
-                column,
-                layers,
-                parts,
-                kind,
-                allowBottomPin: false,
-                AngleAlgorithm.Algorithm6,
-                forceBroad: true);
-
-            if (broadTower is not null)
-            {
-                return broadTower;
-            }
-        }
-
         if (!CanUseConstructH(normalizedTower))
         {
             AngleWorkOrder? twoCut = TryBuildTwoCutCascade(
@@ -1942,91 +1913,40 @@ public static partial class AngleWorkOrderBuilder
             {
                 return twoCut;
             }
-
-            return shiftedTower[0] != ShapeSignature.EmptyCode
-                ? TryAlternativeAlgorithm6(target, column, layers, kind)
-                : null;
         }
 
-        /*
-         * 塔列优先用「缺口错开层」的变体：普通格不留在缺口下方，而是紧贴
-         * 晶体，由落块柱完成最后一层位移。这样塔的目标列不会再包含一个
-         * 正在求解的子形态（例如 `.T..c` 的正规化塔 `.T.c.` 里含 `.T.c`），
-         * 否则造塔本身又要多一次顶破。正规化塔仍作为后备候选。
-         */
-        foreach (string towerColumn in EnumerateTowerColumns(
-                     target,
-                     column,
-                     layers,
-                     normalizedTower))
+        AngleWorkOrder? genericOrder = TryAlternativeAlgorithm6(
+            target,
+            column,
+            layers,
+            kind);
+
+        if (genericOrder is not null)
         {
-            foreach ((int supportPosition, int blockPosition, int fusePosition)
-                     in EnumerateRoleAssignments(aux))
-            {
-                foreach (string supportText in EnumerateSupportColumns(layers))
-                {
-                    foreach (string blockText in EnumerateBlockColumns(
-                                 towerColumn,
-                                 target,
-                                 column,
-                                 layers))
-                    {
-                        AngleWorkOrder? order = TryAlgorithm6Candidate(
-                            target,
-                            column,
-                            layers,
-                            parts,
-                            kind,
-                            towerColumn,
-                            supportText,
-                            blockText,
-                            supportPosition,
-                            blockPosition,
-                            fusePosition,
-                            limitations);
-
-                        if (order is not null)
-                        {
-                            return order;
-                        }
-                    }
-                }
-            }
+            return genericOrder;
         }
 
-        /*
-         * 晶体下方有两层以上缺口时，规范托柱可能够不着顶针后的晶体；
-         * 最后再用「全高度托柱 + 结构化落块柱」的塔式枚举试一次
-         * （T.T..c / .TT..c 一族）。标准形态在上面的规范枚举里已经返回，
-         * 不会走到这里。
-         */
-        if (CountGapsBelowHighest(target, column) >= 2)
-        {
-            AngleWorkOrder? broadTower = TryBuildTowerStyleOrder(
-                target,
-                column,
-                layers,
-                parts,
-                kind,
-                allowBottomPin: false,
-                AngleAlgorithm.Algorithm6,
-                forceBroad: true);
+        return ConstructHUncovered(column, kind, constructedHFailure);
+    }
 
-            if (broadTower is not null)
-            {
-                return broadTower;
-            }
-        }
-
-        /*
-         * 算法 6 的「底块提升」在普通格无法直接抬进缺口时（例如 T.T..c：
-         * 最下方普通块上方还是空，构造 H 的托柱补不出来），交给 §11 的
-         * 通用计划；只有这种底层非空的形态才走昂贵后备，底层已空的普通形态
-         * 继续交给原有兜底链，避免把简单形态拖慢。
-         */
-        return shiftedTower[0] != ShapeSignature.EmptyCode
-            ? TryAlternativeAlgorithm6(target, column, layers, kind)
-            : null;
+    /// <summary>
+    /// 构造 H 的构造性生成失败时的「未覆盖」单：<b>不回退枚举搜索</b>，
+    /// 只如实写明缺哪条规则（docs §18.4）。
+    /// </summary>
+    private static AngleWorkOrder ConstructHUncovered(
+        int column,
+        AngleBuildKind kind,
+        string? reason)
+    {
+        return Incomplete(
+            column,
+            kind,
+            "构造 H（按 I/J 构造性生成）未覆盖：" +
+            (reason ?? "前态没有通过真实 Pin 回放"),
+            BaseLimitations(
+                "构造 H 只按 docs §18.4 的 I/J 规则直接生成 A/B/E/N，" +
+                "不做 support × block × fuse 的候选枚举；生成或回放验证失败即报未覆盖。"),
+            construction: AngleConstruction.H);
     }
 
     /// <summary>
@@ -2053,34 +1973,6 @@ public static partial class AngleWorkOrderBuilder
         }
 
         return null;
-    }
-
-    /// <summary>
-    /// 最高晶体下方（第 1 层到晶体下方一层）的空格数。
-    /// 用来区分「单层缺口」与「多层缺口」这类结构谓词，层号全部由扫描得出。
-    /// </summary>
-    private static int CountGapsBelowHighest(
-        ShapeDocument target,
-        int column)
-    {
-        int highest = AngleClassifier.HighestCrystalLayer(target, column);
-
-        if (highest < 0)
-        {
-            return 0;
-        }
-
-        int gaps = 0;
-
-        for (int layer = 1; layer < highest; layer++)
-        {
-            if (target[layer, column].Type == CellType.Empty)
-            {
-                gaps++;
-            }
-        }
-
-        return gaps;
     }
 
     /// <summary>
@@ -2114,39 +2006,6 @@ public static partial class AngleWorkOrderBuilder
         }
 
         return stackedSolids <= 1;
-    }
-
-    /// <summary>
-    /// 塔列候选：优先「缺口错开层」的变体，其次压缩缺口的变体，
-    /// 最后才是正规化塔列。全部由沿列扫描得出。
-    /// </summary>
-    private static IEnumerable<string> EnumerateTowerColumns(
-        ShapeDocument target,
-        int column,
-        int layers,
-        string normalizedTower)
-    {
-        string? offset = OffsetGapBelowCrystal(normalizedTower);
-
-        if (offset is not null &&
-            !string.Equals(offset, normalizedTower, StringComparison.Ordinal))
-        {
-            yield return offset;
-        }
-
-        yield return normalizedTower;
-
-        string? compressed = CompressGapBelowCrystal(
-            target,
-            column,
-            layers);
-
-        if (compressed is not null &&
-            !string.Equals(compressed, normalizedTower, StringComparison.Ordinal) &&
-            !string.Equals(compressed, offset, StringComparison.Ordinal))
-        {
-            yield return compressed;
-        }
     }
 
     /// <summary>
@@ -2220,48 +2079,6 @@ public static partial class AngleWorkOrderBuilder
         cells[crystal] = ShapeSignature.EmptyCode;
 
         return new string(cells);
-    }
-
-    /// <summary>
-    /// 把「普通格 / 空 / 晶体」的纵向缺口错开一层：普通格上移，紧贴晶体。
-    ///
-    /// <para>
-    /// 正规化塔列把晶体下移一层、普通格留在原位，于是普通格与晶体之间
-    /// 隔着一个空格。例如 <c>.T..c</c> 的塔列 <c>.T.c.</c> 前四层正好是
-    /// 子形态 <c>.T.c</c>。把普通格上移一格得到 <c>..Tc.</c>，缺口落到
-    /// 普通格下方，塔列里不再出现这个子形态，造塔可以一次成型。
-    /// </para>
-    /// </summary>
-    private static string? OffsetGapBelowCrystal(
-        string towerColumn)
-    {
-        char[] cells = towerColumn.ToCharArray();
-
-        bool changed = false;
-
-        int index = 0;
-
-        while (index + 2 < cells.Length)
-        {
-            bool matches =
-                cells[index] == ShapeSignature.SolidCode &&
-                cells[index + 1] == ShapeSignature.EmptyCode &&
-                cells[index + 2] == ShapeSignature.CrystalCode;
-
-            if (!matches)
-            {
-                index++;
-                continue;
-            }
-
-            cells[index] = ShapeSignature.EmptyCode;
-            cells[index + 1] = ShapeSignature.SolidCode;
-
-            changed = true;
-            index += 2;
-        }
-
-        return changed ? new string(cells) : null;
     }
 
     /// <summary>
@@ -2345,277 +2162,6 @@ public static partial class AngleWorkOrderBuilder
         }
 
         return new string(cells);
-    }
-
-    /// <summary>
-    /// 三根辅助列的角色分配：支撑柱 S、落块柱 B、引爆柱 F。
-    /// 穷举 3! 种分配（环上位置固定为角列两侧与角列 +2 列）。
-    /// </summary>
-    private static IEnumerable<(int Support, int Block, int Fuse)>
-        EnumerateRoleAssignments(int[] aux)
-    {
-        yield return (aux[0], aux[1], aux[2]);
-        yield return (aux[1], aux[0], aux[2]);
-        yield return (aux[2], aux[1], aux[0]);
-        yield return (aux[1], aux[2], aux[0]);
-        yield return (aux[0], aux[2], aux[1]);
-        yield return (aux[2], aux[0], aux[1]);
-    }
-
-    /// <summary>
-    /// 支撑柱候选：第 1–h 层普通格，并在第 p 层放一枚针（顶针后针上移一层，
-    /// 用来托住目标列在目标层的晶体）；外加满高纯普通柱。
-    /// </summary>
-    private static IEnumerable<string> EnumerateSupportColumns(
-        int layers)
-    {
-        if (layers < 2)
-        {
-            yield break;
-        }
-
-        for (int height = 2; height <= layers; height++)
-        {
-            for (int pin = 1; pin < height; pin++)
-            {
-                char[] cells = new string(
-                        ShapeSignature.SolidCode,
-                        height)
-                    .ToCharArray();
-
-                cells[pin] = ShapeSignature.PinCode;
-
-                yield return new string(cells) +
-                             new string(
-                                 ShapeSignature.EmptyCode,
-                                 layers - height);
-            }
-        }
-
-        yield return new string(ShapeSignature.SolidCode, layers);
-    }
-
-    /// <summary>
-    /// 落块柱候选：底层放一枚晶体（与引爆柱同簇，顶针后一起碎掉），
-    /// 上面在目标列的普通格所在层放普通格——顶针把它们抬起一层，
-    /// 碎晶后它们和目标列的普通格一起整批落回目标层。
-    /// </summary>
-    private static IEnumerable<string> EnumerateBlockColumns(
-        string towerColumn,
-        ShapeDocument target,
-        int column,
-        int layers)
-    {
-        var solidLayers = new List<int>();
-
-        for (int layer = 0; layer < layers; layer++)
-        {
-            if (layer < target.LayerCount &&
-                target[layer, column].Type == CellType.Shape)
-            {
-                solidLayers.Add(layer);
-            }
-        }
-
-        // 先试「只补目标列普通格所在层」，再逐层加高，最后是满高柱。
-        for (int height = 1; height < layers; height++)
-        {
-            for (int variant = 0; variant < 2; variant++)
-            {
-                var cells = new char[layers];
-
-                Array.Fill(cells, ShapeSignature.EmptyCode);
-
-                cells[0] = ShapeSignature.CrystalCode;
-
-                if (variant == 0)
-                {
-                    foreach (int solid in solidLayers)
-                    {
-                        if (solid > 0)
-                        {
-                            cells[solid] = ShapeSignature.SolidCode;
-                        }
-                    }
-                }
-                else
-                {
-                    for (int layer = 1; layer <= height; layer++)
-                    {
-                        cells[layer] = ShapeSignature.SolidCode;
-                    }
-                }
-
-                yield return new string(cells);
-            }
-        }
-
-        // 满高落块柱：底晶 + 上面全普通格。
-        yield return
-            ShapeSignature.CrystalCode +
-            new string(ShapeSignature.SolidCode, layers - 1);
-
-        /*
-         * 「缺口错开层」用的落块柱：晶体段从地面连续到塔列晶体下方，
-         * 上面两格是普通格（分别对齐塔列晶体与其下方那格）。
-         * 顶针后引爆柱把这段晶体整簇打碎，这两枚普通格正好带着
-         * 目标列的普通格落到目标层——`.T..c` 的一次成型塔就靠它。
-         */
-        int crystalLayer = towerColumn.LastIndexOf(
-            ShapeSignature.CrystalCode);
-
-        if (crystalLayer >= 2 && crystalLayer < layers)
-        {
-            var cells = new char[layers];
-
-            Array.Fill(cells, ShapeSignature.EmptyCode);
-
-            for (int layer = 0; layer < crystalLayer - 1; layer++)
-            {
-                cells[layer] = ShapeSignature.CrystalCode;
-            }
-
-            cells[crystalLayer - 1] = ShapeSignature.SolidCode;
-            cells[crystalLayer] = ShapeSignature.SolidCode;
-
-            yield return new string(cells);
-        }
-    }
-
-    /// <summary>把一份候选塔装出来并用真实物理回放整条链。</summary>
-    private static AngleWorkOrder? TryAlgorithm6Candidate(
-        ShapeDocument target,
-        int column,
-        int layers,
-        int parts,
-        AngleBuildKind kind,
-        string towerColumn,
-        string supportText,
-        string blockText,
-        int supportPosition,
-        int blockPosition,
-        int fusePosition,
-        List<string> limitations)
-    {
-        var tower = new ShapeDocument(layers, parts);
-
-        /*
-         * 角列的晶体颜色必须与目标一致：顶针保留颜色，
-         * 否则顶针后目标列会因颜色不同而对不上。
-         */
-        char crystalColor = CrystalColor(target, column);
-
-        WriteColumn(tower, column, towerColumn, crystalColor);
-        WriteColumn(tower, supportPosition, supportText, crystalColor);
-        WriteColumn(tower, blockPosition, blockText, crystalColor);
-        WriteColumn(
-            tower,
-            fusePosition,
-            new string(ShapeSignature.CrystalCode, layers),
-            crystalColor);
-
-        // ── 构造 H 的复用前提（§5.2）：先看稳定与五项条件 ──
-        if (!ShapeOps.IsStable(tower) ||
-            !ShapeSignature.AllColumnsLegal(tower, out _))
-        {
-            return null;
-        }
-
-        /*
-         * 先用「缺口形态」筛：先做最便宜的真实顶针，只有顶针后目标列
-         * 逐格等于目标的候选才值得去跑昂贵的交换链装配（ExchangeChain +
-         * Replay.Verify）。这一步把 `.TT.c` 这类根本走不通的形态挡在
-         * 交换链枚举之外，耗时从整圈枚举降到只剩少量候选。
-         */
-        PhysicsResult pinResult = ShapePhysics.Pin(tower);
-
-        if (!pinResult.Success || pinResult.Document is null)
-        {
-            return null;
-        }
-
-        ShapeDocument pinned = pinResult.Document;
-
-        if (!MatchesTargetColumn(
-                pinned,
-                target,
-                column,
-                layers,
-                out _))
-        {
-            return null;
-        }
-
-        // ── 造塔子配方：只允许交换链（rank 0），并端到端校验 ──
-        if (!ExchangeChain.TryBuild(tower, out Recipe? subRecipe) ||
-            subRecipe is null ||
-            subRecipe.Rank != 0 ||
-            !Replay.Verify(subRecipe, tower, out _))
-        {
-            return null;
-        }
-
-        // ── 构造 C（支柱交接）：装新支撑柱、拆旧柱与辅助列 ──
-        ShapeDocument? handover = BuildPillarHandover(
-            pinned,
-            target,
-            column,
-            layers,
-            parts,
-            out int newSupportColumn);
-
-        if (handover is null)
-        {
-            return null;
-        }
-
-        var steps = new List<AngleWorkStep>
-        {
-            new(
-                "造塔 X（子配方：交换链装配，rank 0；角列 = 目标列晶体下移一层，" +
-                "另配支撑柱/落块柱/引爆柱）",
-                tower,
-                AngleWorkStepKind.PreState),
-
-            new(
-                "顶针：一次 Pin 把塔整体抬一层——引爆柱顶端超限整簇碎裂，" +
-                "落块柱带着目标列的普通格落回目标层",
-                pinned,
-                AngleWorkStepKind.Pin),
-
-            new(
-                $"构造 C：装新支撑柱（第 {newSupportColumn + 1} 象限满高普通柱），" +
-                "拆掉旧柱与辅助列，目标列逐格保持",
-                handover,
-                AngleWorkStepKind.Support),
-
-            new(
-                "清除辅助象限，得到目标角（S 形态）",
-                target,
-                AngleWorkStepKind.Target)
-        };
-
-        return new AngleWorkOrder(
-            column,
-            kind,
-            steps,
-            null)
-        {
-            IsComplete = true,
-            TargetColumnHasSubRecipe = true,
-            Construction = AngleConstruction.C,
-            Algorithm = AngleAlgorithm.Algorithm6,
-            Rotation = 0,
-            AuxiliaryColumns = new[]
-            {
-                supportPosition,
-                blockPosition,
-                fusePosition
-            },
-            SubRecipe = subRecipe,
-            Rank = 1,
-            Limitations = limitations
-        };
     }
 
     /// <summary>
@@ -7027,6 +6573,615 @@ public static partial class AngleWorkOrderBuilder
             AuxiliaryColumns = auxiliaryColumns,
             Limitations = limitations
         };
+    }
+
+    #endregion
+
+    #region 构造 H（构造性生成：按 I/J 算，不枚举）
+
+    /// <summary>
+    /// 构造性构造 H（docs §18.4）：由目标列<b>扫描</b>出四列 <c>A | B | E | N</c>，
+    /// 再用真实 <see cref="ShapePhysics.Pin"/> 回放验收。
+    /// <b>不枚举候选、不靠搜索凑</b>：失败就返回 null，由调用方如实报未覆盖。
+    ///
+    /// <para><b>两种确定性形态（先后各试一次，不枚举参数）</b>：</para>
+    /// <list type="number">
+    /// <item><b>带下降通道</b>：每段晶体（连续 <c>c</c>）的正下方为空 ⇒ 这个空段是
+    /// 「通道」：通道最下面一格普通格是源（落点 <c>d</c>），通道顶端是源层
+    /// <c>s = 空段顶</c>；把源格提到前态 <c>s−1</c> 层，顶针后沿通道落回 d。
+    /// 快通道保证目标列的原生晶体与临时晶体之间隔着普通格，碎晶不会误伤。</item>
+    /// <item><b>无下降通道</b>（A = 目标列下移一层）：Pin 之后每格本来就在目标层，
+    /// 只需要碎掉临时晶体。</item>
+    /// </list>
+    ///
+    /// <para><b>底层规则</b>：Pin 只给「第 1 层非空」的列补针。</para>
+    /// <list type="bullet">
+    /// <item>目标底层为空 ⇒ 前态第 1 层必须为空：把最下方连续普通块整体上抬一层，
+    /// 逐个记录下降（源层 <c>s = d+1</c>），顶针后逐对落回；</item>
+    /// <item>目标底层是针 ⇒ 第 1 层垫一枚临时晶体（Pin 把它补成针，晶体本身被炸掉）。</item>
+    /// </list>
+    ///
+    /// <para><b>四列</b>：A = 目标列整体下移一层（源格放到前态 s−1 层）；
+    /// B：前态第 z 层放晶体 ⇔ <c>z+1 ∈ I</c>，其余普通格；
+    /// E：满高纯晶体柱（顶针时顶端超限整根碎掉，用来引爆）；
+    /// N：前态第 z 层放针 ⇔ <c>z+1 ∈ J</c>，其余普通格。
+    /// <c>I = ∪[d, s−1]</c> 并上每段临时晶体的最高层，<c>J = 所有源层 s</c>。</para>
+    ///
+    /// <para>
+    /// 目标列的洞先填同层临时晶体（通道 / 紧列化），填不了的（会与原生晶体纵向
+    /// 融合、或填了过不了五项条件）就撤掉；第 1 层始终保留为空/针。
+    /// A 若仍带洞，用交换链子配方（<see cref="ExchangeChain"/> +
+    /// <see cref="Replay"/>.Verify）证明可造，拿不到就如实报未覆盖。
+    /// </para>
+    /// </summary>
+    private static AngleWorkOrder? TryBuildConstructedH(
+        ShapeDocument target,
+        int column,
+        int layers,
+        int parts,
+        AngleBuildKind kind,
+        AngleAlgorithm algorithm,
+        out string? failureReason)
+    {
+        /*
+         * 两种<b>确定性</b>形态，先后各试一次，不枚举参数：
+         * ① 先把「晶体正下方空段」的普通格整体提到空段顶端（A 里形成可碎掉的
+         *    通道；目标列的原生晶体与临时晶体之间被普通格隔开，碎晶不会误伤）；
+         * ② ① 不成立时，直接取 A = 目标列下移一层（Pin 之后每格正好落在目标层）。
+         * 两种都只按扫描出的层号生成，失败就如实报未覆盖。
+         */
+        AngleWorkOrder? lifted = TryBuildConstructedHCore(
+            target,
+            column,
+            layers,
+            parts,
+            kind,
+            algorithm,
+            liftGapSources: true,
+            out string? liftedFailure);
+
+        if (lifted is not null)
+        {
+            failureReason = null;
+            return lifted;
+        }
+
+        AngleWorkOrder? plain = TryBuildConstructedHCore(
+            target,
+            column,
+            layers,
+            parts,
+            kind,
+            algorithm,
+            liftGapSources: false,
+            out string? plainFailure);
+
+        failureReason = plain is not null
+            ? null
+            : $"带下降通道：{liftedFailure}；无下降通道：{plainFailure}";
+
+        return plain;
+    }
+
+    /// <summary>
+    /// 构造性构造 H 的单次尝试。<paramref name="liftGapSources"/> 决定是否把
+    /// 「晶体正下方空段」里的普通格提到空段顶端（形成可碎的下降通道）。
+    /// </summary>
+    private static AngleWorkOrder? TryBuildConstructedHCore(
+        ShapeDocument target,
+        int column,
+        int layers,
+        int parts,
+        AngleBuildKind kind,
+        AngleAlgorithm algorithm,
+        bool liftGapSources,
+        out string? failureReason)
+    {
+        failureReason = null;
+
+        if (parts != 4)
+        {
+            failureReason = "构造 H 需要四象限的环（A | B | E | N）。";
+            return null;
+        }
+
+        if (layers < 2 || layers < target.LayerCount)
+        {
+            failureReason = "cap 装不下目标列的完整高度，构造 H 的前态放不下。";
+            return null;
+        }
+
+        // 顶针会在前态第 1 层非空的位置补针：目标底层必须是针或空。
+        if (target[0, column].Type is not (CellType.Pin or CellType.Empty))
+        {
+            failureReason = "构造 H 的顶针会在第 1 层补针，目标底层必须是针或空。";
+            return null;
+        }
+
+        char color = CrystalColor(target, column);
+
+        var targetCodes = new char[layers];
+
+        for (int layer = 0; layer < layers; layer++)
+        {
+            targetCodes[layer] = CodeOf(
+                layer < target.LayerCount
+                    ? target[layer, column]
+                    : ShapeCell.Empty());
+        }
+
+        // ── A：目标列整体下移一层（Pin 会把整体抬起一层，正号抵消）──
+
+        var columnCells = new ShapeCell[layers];
+
+        for (int layer = 0; layer < layers; layer++)
+        {
+            columnCells[layer] = layer + 1 < target.LayerCount
+                ? target[layer + 1, column].Clone()
+                : ShapeCell.Empty();
+        }
+
+        var descents = new List<(int D, int S)>();
+
+        bool MoveSource(int d, int s)
+        {
+            if (d < 1 || s <= d || s > layers || d >= layers)
+            {
+                return false;
+            }
+
+            if (columnCells[d - 1].Type == CellType.Empty ||
+                columnCells[s - 1].Type != CellType.Empty)
+            {
+                return false;
+            }
+
+            // 源格必须就是目标 d 层的材料（A 的下移保证它在 d−1 层）。
+            if (CodeOf(columnCells[d - 1]) != targetCodes[d])
+            {
+                return false;
+            }
+
+            columnCells[s - 1] = columnCells[d - 1];
+            columnCells[d - 1] = ShapeCell.Empty();
+            descents.Add((d, s));
+
+            return true;
+        }
+
+        /*
+         * ⓪（可选）晶体正下方的空段：通道最下面的普通格是源，通道顶端是源层
+         * s。把它提到 s 层，A 里就多出一段「可碎掉的通道」——目标列的原生晶体
+         * 与临时晶体之间被这枚普通格隔开，碎晶不会连带炸掉目标晶体。
+         */
+        if (liftGapSources)
+        {
+            for (int bottom = 1; bottom < layers; bottom++)
+            {
+                if (targetCodes[bottom] != ShapeSignature.CrystalCode ||
+                    targetCodes[bottom - 1] != ShapeSignature.EmptyCode)
+                {
+                    continue;
+                }
+
+                int lo = bottom - 1;
+
+                while (lo > 0 && targetCodes[lo - 1] == ShapeSignature.EmptyCode)
+                {
+                    lo--;
+                }
+
+                int d = lo - 1;
+
+                if (d < 1 || targetCodes[d] != ShapeSignature.SolidCode)
+                {
+                    continue;
+                }
+
+                MoveSource(d, bottom - 1);
+            }
+        }
+
+        /*
+         * ① 目标底层为空 ⇒ 前态第 1 层必须为空：Pin 只给「第 1 层非空」的列补针，
+         * 而目标第 1 层是空的，所以压在第 1 层的最下方连续普通块要整体上抬一层，
+         * 顶针后再按「从下到上」逐对落回（每一对都压在前一对刚补上的位置）。
+         */
+        if (targetCodes[0] != ShapeSignature.PinCode &&
+            columnCells[0].Type != CellType.Empty)
+        {
+            int run = 1;
+
+            while (run + 1 < layers &&
+                   targetCodes[run + 1] == ShapeSignature.SolidCode)
+            {
+                run++;
+            }
+
+            bool lifted = targetCodes[1] == ShapeSignature.SolidCode;
+
+            for (int d = run; lifted && d >= 1; d--)
+            {
+                lifted = MoveSource(d, d + 1);
+            }
+
+            if (!lifted)
+            {
+                failureReason =
+                    "目标底层为空，但第 1 层的普通块上方没有空位可抬，" +
+                    "前态第 1 层无法清空（Pin 会补出多余的针）。";
+                return null;
+            }
+        }
+
+        // ── 目标列的洞填成临时晶体（通道 + 紧列化）：第 1 层除外 ──
+
+        var temporary = new bool[layers];
+
+        void FillRun(int lo, int hi)
+        {
+            for (int layer = Math.Max(lo, 0); layer <= hi && layer < layers; layer++)
+            {
+                if (columnCells[layer].Type != CellType.Empty)
+                {
+                    continue;
+                }
+
+                columnCells[layer] = ShapeCell.Crystal(color);
+                temporary[layer] = true;
+            }
+        }
+
+        foreach ((int d, int s) in descents)
+        {
+            int anchor = d - 1;
+
+            if (columnCells[anchor].Type != CellType.Empty)
+            {
+                continue;
+            }
+
+            int lo = anchor;
+            int hi = anchor;
+
+            while (lo > 0 && columnCells[lo - 1].Type == CellType.Empty)
+            {
+                lo--;
+            }
+
+            while (hi + 1 < layers && columnCells[hi + 1].Type == CellType.Empty)
+            {
+                hi++;
+            }
+
+            // 目标底层不是针 ⇒ 第 1 层必须保持为空。
+            FillRun(
+                targetCodes[0] == ShapeSignature.PinCode ? lo : Math.Max(lo, 1),
+                hi);
+        }
+
+        /*
+         * 目标底层是针、但前态第 1 层仍为空：Pin 只会给「第 1 层非空」的列补针，
+         * 所以第 1 层必须垫临时晶体（Pin 把它补成针，晶体本身抬到第 2 层）。
+         * 它必须与 B 的晶体桥同层相连才会被引爆柱带走 ⇒ 层 1 并入 I。
+         */
+        if (targetCodes[0] == ShapeSignature.PinCode &&
+            columnCells[0].Type == CellType.Empty)
+        {
+            FillRun(0, 0);
+        }
+
+        // 紧列化：把「底到顶」之间的洞也填成临时晶体（末尾的空层不算洞）。
+        int top = layers - 1;
+
+        while (top >= 0 && columnCells[top].Type == CellType.Empty)
+        {
+            top--;
+        }
+
+        for (int layer = targetCodes[0] == ShapeSignature.PinCode ? 0 : 1;
+             layer <= top;
+             layer++)
+        {
+            if (columnCells[layer].Type == CellType.Empty)
+            {
+                FillRun(layer, layer);
+            }
+        }
+
+        /*
+         * 紧列化只是「让 A 可造」的增强项：临时晶体本身也要过五项条件
+         * （条件四：晶体下方有洞时，下方还必须有一枚普通格）。填完若不合法，
+         * 就整体退回「不填洞」的形态——A 带洞，后面用交换链子配方证明可造。
+         */
+        if (!IsLegalColumnCells(columnCells))
+        {
+            for (int layer = 0; layer < layers; layer++)
+            {
+                if (!temporary[layer])
+                {
+                    continue;
+                }
+
+                columnCells[layer] = ShapeCell.Empty();
+                temporary[layer] = false;
+            }
+
+            if (!IsLegalColumnCells(columnCells))
+            {
+                failureReason =
+                    "前态 A 不论是否填临时晶体都过不了五项条件" +
+                    $"（A = {ColumnCodesText(columnCells)}）。";
+                return null;
+            }
+        }
+
+        // ── I / J ──
+
+        var iLayers = new HashSet<int>();
+        var jLayers = new HashSet<int>();
+
+        /*
+         * 每段临时晶体取一个「锚层」（段的最高层，顶针后层号 = 最高下标 + 1）：
+         * B 在那一层放晶体，临时晶体才能与 B 的晶体桥同层相连、被引爆柱带走。
+         * 同时检查临时晶体没有和原生晶体纵向融合（否则碎晶会连带炸掉目标晶体）。
+         */
+        for (int layer = 0; layer < layers; layer++)
+        {
+            if (!temporary[layer] || (layer > 0 && temporary[layer - 1]))
+            {
+                continue;
+            }
+
+            int segmentTop = layer;
+
+            while (segmentTop + 1 < layers && temporary[segmentTop + 1])
+            {
+                segmentTop++;
+            }
+
+            int below = layer - 1;
+            int above = segmentTop + 1;
+
+            /*
+             * 临时晶体段与原生晶体纵向相邻 ⇒ 碎这段会连带炸掉目标晶体：
+             * 把这个临时段整体撤掉（A 相应多一个洞，由子配方证明可造）。
+             */
+            if ((below >= 0 && columnCells[below].Type == CellType.Crystal) ||
+                (above < layers && columnCells[above].Type == CellType.Crystal))
+            {
+                for (int index = layer; index <= segmentTop; index++)
+                {
+                    columnCells[index] = ShapeCell.Empty();
+                    temporary[index] = false;
+                }
+
+                continue;
+            }
+
+            iLayers.Add(segmentTop + 1);
+        }
+
+        // 撤掉部分临时晶体后仍要过五项条件；不过就整体退回「不填洞」的形态。
+        if (!IsLegalColumnCells(columnCells))
+        {
+            for (int layer = 0; layer < layers; layer++)
+            {
+                if (!temporary[layer])
+                {
+                    continue;
+                }
+
+                columnCells[layer] = ShapeCell.Empty();
+                temporary[layer] = false;
+            }
+
+            if (!IsLegalColumnCells(columnCells))
+            {
+                failureReason =
+                    "前态 A 不论是否填临时晶体都过不了五项条件" +
+                    $"（A = {ColumnCodesText(columnCells)}）。";
+                return null;
+            }
+        }
+
+        foreach ((int d, int s) in descents)
+        {
+            jLayers.Add(s);
+        }
+
+        foreach ((int d, int s) in descents)
+        {
+            for (int layer = d; layer <= s - 1; layer++)
+            {
+                iLayers.Add(layer);
+            }
+        }
+
+        var preState = new ShapeDocument(layers, parts);
+
+        for (int layer = 0; layer < layers; layer++)
+        {
+            preState[layer, column] = columnCells[layer].Clone();
+        }
+
+        int bColumn = Wrap(column + 1, parts);
+        int eColumn = Wrap(column + 2, parts);
+        int nColumn = Wrap(column - 1, parts);
+
+        for (int layer = 0; layer < layers; layer++)
+        {
+            // B：z+1 ∈ I → 晶体，否则普通格（整列紧列）。
+            preState[layer, bColumn] = iLayers.Contains(layer + 1)
+                ? ShapeCell.Crystal(color)
+                : ShapeCell.Shape('C', 'u');
+
+            // E：满高纯晶体柱。
+            preState[layer, eColumn] = ShapeCell.Crystal(color);
+
+            // N：z+1 ∈ J → 针，否则普通格（整列紧列）。
+            preState[layer, nColumn] = jLayers.Contains(layer + 1)
+                ? ShapeCell.Pin()
+                : ShapeCell.Shape('C', 'u');
+        }
+
+        if (ShapeSignature.ColumnText(preState, column) ==
+            ShapeSignature.ColumnText(target, column))
+        {
+            failureReason = "构造 H 的前态目标列与目标列相同（循环）。";
+            return null;
+        }
+
+        // A 若带洞（第 1 层必须为空），用交换链子配方证明可造。
+        bool tightTargetColumn = ShapeSignature.IsTightColumn(preState, column);
+        Recipe? subRecipe = null;
+
+        var limitations = BaseLimitations(
+            "构造 H（按 I/J 构造性生成）：A = 目标列下移一层，B 按 z+1 ∈ I 放晶体，" +
+            "E 是满高纯晶体柱，N 按 z+1 ∈ J 放针；一次 Pin 同时引爆并整批落下。");
+
+        limitations.Add(
+            $"下降表（扫描得出）：{string.Join("、", descents.Select(pair => $"{pair.S}→{pair.D}"))}；" +
+            $"I = {{{string.Join(",", iLayers.Order())}}}，J = {{{string.Join(",", jLayers.Order())}}}。");
+
+        var auxiliaryColumns = new[] { nColumn, bColumn, eColumn };
+
+        var steps = new List<AngleWorkStep>
+        {
+            new(
+                "碎晶前的角（构造 H：A | 晶体桥柱 B | 满高纯晶体柱 E | 针槽柱 N）",
+                preState,
+                AngleWorkStepKind.PreState)
+        };
+
+        // 验收条件一 / 七：前态每列五项条件 + 辅助列紧列。
+        if (IsRejectedPreState(target, column, preState, out int badPreStateColumn))
+        {
+            failureReason = DescribeIllegalPreState(preState, badPreStateColumn);
+            return null;
+        }
+
+        if (!ShapeOps.IsStable(preState))
+        {
+            failureReason = "构造 H 的前态不稳定（一次下落后会变形）。";
+            return null;
+        }
+
+        // A 带洞 ⇒ 必须是「可造」的：附带交换链子配方（rank 0），并端到端校验。
+        if (!tightTargetColumn)
+        {
+            if (!ExchangeChain.TryBuild(preState, out subRecipe) ||
+                subRecipe is null ||
+                subRecipe.Rank != 0 ||
+                !Replay.Verify(subRecipe, preState, out _))
+            {
+                failureReason =
+                    "前态 A 的第 1 层必须为空（否则 Pin 补针），A 因此带洞" +
+                    $"（A = {ShapeSignature.ColumnText(preState, column)}）；" +
+                    "交换链子配方没能装配出这份前态。";
+                return null;
+            }
+
+            limitations.Add(
+                "前态 A 的第 1 层为空且带洞，附带交换链子配方（rank 0）证明可造。");
+        }
+
+        // ── 一次顶针：真实回放 ──
+
+        PhysicsResult pinResult = ShapePhysics.Pin(preState);
+
+        if (!pinResult.Success || pinResult.Document is null)
+        {
+            failureReason = "ShapePhysics.Pin 失败：" + (pinResult.Error ?? "未知原因");
+            return null;
+        }
+
+        ShapeDocument pinned = pinResult.Document;
+
+        if (!MatchesTargetColumn(
+                pinned,
+                target,
+                column,
+                layers,
+                out string? difference))
+        {
+            failureReason = "一次顶针后的目标列与目标不符：" + difference;
+            return null;
+        }
+
+        // 结构性核对：B 的晶体桥必须已被 E 的整柱破碎连带删除。
+        for (int layer = 0; layer < layers; layer++)
+        {
+            if (pinned[layer, bColumn].Type == CellType.Crystal)
+            {
+                failureReason = "顶针后晶体桥没有全部删除，构造 H 的前提不成立。";
+                return null;
+            }
+        }
+
+        steps.Add(new AngleWorkStep(
+            "顶针：一次 Pin 把整体抬一层，E 顶端超限整簇碎裂并连带删掉 B 的晶体桥，" +
+            "源普通格沿通道落到各自的目标层",
+            pinned,
+            AngleWorkStepKind.Pin));
+
+        steps.Add(CrystallizeNote());
+
+        steps.Add(new AngleWorkStep(
+            "清除辅助象限，得到目标角",
+            target,
+            AngleWorkStepKind.Target));
+
+        return new AngleWorkOrder(
+            column,
+            kind,
+            steps,
+            null)
+        {
+            IsComplete = true,
+            TargetColumnHasSubRecipe = true,
+            Construction = AngleConstruction.H,
+            Algorithm = algorithm,
+            Rotation = 0,
+            AuxiliaryColumns = auxiliaryColumns,
+            SubRecipe = subRecipe,
+            Rank = 1,
+            Limitations = limitations
+        };
+    }
+
+    /// <summary>把一格映射回列字符串用的短代码（只为扫描下降表，不参与构造）。</summary>
+    private static char CodeOf(
+        ShapeCell cell)
+    {
+        return cell.Type switch
+        {
+            CellType.Crystal => ShapeSignature.CrystalCode,
+            CellType.Pin => ShapeSignature.PinCode,
+            CellType.Shape => ShapeSignature.SolidCode,
+            _ => ShapeSignature.EmptyCode
+        };
+    }
+
+    /// <summary>把一列格子写成短代码列文本（扫描 / 诊断用）。</summary>
+    private static string ColumnCodesText(
+        IReadOnlyList<ShapeCell> cells)
+    {
+        var chars = new char[cells.Count];
+
+        for (int index = 0; index < cells.Count; index++)
+        {
+            chars[index] = CodeOf(cells[index]);
+        }
+
+        return new string(chars);
+    }
+
+    /// <summary>一列格子的五项条件判定（扫描 / 诊断用）。</summary>
+    private static bool IsLegalColumnCells(
+        IReadOnlyList<ShapeCell> cells)
+    {
+        return ShapeSignature.CheckColumn(ColumnCodesText(cells)).IsLegal;
     }
 
     #endregion
