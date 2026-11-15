@@ -1508,5 +1508,96 @@ order   = 与 cuts 同源
 11. §15.10 / §15.11（约 1358–1409 行）：可补「G8a 的实现检查是从保险丝晶体做连通洪泛，
     连通块不得含目标列原生晶体」。
 
+### 7.19 9 层两个缺口：底块提升 + 构造 H（2026-11-14）
 
+#### 复现（修复前）
+
+docs §21.3 的两个 9 层 S 列（`Build`，cap = 9）：
+
+```
+T..cT.T.c   五项 ✔  D ✔  F ✘  S ✔  ⇒ 算法 6
+            完成=False  构造=None  算法=Algorithm6
+            note：……构造 H（按 I/J 构造性生成）未覆盖：
+                  §20.3 构造式：构造 H 的顶针会在第 1 层补针，目标底层必须是针或空
+T.T.cccTc   五项 ✔  D ✔  F ✔  S ✔  ⇒ 算法 6
+            完成=False  构造=FillBreak  算法=Algorithm6
+            前态 TcTccccTc → Cut T.T....Tc（第 5 层期望晶体实际空）
+            note：……构造 H 找不到前态；FillBreak 回放不符
+```
+
+#### 根因
+
+1. **`T..cT.T.c`（顺序问题）**：§20.3 构造式的前置检查在「底块提升」**之前**
+   就拒绝 `target[0] = T`；塔式 / 扫描路线推出的 `A = .Tc.T.Tc.` 能过 Pin 前的四项，
+   但 Pin 后第 7 层的 T 被同组落下的 B 柱拖走，实际列 `T..cTT..c`。
+   缺的是算法 6 的第一步：**先把最下方连续普通块抬一格**（A 第 1 层为空，
+   顶针不会补针），再按降表生成 A | B | E | N。
+2. **`T.T.cccTc`（降表漏段形态）**：§20.3 的「逐空段抬高普通格 / 下移晶体」
+   在 `T . c` 段上会把普通格抬高到晶体要落下的同一格（`T@7` 与 `c@8` 的
+   slot 7 冲突），且底块检查先触发。正确的降表是
+   **把 A 与目标按材料顺序逐格比对**：
+   - 底块抬一格 ⇒ `2→0`（自由落到地面）；
+   - 紧贴底块上方那格留在原位 ⇒ `3→2`（落一层，B 柱留一个实心阻挡层）；
+   - 晶体整体下移一格；
+   - 其余普通格按「顶针后就在目标层」落位（`t−1`）。
+   FillBreak 之所以失败：它把 `ccc` 段填成更大的晶体块，Cut 会把整段碎掉
+   （第 5 层晶体消失），而 H 的 B 柱只切断桥锚层、`ccc` 由 N 柱托住原地不动。
+
+#### 修法（`ShapeEditor.Core/Analysis/AngleWorkOrder.cs`，无枚举）
+
+1. **`TryBuildConstructedHLifted` / `DeriveLiftedHColumn`**：
+   - 只对「目标底层是普通格」生效；底块整体抬一格（A[1..run]），晶体下移一格；
+   - 普通格两种**确定性**落位形态（不是参数搜索）：
+     ① 统一 `t−1`（顶针后正好在目标层）；
+     ② 晶体下方（中间至多隔一格）的普通格**留在原位**，让前态保持 `T c` 紧贴、
+       洞不会贴到原生晶体下方；
+   - 降表：`s − d = 1` 在 `s−1` 层切桥，`s − d ≥ 2` 在 `s` 层切桥；`J = {s}`；
+   - 四列按 `B: z+1 ∈ I → 晶体`、`E: 全晶体`、`N: z+1 ∈ J → 针` 生成，
+     用真实 `ShapePhysics.Pin` **逐格验收**（提升与恢复都在这一次真实回放里），
+     A 带洞时仍走 `ExchangeChain`（rank 0）与 `Q1SubRecipe`（真实 Cut）。
+2. **`TryBuildConstructedHPaperCore`** 增加可选的 `overrideILayers` /
+   `overrideJLayers` / `summary` / `derivationLimitations`，让底块提升变体复用
+   同一套验收（默认参数下行为与原 §20.3 构造式完全相同）。
+3. **`TryBuildAlgorithm6`** 拆成「先跑既有候选（`TryBuildAlgorithm6Core`），
+   全部失败后才跑底块提升变体」：≤8 层已通过的形态保持原输出不变
+   （唯一变化：8 层 `T.T..ccc` 由兜底 G 变成算法 6 的 H，成功数不变）。
+
+#### 前态四列（`NINEGAP` 行）
+
+```
+T..cT.T.c  A=.TcT..Tc.  B=TcTTTcTTT  E=ccccccccc  N=TPTTTTPTT
+           降表 2→0、7→6；I={2,6}、J={2,7}（0 起）；Pin → T..cT.T.c ✔
+T.T.cccTc  A=.TTcccTc.  B=TcTTTTTTT  E=ccccccccc  N=TPPTTTTTT
+           降表 2→0、3→2；I={2}、J={2,3}（0 起）；Pin → T.T.cccTc ✔
+```
+
+#### 测试与审计（本轮）
+
+| 项 | 结果 |
+|---|---|
+| 新增测试 | `角工序:9 层两个缺口（底块提升 H）`、`角工序:9 层穷举审计` |
+| 全量测试 | **169/169** 通过（167 项原有 + 2 项新增；2 项 XFAIL claw / 二择不变） |
+| `NINEAUDIT`（9 层全枚举） | `total=262144 legal=36687 s=36508 success=36508 failures=0 falsePositives=0 fillBreak=0 constr=A=15664 C=7322 D=6752 G=160 H=6610` |
+| 9 层失败数 | **2 → 0** |
+| `AUDIT` | `total=5440 legal=2126 s=2125 success=2125 legalNonS=1 failures=0 falsePositives=0 worst=1.50ms` |
+| `LAYERAUDIT` | 7 层 `s=4320 success=4320 failures=0`；8 层 `s=12646 success=12646 failures=0` |
+| `TIGHT` / `HOLES` | `onlyAux=0 both=0`；`targetHoleNoSub=0` |
+| `CONSTR` | `A=1087 C=622 D=238 G=6 H=172`；`FILLBREAK n=0`；`COLLAPSE steps=0` |
+| `Q1AUDIT` / `ISOLATED` | `hOrders=724 paper=57 holed=282 found=270 missing=12 invalid=0`；`withPillar=1314 downgraded=604 verified=604 isolatedOrders=1054` |
+| `HALFAUDIT` | `halfComplete=6 problems=0` |
+
+#### 文档待更新（`docs/` 由开发者维护，本次未动）
+
+1. §2 分档注释：算法 6 的实际顺序是「底块提升 → §20.3 构造式 / 塔式 / 通用计划
+   →（都失败时）底块提升构造 H」；并注明「底块提升」是前态形态（A 第 1 层为空），
+   提升与恢复由一次真实 Pin 完成。
+2. §4.2 / §10 第「算法 6 第一步：底块提升」行：补「普通格落位两种形态
+   （统一 t−1 / 晶体下方留原位）」与「撞车时留在原位」的说明。
+3. §20.3 / §20.5：补「降表由 A 与目标按材料顺序逐格比对」；
+   `s−d = 1` 切 `s−1` 层、`s−d ≥ 2` 切 `s` 层；`T . c` 段晶体下移、
+   普通格留在原位（不再把普通格抬到晶体落点）。
+4. §21.1 表：9 层从 `36508 / 2` 改为 `36508 / 0`。
+5. §21.3：两个缺口改为「已修复」，并贴 `NINEGAP` 四列与 `NINEAUDIT` 行。
+6. §21.4：结论改为「≤9 层全绿（19181 + 36508 个 S 列零失败）」。
+7. §17.2 族 B：补「底块提升已在构造 H 之前执行（`TryBuildConstructedHLifted`）」。
 

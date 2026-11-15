@@ -1863,7 +1863,50 @@ public static partial class AngleWorkOrderBuilder
     /// 这里没有任何「按 n × 层数」的查表：候选由目标列的结构生成。
     /// </para>
     /// </summary>
+    /// <summary>
+    /// 算法 6：先按 §20.3 构造式 / 塔式 / 通用计划生成；全部失败且目标底层是
+    /// 普通格时，再做一次<b>底块提升</b>构造 H（docs §21.3 ① / §20.5）。
+    ///
+    /// <para>
+    /// 底块提升放在所有既有候选<b>之后</b>：既有候选已经覆盖的形态（<c>T.T.c</c>、
+    /// <c>T.T..c</c> 等）保持原输出不变，只有它们都回放失败、且底层又是普通格时
+    /// 才用这条推导。实测（≤9 层穷举）只有 9 层的 <c>T..cT.T.c</c>、<c>T.T.cccTc</c>
+    /// 与 8 层的 <c>T.T..ccc</c> 会走到这里；前两者是 docs §21.3 的缺口，
+    /// 最后一个原先由兜底构造 G 完成、现在改由算法 6 的 H 完成（成功数不变）。
+    /// </para>
+    /// </summary>
     private static AngleWorkOrder? TryBuildAlgorithm6(
+        ShapeDocument target,
+        int column,
+        int layers,
+        int parts,
+        AngleBuildKind kind)
+    {
+        AngleWorkOrder? core = TryBuildAlgorithm6Core(
+            target,
+            column,
+            layers,
+            parts,
+            kind);
+
+        if (core is { IsComplete: true })
+        {
+            return core;
+        }
+
+        AngleWorkOrder? lifted = TryBuildConstructedHLifted(
+            target,
+            column,
+            layers,
+            parts,
+            kind,
+            AngleAlgorithm.Algorithm6,
+            out _);
+
+        return lifted ?? core;
+    }
+
+    private static AngleWorkOrder? TryBuildAlgorithm6Core(
         ShapeDocument target,
         int column,
         int layers,
@@ -6768,9 +6811,12 @@ public static partial class AngleWorkOrderBuilder
         bool[] temporary,
         char color,
         bool topDown,
-        out string? failureReason)
-    {
-        failureReason = null;
+        out string? failureReason,
+        IEnumerable<int>? overrideILayers = null,
+        IEnumerable<int>? overrideJLayers = null,
+        string? summary = null,
+        IReadOnlyList<string>? derivationLimitations = null)
+    {        failureReason = null;
 
         var iLayers = new HashSet<int>();
         var jLayers = new HashSet<int>();
@@ -6807,6 +6853,19 @@ public static partial class AngleWorkOrderBuilder
 
             iLayers.Add(segmentTop + 1);
             jLayers.Add(segmentTop + 2);
+        }
+
+        /*
+         * 算法 6 的「底块提升」变体（§20.3 ①/② 的补充推导）直接把降表算好，
+         * 用 I / J 覆盖上面按「晶体正下方空段」推出来的集合，不再二次推导。
+         */
+        if (overrideILayers is not null)
+        {
+            iLayers = new HashSet<int>(overrideILayers);
+            jLayers = overrideJLayers is null
+                ? new HashSet<int>()
+                : new HashSet<int>(overrideJLayers);
+            descents.Clear();
         }
 
         var preState = new ShapeDocument(layers, parts);
@@ -6860,21 +6919,29 @@ public static partial class AngleWorkOrderBuilder
         }
 
         var limitations = BaseLimitations(
+            summary ??
             "构造 H（§20.3 构造式，由目标列 → 抬高后的列逐格比对得出）：" +
             "A = 目标列把要降的普通格抬高一层、只把让出来的段填临时晶体；" +
             "B 按 z+1 ∈ I 放晶体、E 是满高纯晶体柱、N 按 z+1 ∈ J 放针；" +
             "一次 Pin 同时引爆并整批落下。");
 
-        limitations.Add(
-            "降表（§20.3 ①，层号用顶针后）：" +
-            (descents.Count > 0 ? string.Join("、", descents) : "无") +
-            $"，I = {{{string.Join(",", iLayers.Order().Select(layer => layer + 1))}}}" +
-            $"，J = {{{string.Join(",", jLayers.Order().Select(layer => layer + 1))}}}。");
+        if (derivationLimitations is not null)
+        {
+            limitations.AddRange(derivationLimitations);
+        }
+        else
+        {
+            limitations.Add(
+                "降表（§20.3 ①，层号用顶针后）：" +
+                (descents.Count > 0 ? string.Join("、", descents) : "无") +
+                $"，I = {{{string.Join(",", iLayers.Order().Select(layer => layer + 1))}}}" +
+                $"，J = {{{string.Join(",", jLayers.Order().Select(layer => layer + 1))}}}。");
 
-        limitations.Add(
-            "A 的推导顺序：" +
-            (topDown ? "从上往下的空段" : "从下往上的空段") +
-            $"，A = {ShapeSignature.ColumnText(preState, column)}。");
+            limitations.Add(
+                "A 的推导顺序：" +
+                (topDown ? "从上往下的空段" : "从下往上的空段") +
+                $"，A = {ShapeSignature.ColumnText(preState, column)}。");
+        }
 
         // §19.1：A 里晶体正下方为空 = 有晶下间隙；目标对应位置有材料时可避免。
         for (int layer = 1; layer < layers; layer++)
@@ -7049,6 +7116,344 @@ public static partial class AngleWorkOrderBuilder
               $"无下降通道：{plainFailure}";
 
         return plain is null ? null : AttachQ1SubRecipe(plain);
+    }
+
+    /// <summary>
+    /// 算法 6 的「底块提升」构造 H（docs §2 分档 / §21.3 ① / §20.5）。
+    ///
+    /// <para>
+    /// 前面的 §20.3 构造式在<b>目标底层是普通格</b>时会直接拒绝（顶针会在第 1 层补针），
+    /// 扫描形态又要求先得到「晶体下移」的正规塔；这两条都覆盖不了
+    /// <c>T..cT.T.c</c> / <c>T.T.cccTc</c> 这一族。这里按算法 6 的第一步
+    /// <b>先做底块提升</b>，再按 §20.3 ⑤ 生成 A | B | E | N：
+    /// </para>
+    /// <list type="number">
+    /// <item><b>底块提升</b>：最下方连续普通块整体抬一格（A 的第 1 层为空），
+    /// 顶针不会在目标底层补针；其余材料放到「顶针后正好在目标层」的位置
+    /// （即目标列整体下移一格）。紧贴底块上方的那格会与抬起的底块相撞，
+    /// 改为留在原位（它是唯一需要「落一层」的格子）。</item>
+    /// <item><b>降表</b>：把 A 的材料与目标材料按顺序逐格对应，得到
+    /// 「顶针后源层 s → 目标层 d」；<c>J = {s}</c>。
+    /// <c>s−d = 1</c> 时在 <c>s−1</c> 层切桥（落一层），
+    /// <c>s−d ≥ 2</c> 时在 <c>s</c> 层切桥（整段自由落到底块）；
+    /// 切桥层集合就是 <c>I</c>。</item>
+    /// <item><b>生成</b>：B 按 <c>z+1 ∈ I</c> 放晶体、E 满高纯晶体柱、
+    /// N 按 <c>z+1 ∈ J</c> 放针；一次真实 <see cref="ShapePhysics.Pin"/> 验收，
+    /// 逐格核对目标列。<b>没有枚举、没有候选搜索</b>。</item>
+    /// </list>
+    /// <para>
+    /// 「提升」与「恢复」都体现在这条真实 Pin 回放里：A 的第 1 层为空证明底块已抬起，
+    /// Pin 后的目标列逐格等于目标证明底块与其余材料都落回了原层。
+    /// </para>
+    /// </summary>
+    private static AngleWorkOrder? TryBuildConstructedHLifted(
+        ShapeDocument target,
+        int column,
+        int layers,
+        int parts,
+        AngleBuildKind kind,
+        AngleAlgorithm algorithm,
+        out string? failureReason)
+    {
+        failureReason = null;
+
+        if (parts != 4)
+        {
+            failureReason = "构造 H 需要四象限的环（A | B | E | N）。";
+            return null;
+        }
+
+        if (layers < 2 || layers < target.LayerCount)
+        {
+            failureReason = "cap 装不下目标列的完整高度，构造 H 的前态放不下。";
+            return null;
+        }
+
+        if (target[0, column].Type != CellType.Shape)
+        {
+            failureReason = "底块提升只用于目标底层是普通格的角。";
+            return null;
+        }
+
+        var targetCodes = new char[layers];
+
+        for (int layer = 0; layer < layers; layer++)
+        {
+            targetCodes[layer] = CodeOf(
+                layer < target.LayerCount
+                    ? target[layer, column]
+                    : ShapeCell.Empty());
+        }
+
+        for (int layer = 0; layer < layers; layer++)
+        {
+            if (targetCodes[layer] == ShapeSignature.PinCode)
+            {
+                failureReason = "目标列含顶针，底块提升路线只处理普通格 / 晶体。";
+                return null;
+            }
+        }
+
+        // 最下方连续普通块（从地面开始）。
+        int blockRun = 0;
+
+        while (blockRun < layers &&
+               targetCodes[blockRun] == ShapeSignature.SolidCode)
+        {
+            blockRun++;
+        }
+
+        if (blockRun == 0 || blockRun >= layers)
+        {
+            failureReason = "目标列没有可抬升的底块（或底块占满整列）。";
+            return null;
+        }
+
+        char crystalColor = CrystalColor(target, column);
+        string? deriveFailure = null;
+
+        /*
+         * 两种<b>确定性</b>的材料落位形态（不枚举参数）：
+         * ① 统一「顶针后正好在目标层」：普通格放 t−1 层；
+         * ② 晶体下方的普通格（中间至多隔一格）留在原位：<c>T . c</c> 段在
+         *    前态里保持 <c>T c</c> 紧贴，洞不会贴到原生晶体下方，子配方可造。
+         * 两种形态各自完整推导 + 真实 Pin 回放 + 子配方验收，第一个通过者胜出。
+         */
+        foreach (bool keepUnderCrystal in new[] { false, true })
+        {
+            char[]? raised = DeriveLiftedHColumn(
+                targetCodes,
+                layers,
+                blockRun,
+                keepUnderCrystal,
+                out string? deriveWhy);
+
+            if (raised is null)
+            {
+                deriveFailure = deriveWhy;
+                continue;
+            }
+
+            // 降表：A 的材料与目标的材料按顺序逐格对应。
+            var targetCells = new List<int>();
+            var liftedCells = new List<int>();
+
+            for (int layer = 0; layer < layers; layer++)
+            {
+                if (targetCodes[layer] != ShapeSignature.EmptyCode)
+                {
+                    targetCells.Add(layer);
+                }
+
+                if (raised[layer] != ShapeSignature.EmptyCode)
+                {
+                    liftedCells.Add(layer);
+                }
+            }
+
+            if (targetCells.Count != liftedCells.Count)
+            {
+                deriveFailure =
+                    $"底块提升后的材料数（{liftedCells.Count}）与目标（{targetCells.Count}）不一致。";
+                continue;
+            }
+
+            var cuts = new SortedSet<int>();
+            var sources = new SortedSet<int>();
+            var descents = new List<string>();
+            bool mismatched = false;
+
+            for (int index = 0; index < targetCells.Count; index++)
+            {
+                int destination = targetCells[index];
+                int source = liftedCells[index] + 1;
+
+                if (source < destination)
+                {
+                    deriveFailure =
+                        $"底块提升把第 {liftedCells[index] + 1} 层的材料抬到了目标第 " +
+                        $"{destination + 1} 层之上，方向不成立。";
+                    mismatched = true;
+                    break;
+                }
+
+                if (raised[liftedCells[index]] != targetCodes[destination])
+                {
+                    deriveFailure = "底块提升后的材料顺序与目标不一致。";
+                    mismatched = true;
+                    break;
+                }
+
+                if (source == destination)
+                {
+                    continue;
+                }
+
+                descents.Add($"{source}→{destination}");
+                sources.Add(source);
+                cuts.Add(source - destination == 1 ? source - 1 : source);
+            }
+
+            if (mismatched)
+            {
+                continue;
+            }
+
+            if (descents.Count == 0)
+            {
+                deriveFailure = "底块提升后的 A 与目标列相同（没有可下降的格）。";
+                continue;
+            }
+
+            var derivationLimitations = new List<string>
+            {
+                "底块提升（算法 6 第一步）：最下方连续普通块整体抬一格，A 的第 1 层为空，" +
+                "顶针不会在目标底层补针；其余材料放到「顶针后正好在目标层」的位置" +
+                (keepUnderCrystal
+                    ? "，晶体下方（中间至多隔一格）的普通格留在原位。"
+                    : "。"),
+                "降表（§20.3 ①，层号 0 起、用顶针后的编号）：" +
+                string.Join("、", descents) +
+                $"；切桥层 I = {{{string.Join(",", cuts)}}}" +
+                $"（0 起），源层 J = {{{string.Join(",", sources)}}}（0 起）。",
+                "B 按 z+1 ∈ I 放晶体、E 是满高纯晶体柱、N 按 z+1 ∈ J 放针；" +
+                "一次真实 Pin 完成提升后的批量下落与底块恢复。"
+            };
+
+            AngleWorkOrder? order = TryBuildConstructedHPaperCore(
+                target,
+                column,
+                layers,
+                parts,
+                kind,
+                algorithm,
+                raised,
+                new bool[layers],
+                crystalColor,
+                topDown: false,
+                out string? coreFailure,
+                cuts,
+                sources,
+                "构造 H（算法 6 的底块提升 + §20.3 ⑤）：先把最下方连续普通块抬一格" +
+                "（A 第 1 层为空，顶针不会补针），其余材料整体下移一格；" +
+                "B 按 z+1 ∈ I 放晶体、E 是满高纯晶体柱、N 按 z+1 ∈ J 放针；" +
+                "一次 Pin 同时引爆、底块落回底层。",
+                derivationLimitations);
+
+            if (order is null)
+            {
+                deriveFailure = coreFailure ?? "底块提升后的构造 H 没有通过回放。";
+                continue;
+            }
+
+            failureReason = null;
+            return AttachQ1SubRecipe(order);
+        }
+
+        failureReason = "底块提升推导：" + (deriveFailure ?? "没有通过回放验证。");
+        return null;
+    }
+
+    /// <summary>
+    /// 算法 6 底块提升的材料落位（docs §20.3 ④ / §21.3 ①）。
+    ///
+    /// <para>
+    /// 先把最下方连续普通块整体抬一格（A 的第 1 层为空，顶针不会在目标底层补针），
+    /// 再把晶体整体下移一格。普通格有两种确定性落位：
+    /// </para>
+    /// <list type="bullet">
+    /// <item><paramref name="keepUnderCrystal"/> = <c>false</c>：统一放 <c>t−1</c>
+    /// （顶针后正好在目标层），撞车时留在原位；</item>
+    /// <item><paramref name="keepUnderCrystal"/> = <c>true</c>：晶体下方（中间至多隔一格）
+    /// 的普通格<b>留在原位</b>，其余同上。</item>
+    /// </list>
+    /// <para>
+    /// 返回 null 表示这一形态落位不下；由调用方换另一种形态。
+    /// </para>
+    /// </summary>
+    private static char[]? DeriveLiftedHColumn(
+        char[] targetCodes,
+        int layers,
+        int blockRun,
+        bool keepUnderCrystal,
+        out string? failureReason)
+    {
+        failureReason = null;
+
+        var raised = new char[layers];
+        Array.Fill(raised, ShapeSignature.EmptyCode);
+
+        // 底块抬一格。
+        for (int layer = 1; layer <= blockRun; layer++)
+        {
+            raised[layer] = ShapeSignature.SolidCode;
+        }
+
+        // 晶体整体下移一格（§20.3 ④）。
+        for (int t = blockRun; t < layers; t++)
+        {
+            if (targetCodes[t] != ShapeSignature.CrystalCode)
+            {
+                continue;
+            }
+
+            if (t - 1 < blockRun || raised[t - 1] != ShapeSignature.EmptyCode)
+            {
+                failureReason = $"第 {t + 1} 层的晶体下移一格时没有空位。";
+                return null;
+            }
+
+            raised[t - 1] = ShapeSignature.CrystalCode;
+        }
+
+        // 普通格：默认放 t−1；keepUnderCrystal 时晶体下方那格优先留在原位。
+        for (int t = blockRun; t < layers; t++)
+        {
+            if (targetCodes[t] != ShapeSignature.SolidCode)
+            {
+                continue;
+            }
+
+            bool underCrystal = false;
+
+            for (int probe = t + 1; probe < layers; probe++)
+            {
+                if (targetCodes[probe] == ShapeSignature.EmptyCode)
+                {
+                    continue;
+                }
+
+                underCrystal = targetCodes[probe] == ShapeSignature.CrystalCode;
+                break;
+            }
+
+            bool stayFirst = keepUnderCrystal && underCrystal;
+            int first = stayFirst ? t : t - 1;
+            int second = stayFirst ? t - 1 : t;
+            int slot = -1;
+
+            foreach (int candidate in new[] { first, second })
+            {
+                if (candidate >= 0 &&
+                    candidate < layers &&
+                    raised[candidate] == ShapeSignature.EmptyCode)
+                {
+                    slot = candidate;
+                    break;
+                }
+            }
+
+            if (slot < 0)
+            {
+                failureReason =
+                    $"第 {t + 1} 层的普通格在底块提升后的 A 里放不下（会与相邻材料重叠）。";
+                return null;
+            }
+
+            raised[slot] = ShapeSignature.SolidCode;
+        }
+
+        return raised;
     }
 
     /// <summary>
