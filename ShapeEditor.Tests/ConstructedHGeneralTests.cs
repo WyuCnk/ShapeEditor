@@ -22,13 +22,15 @@ internal static class ConstructedHGeneralTests
     };
 
     /// <summary>
-    /// P1 审计（docs §1 / §R1）：所有生成工序的前态里，
-    /// 「原生晶体正下方是空」的例数必须为 0。
+    /// P1 审计（docs §1 / §R1，口径按 §16.5 N3 放宽）：
+    /// <b>只检查工序的第一张图（初始前态）</b>——初始前态里
+    /// 「原生晶体正下方是空」的例数必须为 0；多刀之间的中间态不做 P1 检查。
     ///
     /// <para>
-    /// 口径：≤6 层的全部 S 列，逐条 <see cref="AngleWorkStepKind.PreState"/> 扫描；
-    /// 任何一列出现 <c>c</c> 上方紧贴 <c>.</c>（含临时晶体）都算违规。
-    /// 构造 H 的临时晶体只填「下方有格」的空段，所以它们也不会悬空。
+    /// 口径：≤6 层的全部 S 列，每份工序只看第一条
+    /// <see cref="AngleWorkStepKind.PreState"/>；任何一列出现 <c>c</c> 上方紧贴
+    /// <c>.</c>（含临时晶体）都算违规。构造 H 的临时晶体只填「下方有格」的空段，
+    /// 所以它们也不会悬空。
     /// </para>
     /// </summary>
     public static void P1AuditIsClean()
@@ -65,43 +67,44 @@ internal static class ConstructedHGeneralTests
                 ShapeDocument target = BuildColumn(text);
                 AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers);
 
-                foreach (AngleWorkStep step in order.Steps)
+                // N3：只取第一张图（初始前态），多刀中间态跳过。
+                AngleWorkStep? initial = order.Steps.FirstOrDefault(
+                    step => step.Kind == AngleWorkStepKind.PreState &&
+                            step.Shape is not null);
+
+                if (initial?.Shape is null)
                 {
-                    if (step.Kind != AngleWorkStepKind.PreState ||
-                        step.Shape is null)
+                    continue;
+                }
+
+                allPrestates++;
+
+                if (order.Construction == AngleConstruction.H)
+                {
+                    prestates++;
+                }
+
+                for (int part = 0; part < initial.Shape.PartCount; part++)
+                {
+                    string column = ShapeSignature.ColumnText(initial.Shape, part);
+
+                    for (int layer = 1; layer < column.Length; layer++)
                     {
-                        continue;
-                    }
-
-                    allPrestates++;
-
-                    if (order.Construction == AngleConstruction.H)
-                    {
-                        prestates++;
-                    }
-
-                    for (int part = 0; part < step.Shape.PartCount; part++)
-                    {
-                        string column = ShapeSignature.ColumnText(step.Shape, part);
-
-                        for (int layer = 1; layer < column.Length; layer++)
+                        if (column[layer] != ShapeSignature.CrystalCode ||
+                            column[layer - 1] != ShapeSignature.EmptyCode)
                         {
-                            if (column[layer] != ShapeSignature.CrystalCode ||
-                                column[layer - 1] != ShapeSignature.EmptyCode)
-                            {
-                                continue;
-                            }
+                            continue;
+                        }
 
-                            allViolations++;
+                        allViolations++;
 
-                            if (order.Construction == AngleConstruction.H)
-                            {
-                                violations++;
-                                violationCases.Add(
-                                    text + "（" + order.Construction + "/" + order.Algorithm +
-                                    "）：第 " + (part + 1) + " 象限 " + column +
-                                    "；" + string.Join("；", order.Limitations));
-                            }
+                        if (order.Construction == AngleConstruction.H)
+                        {
+                            violations++;
+                            violationCases.Add(
+                                text + "（" + order.Construction + "/" + order.Algorithm +
+                                "）：第 " + (part + 1) + " 象限 " + column +
+                                "；" + string.Join("；", order.Limitations));
                         }
                     }
                 }
@@ -109,10 +112,10 @@ internal static class ConstructedHGeneralTests
         }
 
         Console.WriteLine(
-            $"  P1AUDIT prestates={prestates} violations={violations}");
+            $"  P1AUDIT prestates={prestates} violations={violations}（只查初始前态）");
         Console.WriteLine(
             $"  P1ALL prestates={allPrestates} violations={allViolations}" +
-            "（碎晶路线允许目标本身要求的晶下间隙）");
+            "（只查初始前态；碎晶路线允许目标本身要求的晶下间隙）");
 
         if (violationCases.Count > 0)
         {
