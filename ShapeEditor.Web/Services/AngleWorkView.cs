@@ -18,6 +18,11 @@ namespace ShapeEditor.Web.Services;
 /// <see cref="AngleWorkStepKind.Collapse"/> 已在排版前并入前一个操作步，
 /// 两者都不会出现在节点链里。
 /// </para>
+/// <para>
+/// 算法 6 的节点链是「前态 → 顶针 → 逐块弱落 → 目标」：<see cref="AngleWorkStepKind.Pin"/>
+/// 只是<b>中间态</b>，后面还有若干 <see cref="AngleWorkStepKind.WeakDrop"/>，
+/// 所以结果图取链末（<see cref="AngleWorkColumn.ResultShape"/>），不能拿 Pin 的图形代替。
+/// </para>
 /// </summary>
 public sealed class AngleWorkNode
 {
@@ -49,44 +54,69 @@ public sealed class AngleWorkNode
 
     /// <summary>
     /// 页面与导出共用的节点样式类。
-    /// Collapse 已并入前一步、Note 只出文字，两者都不会生成节点，
-    /// 因此这里只保留实际操作步骤的映射。
+    ///
+    /// <para>
+    /// Collapse 已并入前一步、Note 只出文字，两者都不会生成节点；这里仍逐个列出，
+    /// 保证十一个 <see cref="AngleWorkStepKind"/> 都有明确映射，不会落进未知兜底。
+    /// </para>
     /// </summary>
     public string KindClass => Kind switch
     {
         AngleWorkStepKind.PreState => "angle-kind-prestate",
         AngleWorkStepKind.Cut => "angle-kind-cut",
+        // 历史数据里的下落步：排版前已并入前一步，正常不会走到这里。
+        AngleWorkStepKind.Collapse => "angle-kind-note",
         AngleWorkStepKind.Pin => "angle-kind-pin",
-        AngleWorkStepKind.Stack => "angle-kind-stack",
+        AngleWorkStepKind.WeakDrop => "angle-kind-weakdrop",
+        AngleWorkStepKind.Exchange => "angle-kind-exchange",
         AngleWorkStepKind.Support => "angle-kind-support",
+        AngleWorkStepKind.Stack => "angle-kind-stack",
         AngleWorkStepKind.Crystallize => "angle-kind-crystallize",
         AngleWorkStepKind.Target => "angle-kind-target",
+        AngleWorkStepKind.Note => "angle-kind-note",
         _ => "angle-kind-note"
     };
 
-    /// <summary>右上角步骤类型小标签；只有实际操作步骤才有标签。</summary>
+    /// <summary>
+    /// 右上角步骤类型小标签；只有实际操作步骤才有标签。
+    ///
+    /// 「弱落」两字与导出图的 34px 标签预留宽度一致；Note / Collapse 不出节点，标签为空。
+    /// </summary>
     public string KindTag => Kind switch
     {
         AngleWorkStepKind.PreState => "前态",
         AngleWorkStepKind.Cut => "切",
+        AngleWorkStepKind.Collapse => "",
         AngleWorkStepKind.Pin => "顶",
+        AngleWorkStepKind.WeakDrop => "弱落",
+        AngleWorkStepKind.Exchange => "换",
         AngleWorkStepKind.Stack => "堆",
         AngleWorkStepKind.Support => "撑",
         AngleWorkStepKind.Crystallize => "晶",
         AngleWorkStepKind.Target => "目标",
+        AngleWorkStepKind.Note => "",
         _ => ""
     };
 
-    /// <summary>导出图选择的步骤类型标识，与 shape-grid.js 的配色表对应。</summary>
+    /// <summary>
+    /// 导出图选择的步骤类型标识，与 shape-grid.js 的配色表一一对应
+    /// （angle-pre / angle-cut / angle-pin / angle-weakdrop / angle-exchange /
+    /// angle-support / angle-stack / angle-crystallize / angle-target）。
+    /// </summary>
     public string KindName => Kind switch
     {
         AngleWorkStepKind.PreState => "angle-pre",
         AngleWorkStepKind.Cut => "angle-cut",
+        // 历史数据里的下落步：不生成节点，给导出图一个可读的灰色标识。
+        AngleWorkStepKind.Collapse => "angle-note",
         AngleWorkStepKind.Pin => "angle-pin",
+        AngleWorkStepKind.WeakDrop => "angle-weakdrop",
+        AngleWorkStepKind.Exchange => "angle-exchange",
         AngleWorkStepKind.Stack => "angle-stack",
         AngleWorkStepKind.Support => "angle-support",
         AngleWorkStepKind.Crystallize => "angle-crystallize",
         AngleWorkStepKind.Target => "angle-target",
+        AngleWorkStepKind.Note => "angle-note",
         _ => "angle-note"
     };
 }
@@ -135,6 +165,32 @@ public sealed class AngleHalfWork
 
     /// <summary>半边步骤链的节点（与主步骤链同款样式、30px 单元格 1:1 预览）。</summary>
     public IReadOnlyList<AngleWorkNode> Nodes { get; init; } = Array.Empty<AngleWorkNode>();
+
+    /// <summary>
+    /// 半边链的结果节点：优先取链内的 <see cref="AngleWorkStepKind.Target"/> 步；
+    /// 没有目标步时取链末的最后一个操作步。
+    /// </summary>
+    public AngleWorkNode? ResultNode
+    {
+        get
+        {
+            for (int i = Nodes.Count - 1; i >= 0; i--)
+            {
+                if (Nodes[i].Kind == AngleWorkStepKind.Target)
+                {
+                    return Nodes[i];
+                }
+            }
+
+            return Nodes.Count == 0 ? null : Nodes[^1];
+        }
+    }
+
+    /// <summary>
+    /// 半边链的结果图。优先取目标步，绝不用 <see cref="AngleWorkStepKind.Pin"/>
+    /// 的图形代替：算法 6 的顶针之后还有逐块弱落。
+    /// </summary>
+    public ShapeDocument? ResultShape => ResultNode?.Shape;
 
     /// <summary>
     /// 半边步骤链里的说明文字（Kind == Note）。按出现顺序逐行显示，
@@ -188,6 +244,32 @@ public sealed class AngleWorkColumn
     public IReadOnlyList<string> Limitations { get; init; } = Array.Empty<string>();
 
     public IReadOnlyList<AngleWorkNode> Nodes { get; init; } = Array.Empty<AngleWorkNode>();
+
+    /// <summary>
+    /// 主步骤链的结果节点：优先取链内的 <see cref="AngleWorkStepKind.Target"/> 步；
+    /// 没有目标步时取链末的最后一个操作步。
+    ///
+    /// 算法 6 的 <see cref="AngleWorkStepKind.Pin"/> 只是中间态，后面还有逐块
+    /// <see cref="AngleWorkStepKind.WeakDrop"/>，所以结果图绝不能取 Pin 步的 Shape。
+    /// </summary>
+    public AngleWorkNode? ResultNode
+    {
+        get
+        {
+            for (int i = Nodes.Count - 1; i >= 0; i--)
+            {
+                if (Nodes[i].Kind == AngleWorkStepKind.Target)
+                {
+                    return Nodes[i];
+                }
+            }
+
+            return Nodes.Count == 0 ? null : Nodes[^1];
+        }
+    }
+
+    /// <summary>主步骤链的结果图；优先取目标步，理由见 <see cref="ResultNode"/>。</summary>
+    public ShapeDocument? ResultShape => ResultNode?.Shape;
 
     /// <summary>
     /// 主步骤链里的说明文字（Kind == Note）。按出现顺序逐行显示，
@@ -564,6 +646,10 @@ public static class AngleWorkColumnBuilder
     /// 并入前一个操作步（沿用下落后的图形快照），不单独生成节点；</item>
     /// <item>其余操作步必须带图形快照，否则也降级为文字说明。</item>
     /// </list>
+    /// 节点顺序严格沿用 Core 的 <paramref name="steps"/>：顶针之后的逐块
+    /// <see cref="AngleWorkStepKind.WeakDrop"/>、多刀路线两刀之间的
+    /// <see cref="AngleWorkStepKind.Exchange"/> 都原样生成节点，
+    /// 箭头按节点链的相邻关系依次连接，不跳步、不重排。
     /// </para>
     ///
     /// <paramref name="idPrefix"/> 用来拼节点 id（主链 <c>angle-3</c>、

@@ -2944,6 +2944,8 @@ function drawAnalysisNodeKindTag(ctx, rect, tag, kind) {
         "angle-pre": "#6A4CC3",
         "angle-cut": "#C62828",
         "angle-pin": "#0E7C86",
+        "angle-weakdrop": "#00695C",
+        "angle-exchange": "#8E24AA",
         "angle-stack": "#B26A00",
         "angle-support": "#3F51B5",
         "angle-crystallize": "#1565C0",
@@ -2982,6 +2984,8 @@ function drawAnalysisNodeKindTag(ctx, rect, tag, kind) {
  * 废料节点淡显、虚线边框，指向废料的箭头为灰色虚线。
  * 顶针 / 堆叠 / 块用不同边框色与右上角小标签区分。
  * 角工序的节点只会有带图形的操作步：Collapse 已并入前一步、Note 只画小字行。
+ * 算法 6 的顶针是中间态，后面还有逐块弱落（angle-weakdrop），
+ * 末步才是 target；每个节点只画自己的快照，不存在「顶针即结果」的假设。
  */
 function drawAnalysisPathGraph(ctx, graph, left, top) {
     const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
@@ -3092,6 +3096,18 @@ function drawAnalysisPathGraph(ctx, graph, left, top) {
         else if (node.kind === "angle-pin") {
             fillColor = "#F2FBFB";
             strokeColor = "#0E7C86";
+            lineWidth = 2;
+        }
+        else if (node.kind === "angle-weakdrop") {
+            // 构造 E 的逐块弱落：蓝绿系，与顶针 / 切割区分。
+            fillColor = "#E4F4F1";
+            strokeColor = "#00695C";
+            lineWidth = 2;
+        }
+        else if (node.kind === "angle-exchange") {
+            // 多刀路线两刀之间的轮间交换：紫红色。
+            fillColor = "#F7EBFA";
+            strokeColor = "#8E24AA";
             lineWidth = 2;
         }
         else if (node.kind === "angle-support") {

@@ -221,15 +221,15 @@ public sealed class AnalysisExportGraphNode
 
     /// <summary>
     /// 节点类型：pin / stack / block（制作路径），
-    /// 或 angle-pre / angle-cut / angle-pin / angle-support /
-    /// angle-stack / angle-crystallize / angle-target（角的工序）。
+    /// 或 angle-pre / angle-cut / angle-pin / angle-weakdrop / angle-exchange /
+    /// angle-support / angle-stack / angle-crystallize / angle-target（角的工序）。
     /// 角工序的 Collapse 已并入前一步、Note 只出文字，两者都不会生成节点。
     /// </summary>
     public string Kind { get; set; } = "";
 
     /// <summary>
     /// 右上角类型小标签：顶P / 堆 / 块；
-    /// 角工序为 前态/切/顶/撑/堆/晶/目标。
+    /// 角工序为 前态/切/顶/弱落/换/撑/堆/晶/目标。
     /// </summary>
     public string KindTag { get; set; } = "";
 }

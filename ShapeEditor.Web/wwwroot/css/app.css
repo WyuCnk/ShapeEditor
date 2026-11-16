@@ -2786,6 +2786,23 @@ button {
     background: #f2fbfb;
 }
 
+/*
+ * 构造 E 的逐块弱落（算法 6 顶针之后的中间步）：蓝绿系，
+ * 与顶针的青绿、切割的红色、支柱交接的紫蓝都能一眼分开。
+ */
+.angle-node.angle-kind-weakdrop {
+    border-color: #00695c;
+    border-width: 2px;
+    background: #e4f4f1;
+}
+
+/* 多刀路线两刀之间的轮间交换：紫红色，与切割的红色、前态的紫色区分 */
+.angle-node.angle-kind-exchange {
+    border-color: #8e24aa;
+    border-width: 2px;
+    background: #f7ebfa;
+}
+
 /* 构造 C 的支柱交接步骤：紫蓝色边框，与其它步骤区分 */
 .angle-node.angle-kind-support {
     border-color: #3f51b5;
@@ -2828,6 +2845,14 @@ button {
 
 .angle-node.angle-kind-pin .path-node-kind {
     background: #0e7c86;
+}
+
+.angle-node.angle-kind-weakdrop .path-node-kind {
+    background: #00695c;
+}
+
+.angle-node.angle-kind-exchange .path-node-kind {
+    background: #8e24aa;
 }
 
 .angle-node.angle-kind-support .path-node-kind {
