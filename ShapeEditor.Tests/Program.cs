@@ -189,6 +189,7 @@ internal static class Program
             ("角工序:P1 审计（§R1）", ConstructedHGeneralTests.P1AuditIsClean),
             ("角工序:§R9 三个样例（通用 H）", ConstructedHGeneralTests.ThreePaperSamplesUseGeneralH),
             ("角工序:≤8 层构造 H 语料", ConstructedHGeneralTests.HCorpusUnderEightLayers),
+            ("角工序:§15 多刀半破三例", MultiCutHalfBreakTests.ThreeCorporaUseMultiCut),
             ("角工序:构造 H §20.1 逐列", ConstructedHPaperTests.PaperSolutionMatchesDocs),
             ("角工序:Q1 子配方审计（§19.4）", ConstructedHPaperTests.PinOrdersCarryQ1SubRecipe),
             ("角工序:构造 G 的 G5/G8/G8a", AuxiliaryColumnRulesTests.ConstructGFollowsG5G8AndG8a),

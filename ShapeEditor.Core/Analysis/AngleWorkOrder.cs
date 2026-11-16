@@ -34,6 +34,12 @@ public enum AngleWorkStepKind
     /// <summary>顶针：一次顶针完成批量下落（构造 H）。</summary>
     Pin,
 
+    /// <summary>
+    /// 轮间交换（§15.3 / 构造 C 支柱交接）：多刀半破在相邻两刀之间，
+    /// 把桥梁柱的针层与保险丝柱的晶体层换到下一块的锚层。
+    /// </summary>
+    Exchange,
+
     /// <summary>构造 C：支柱交接——装新支撑柱、拆旧柱与辅助列。</summary>
     Support,
 
@@ -410,6 +416,25 @@ public static partial class AngleWorkOrderBuilder
     public const string IllegalPreStateReason = "前态存在非法列";
 
     /// <summary>
+    /// 临时验证开关（docs §11 / §15 的清理项）：<c>true</c> 时
+    /// <see cref="TryBuildConstructedH"/> 只走前两段——§20.3 构造式与 §13.6 通用前态，
+    /// 跳过「带下降通道扫描」与「下移一格扫描」两段。
+    ///
+    /// <para>
+    /// 用途：确认后两段是否还有存在价值。若两段已经覆盖全部语料且 P1 全过，
+    /// 就把后两段连同本开关一起删掉；否则保留开关以便复现失败。
+    /// 环境变量 <c>SHAPE_CONSTRUCT_H_STRICT_TWO_STAGE=1</c> 也可以打开它，
+    /// 方便直接跑既有测试而不改代码。
+    /// </para>
+    /// </summary>
+    public static bool ConstructHStrictTwoStage { get; set; } =
+        string.Equals(
+            Environment.GetEnvironmentVariable(
+                "SHAPE_CONSTRUCT_H_STRICT_TWO_STAGE"),
+            "1",
+            StringComparison.Ordinal);
+
+    /// <summary>
     /// 验收条件七（docs §6 第 7 条 / §17.7）：逐个象限检查前态列的「洞」。
     ///
     /// <code>
@@ -693,6 +718,33 @@ public static partial class AngleWorkOrderBuilder
             {
                 return ApplyIsolatedColumnRule(
                     tailOrder,
+                    target,
+                    column);
+            }
+        }
+
+        /*
+         * 三·补二、多刀半破（§15）：目标列有一个以上「紧贴晶体下方的缺口」时，
+         * 每个缺口一枚临时晶体块，K 非空就继续切，刀数 == |K|。
+         * 它比构造 D 的单刀 / 两刀更一般，所以在分档之前先试；
+         * 连续缺口、底针、以及缺口下方不是普通格的形态不在此列。
+         */
+        if (parts == 4)
+        {
+            AngleWorkOrder? multiCut = TryBuildMultiCutHalfBreak(
+                target,
+                column,
+                layers,
+                parts,
+                kind);
+
+            if (multiCut is not null &&
+                multiCut.IsComplete &&
+                !HasCyclicPreState(multiCut, target) &&
+                !multiCut.HasIllegalPreState(out _, out _))
+            {
+                return ApplyIsolatedColumnRule(
+                    Label(multiCut, AngleAlgorithm.Algorithm4, attempt: false),
                     target,
                     column);
             }
@@ -3335,6 +3387,440 @@ public static partial class AngleWorkOrderBuilder
             Rank = 0,
             Limitations = limitations
         };
+    }
+
+    #endregion
+
+    #region 多刀半破（§15：任意刀数，刀数 = 临时晶体块数）
+
+    /// <summary>
+    /// §15 的多刀半破：把目标列的每个内部缺口变成一枚临时晶体块，
+    /// <b>每刀正好删掉一个块</b>，由「剩余块集合 K」决定刀数，不枚举轮数。
+    ///
+    /// <para><b>前态</b>：对目标列每个「正下方是普通格」的内部缺口 g，
+    /// 把 <c>g−1</c> 的普通格抬进缺口（<c>A[g] = T</c>），让出的
+    /// <c>g−1</c> 填临时晶体。于是 <c>TT.T.c</c> 得到 <c>TcTcTc</c>、
+    /// <c>TT.T.T.c</c> 得到 <c>TcTcTcTc</c>、<c>cTT.T.c</c> 得到 <c>cTcTcTc</c>；
+    /// 原生晶体仍然坐在普通格上（P1）。</para>
+    /// <para><b>每刀</b>：在 <c>column+1</c> 装「满高普通格 + 块顶上一层针」的桥梁柱，
+    /// 在 <c>column−1</c> 装「块下方普通格 + 块层晶体」的保险丝柱；真实
+    /// <see cref="ShapePhysics.Cut"/> 只碎掉「目标列的临时晶体块 + 保险丝晶体」，
+    /// 落定后目标列向上推进一格。</para>
+    /// <para><b>轮间</b>：下一块的锚层不同，桥梁柱的针层与保险丝晶体层都要重装。
+    /// 这一步用新增的 <see cref="AngleWorkStepKind.Exchange"/> 步表达
+    /// （构造 C 的支柱交接：先装新柱，再让新柱接管，最后拆旧柱）。</para>
+    /// <para><b>终止</b>：初始 K 就是临时晶体连通块集合；每轮从 K 里删掉
+    /// 当前最上面的块，并断言该块层不再有晶体、<c>|K|</c> 严格减 1。
+    /// 刀数 == |K|，同一块不会被切第二次。</para>
+    /// </summary>
+    private static AngleWorkOrder? TryBuildMultiCutHalfBreak(
+        ShapeDocument target,
+        int column,
+        int layers,
+        int parts,
+        AngleBuildKind kind)
+    {
+        if (parts != 4 ||
+            layers < 4 ||
+            target.LayerCount != layers)
+        {
+            return null;
+        }
+
+        string text = ShapeSignature.ColumnText(target, column);
+
+        if (text.Length != layers)
+        {
+            return null;
+        }
+
+        /*
+         * 只接「底部连续两根非空」的形态（TT.T.c / TT.T.T.c / cTT.T.c）：
+         * 底格是空或第 2 层是空（T.T.c / .T.T.c / .TT.c）的形态仍走构造 H / G。
+         */
+        if (text[0] == ShapeSignature.EmptyCode ||
+            text[1] == ShapeSignature.EmptyCode)
+        {
+            return null;
+        }
+
+        /*
+         * 找「正下方紧贴缺口」的最高晶体段，把它当作本次多刀半破的工作段；
+         * 它上面的 T / c 是尾部（例如 TT.T.cTc 的 T6、c7），保持原样即可。
+         */
+        int topBottom = -1;
+        int topLayer = -1;
+
+        for (int layer = layers - 1; layer >= 1; layer--)
+        {
+            if (text[layer] != ShapeSignature.CrystalCode ||
+                text[layer - 1] == ShapeSignature.CrystalCode)
+            {
+                continue;
+            }
+
+            if (text[layer - 1] == ShapeSignature.EmptyCode)
+            {
+                topBottom = layer;
+                topLayer = layer;
+
+                while (topLayer + 1 < layers &&
+                       text[topLayer + 1] == ShapeSignature.CrystalCode)
+                {
+                    topLayer++;
+                }
+
+                break;
+            }
+        }
+
+        if (topBottom < 3)
+        {
+            return null;
+        }
+
+        for (int layer = 0; layer < layers; layer++)
+        {
+            if (text[layer] == ShapeSignature.PinCode)
+            {
+                return null;
+            }
+
+            if (text[layer] != ShapeSignature.CrystalCode)
+            {
+                continue;
+            }
+
+            int bottom = layer;
+
+            while (bottom > 0 &&
+                   text[bottom - 1] == ShapeSignature.CrystalCode)
+            {
+                bottom--;
+            }
+
+            /*
+             * 只接「地面晶体段 + 工作段」两种原生晶体：
+             * 中间还有别的晶体段的形态（9 层的 T..cT.T.c / T.T.cccTc、
+             * TT.T.cTc 的尾部晶体）留给构造 H / D，避免抢走既有路线。
+             */
+            if (bottom != 0 && bottom != topBottom)
+            {
+                return null;
+            }
+
+            if (bottom != topBottom &&
+                bottom > 0 &&
+                text[bottom - 1] == ShapeSignature.EmptyCode)
+            {
+                return null;
+            }
+        }
+
+        /*
+         * 逐空段抬升：空段 [a, b] 正下方必须是普通格；把它抬到空段顶端 b，
+         * a−1 … b−1 整段填临时晶体。这样原生晶体坐在普通格上（P1），
+         * 每一段临时晶体就是一个「块」，块数就是刀数。
+         */
+        // 只接「单层缺口」：连续两层空（T..c 一族）留给构造 H / D，
+        // 它们的落点区间重叠，不适合按缺口一块一刀。
+        for (int layer = 1; layer < topLayer; layer++)
+        {
+            if (text[layer] == ShapeSignature.EmptyCode &&
+                text[layer - 1] == ShapeSignature.EmptyCode)
+            {
+                return null;
+            }
+        }
+
+        var pre = text.ToCharArray();
+        int segments = 0;
+
+        for (int layer = 1; layer < topLayer; layer++)
+        {
+            if (pre[layer] != ShapeSignature.EmptyCode ||
+                pre[layer - 1] != ShapeSignature.SolidCode)
+            {
+                continue;
+            }
+
+            int hi = layer;
+
+            while (hi + 1 < topLayer &&
+                   pre[hi + 1] == ShapeSignature.EmptyCode)
+            {
+                hi++;
+            }
+
+            pre[hi] = ShapeSignature.SolidCode;
+
+            for (int fill = layer - 1; fill < hi; fill++)
+            {
+                pre[fill] = ShapeSignature.CrystalCode;
+            }
+
+            segments++;
+        }
+
+        // 至少两个单层缺口才是「多刀」；单缺口仍走构造 H / G。
+        if (segments < 2)
+        {
+            return null;
+        }
+
+        /*
+         * P1：每个原生晶体段只检查段底——段底必须坐在普通格上；
+         * 临时晶体也不能紧贴原生晶体段（纵向融合会误伤目标晶体）。
+         */
+        for (int layer = 0; layer < layers; layer++)
+        {
+            if (text[layer] != ShapeSignature.CrystalCode || layer == 0)
+            {
+                continue;
+            }
+
+            if (text[layer - 1] == ShapeSignature.CrystalCode)
+            {
+                continue;
+            }
+
+            if (pre[layer] != ShapeSignature.CrystalCode ||
+                pre[layer - 1] != ShapeSignature.SolidCode)
+            {
+                return null;
+            }
+
+            if (layer - 1 >= 0 &&
+                pre[layer - 1] == ShapeSignature.CrystalCode)
+            {
+                return null;
+            }
+
+            if (layer + 1 < layers &&
+                text[layer + 1] != ShapeSignature.CrystalCode &&
+                pre[layer + 1] == ShapeSignature.CrystalCode)
+            {
+                return null;
+            }
+        }
+
+        if (!ShapeSignature.IsTightColumn(new string(pre)) ||
+            !ShapeSignature.CheckColumn(new string(pre)).IsLegal)
+        {
+            return null;
+        }
+
+        // K：临时晶体连通块（纵向连续的一组临时晶体算一块）。
+        var blocks = new List<(int Bottom, int Top)>();
+
+        for (int layer = 0; layer < layers; layer++)
+        {
+            if (pre[layer] != ShapeSignature.CrystalCode ||
+                text[layer] == ShapeSignature.CrystalCode)
+            {
+                continue;
+            }
+
+            int top = layer;
+
+            while (top + 1 < layers &&
+                   pre[top + 1] == ShapeSignature.CrystalCode &&
+                   text[top + 1] != ShapeSignature.CrystalCode)
+            {
+                top++;
+            }
+
+            blocks.Add((layer, top));
+            layer = top;
+        }
+
+        if (blocks.Count == 0)
+        {
+            return null;
+        }
+
+        // 按 §15.2：从最上面的块开始，逐块一刀。
+        blocks.Sort((left, right) => right.Top.CompareTo(left.Top));
+
+        char color = CrystalColor(target, column);
+        int bridgeColumn = Wrap(column + 1, parts);
+        int fuseColumn = Wrap(column - 1, parts);
+        int rotation = Wrap(-column, parts);
+
+        var steps = new List<AngleWorkStep>();
+        ShapeDocument current = new(layers, parts);
+
+        WriteColumn(current, column, new string(pre), color);
+
+        var remaining = new List<(int Bottom, int Top)>(blocks);
+        int knife = 0;
+
+        while (remaining.Count > 0)
+        {
+            (int blockBottom, int blockTop) = remaining[0];
+            remaining.RemoveAt(0);
+
+            // 桥梁柱：满高普通格，块顶上一层放针。
+            var bridge = new char[layers];
+            Array.Fill(bridge, ShapeSignature.SolidCode);
+
+            int pinLayer = Math.Min(blockTop + 1, layers - 1);
+            bridge[pinLayer] = ShapeSignature.PinCode;
+
+            // 保险丝柱：块下方普通格 + 块层晶体，其余空。
+            var fuse = new char[layers];
+            Array.Fill(fuse, ShapeSignature.EmptyCode);
+
+            for (int layer = 0; layer < blockBottom; layer++)
+            {
+                fuse[layer] = ShapeSignature.SolidCode;
+            }
+
+            for (int layer = blockBottom; layer <= blockTop; layer++)
+            {
+                fuse[layer] = ShapeSignature.CrystalCode;
+            }
+
+            WriteColumn(current, bridgeColumn, new string(bridge), color);
+            WriteColumn(current, fuseColumn, new string(fuse), color);
+
+            if (!ShapeSignature.AllColumnsLegal(current, out _) ||
+                !ShapeSignature.IsTightColumn(current, bridgeColumn) ||
+                !ShapeSignature.IsTightColumn(current, fuseColumn) ||
+                !ShapeOps.IsStable(current))
+            {
+                return null;
+            }
+
+            if (knife == 0)
+            {
+                steps.Add(new AngleWorkStep(
+                    $"多刀半破第 1 刀前态：目标列 = {new string(pre)}" +
+                    $"（每个缺口下方普通格抬进缺口、让出层填临时晶体）；" +
+                    $"K = {blocks.Count} 块，本轮切最上面的块 L{blockBottom + 1}–L{blockTop + 1}",
+                    current.Clone(),
+                    AngleWorkStepKind.PreState));
+            }
+            else
+            {
+                steps.Add(new AngleWorkStep(
+                    $"轮间交换（构造 C 支柱交接）：桥梁柱改到第 {pinLayer + 1} 层放针、" +
+                    $"保险丝柱改到 L{blockBottom + 1}–L{blockTop + 1} 放晶体，" +
+                    $"接管下一块 L{blockBottom + 1}–L{blockTop + 1}",
+                    current.Clone(),
+                    AngleWorkStepKind.Exchange));
+            }
+
+            CutResult cut = ShapePhysics.Cut(
+                ShapeOps.Rotate(current, rotation));
+
+            if (!cut.Success || cut.West is null)
+            {
+                return null;
+            }
+
+            ShapeDocument afterCut = ShapeOps.Rotate(
+                cut.West,
+                -rotation);
+
+            string afterText = ShapeSignature.ColumnText(afterCut, column);
+
+            // 该块必须被删掉；K 严格减 1。
+            for (int layer = blockBottom; layer <= blockTop; layer++)
+            {
+                if (afterText[layer] == ShapeSignature.CrystalCode)
+                {
+                    return null;
+                }
+            }
+
+            if (remaining.Count > 0 &&
+                CountTemporaryCrystals(afterText, text) >=
+                CountTemporaryCrystals(new string(pre), text))
+            {
+                return null;
+            }
+
+            if (!ShapeOps.IsStable(afterCut))
+            {
+                return null;
+            }
+
+            current = afterCut;
+            knife++;
+
+            steps.Add(new AngleWorkStep(
+                $"第 {knife} 刀（真实 Cut，切完落下）：删掉 L{blockBottom + 1}–L{blockTop + 1} " +
+                "的临时晶体块；目标列推进到 " + afterText,
+                current.Clone(),
+                AngleWorkStepKind.Cut));
+        }
+
+        if (ShapeSignature.ColumnText(current, column) != text)
+        {
+            return null;
+        }
+
+        steps.Add(new AngleWorkStep(
+            "清除辅助象限，得到目标角",
+            target,
+            AngleWorkStepKind.Target));
+
+        var limitations = BaseLimitations(
+            "多刀半破（§15）：K = 临时晶体连通块集合，刀数 == |K|；" +
+            "每刀只删最上面的一个块，轮间用构造 C 交换桥梁柱 / 保险丝柱。");
+
+        limitations.Add(
+            $"K = {blocks.Count} 块（层号 1 起：" +
+            string.Join("、", blocks.Select(block =>
+                $"L{block.Bottom + 1}–L{block.Top + 1}")) +
+            "），实际刀数 = " + knife + "；未枚举轮数，K 清空即终止。");
+
+        limitations.Add(
+            "初始前态 P1：每颗原生晶体段的段底都坐在普通格上；" +
+            "后续轮由上一刀的真实落定结果得到，目标列里目标本身要求的晶下间隙" +
+            "（如 TT.T.c 第二刀前态 TcTT.c 的 c@6）与桥梁柱横向粘连、整体稳定，" +
+            "且同一块不会被切第二次。");
+
+        return new AngleWorkOrder(
+            column,
+            kind,
+            steps,
+            null)
+        {
+            IsComplete = true,
+            TargetColumnHasSubRecipe = true,
+            Construction = AngleConstruction.D,
+            Algorithm = AngleAlgorithm.Algorithm4,
+            Rotation = rotation,
+            AuxiliaryColumns = new[] { bridgeColumn, fuseColumn },
+            Rank = 0,
+            Limitations = limitations
+        };
+    }
+
+    /// <summary>与目标列逐层比对，数出前态里多出来的临时晶体枚数。</summary>
+    private static int CountTemporaryCrystals(
+        string column,
+        string target)
+    {
+        int count = 0;
+
+        for (int layer = 0; layer < column.Length; layer++)
+        {
+            if (column[layer] != ShapeSignature.CrystalCode)
+            {
+                continue;
+            }
+
+            if (layer >= target.Length ||
+                target[layer] != ShapeSignature.CrystalCode)
+            {
+                count++;
+            }
+        }
+
+        return count;
     }
 
     #endregion
@@ -7090,6 +7576,20 @@ public static partial class AngleWorkOrderBuilder
         {
             failureReason = null;
             return AttachQ1SubRecipe(general);
+        }
+
+        /*
+         * 验证开关：只保留前两段（§20.3 构造式 → §13.6 通用前态）。
+         * 后两段与两段是互斥的候选，不是前置条件；打开开关就能量出
+         * 「两段够不够用」，够用则把后两段整段删除。
+         */
+        if (ConstructHStrictTwoStage)
+        {
+            failureReason =
+                $"两段开关（§20.3 → §13.6）：§20.3 构造式：{paperFailure}；" +
+                $"§13.6 通用构造：{generalFailure}；" +
+                "已跳过「带下降通道扫描」与「下移一格扫描」两段。";
+            return null;
         }
 
         /*
