@@ -209,6 +209,114 @@ internal static class ConstructedHGeneralTests
     }
 
     /// <summary>
+    /// 两段开关（<see cref="AngleWorkOrderBuilder.ConstructHStrictTwoStage"/>）下，
+    /// §13.6 七步 + 三处更正要自己覆盖「深间隙」族——也就是 <c>P.T...c</c> 这一族
+    /// （目标里的普通格被抬到最低晶体下方很远、通道要跨多层）。
+    ///
+    /// <para>三处更正（2026-11-16 实测）：</para>
+    /// <list type="number">
+    /// <item><c>I</c> 用<b>完整通道</b> <c>∪[d, s−1]</c>，不是只声明落点那一层；</item>
+    /// <item>B / N <b>不满高</b>：B 到 max(I)+1、N 到「最高原生晶体目标层 − 1」，再往上留空；</item>
+    /// <item>深间隙时最低晶体以下的普通格也抬（抬升量 = 通道长度 − 1）；最低晶体
+    /// 正下方就是材料时，下移边界还要往外扩一层。</item>
+    /// </list>
+    ///
+    /// <para>
+    /// 断言：开关打开后这些列仍然「一次 Pin 完成」，且初始前态满足 P1（每颗原生晶体
+    /// 坐在普通格上）、末步逐格等于目标。开关在 finally 里恢复，不影响别的用例。
+    /// </para>
+    /// </summary>
+    public static void StrictTwoStageCoversDeepGapFamily()
+    {
+        string[] cases =
+        {
+            // 深间隙族（改正 1 + 2 之前全部失败）。
+            "P.T..c", "P.T...c", "P.T....c", "P.T...cT", "P.T...cc", "P.T...c..",
+            // §R9 / §13.6.1 的三个已验证样例。
+            "T...cT.T.c", "T..cT.T.c", "T.T.cccTc", "..T.cc", "..T.cTc",
+            // 最低晶体正下方就是材料的边界（改正 3 的配套）。
+            "..TcT.T.c", "P.TcT.T.c"
+        };
+
+        bool previous = AngleWorkOrderBuilder.ConstructHStrictTwoStage;
+        AngleWorkOrderBuilder.ConstructHStrictTwoStage = true;
+
+        var problems = new List<string>();
+        int covered = 0;
+
+        try
+        {
+            foreach (string text in cases)
+            {
+                ShapeDocument target = BuildColumn(text);
+
+                if (!ShapeSignature.CheckColumn(text).IsLegal ||
+                    !PillarSCriterion.IsPillarColumn(target, 0))
+                {
+                    continue;
+                }
+
+                AngleWorkOrder order = AngleWorkOrderBuilder.Build(
+                    target,
+                    0,
+                    text.Length);
+
+                if (!order.IsComplete)
+                {
+                    problems.Add(text + "：未完成（" + (order.Note ?? "无原因") + "）");
+                    continue;
+                }
+
+                covered++;
+
+                ShapeDocument preState = Step(
+                    order,
+                    AngleWorkStepKind.PreState).Shape!;
+                string a = ShapeSignature.ColumnText(preState, order.Column);
+
+                for (int layer = 1; layer < a.Length; layer++)
+                {
+                    if (a[layer] == ShapeSignature.CrystalCode &&
+                        a[layer - 1] == ShapeSignature.EmptyCode)
+                    {
+                        problems.Add(
+                            text + $"：A 第 {layer + 1} 层晶体下方为空（P1 不满足），A = {a}");
+                    }
+                }
+
+                AngleWorkStep? pinStep = order.Steps.FirstOrDefault(
+                    step => step.Kind == AngleWorkStepKind.Pin && step.Shape is not null);
+
+                if (pinStep?.Shape is null)
+                {
+                    problems.Add(text + "：没有 Pin 步");
+                }
+
+                AngleWorkStep? targetStep = order.Steps
+                    .LastOrDefault(step => step.Kind == AngleWorkStepKind.Target);
+
+                if (targetStep?.Shape is null ||
+                    !ShapeOps.Same(targetStep.Shape, target))
+                {
+                    problems.Add(text + "：末步没有逐格等于目标");
+                }
+            }
+        }
+        finally
+        {
+            AngleWorkOrderBuilder.ConstructHStrictTwoStage = previous;
+        }
+
+        Console.WriteLine(
+            $"  STRICTH cases={cases.Length} covered={covered} problems={problems.Count}");
+
+        Assert.True(covered > 0, "两段开关应至少覆盖一例");
+        Assert.True(
+            problems.Count == 0,
+            "两段开关的深间隙覆盖出现问题：" + string.Join(" | ", problems));
+    }
+
+    /// <summary>
     /// ≤8 层全部「实际走构造 H」的语料：逐条核验 P1、前态每列合法、
     /// 末步逐格等于目标，并打印每层数量。
     /// </summary>

@@ -2598,7 +2598,11 @@ internal static class AngleWorkOrderTests
             ("T.cccP", "cTTPTT", AngleConstruction.G),
             // 断言更新的原因：P.T..c 现在由构造性构造 H 完成（docs §18.4），
             // 前态第 2 象限是 B 列（按 z+1 ∈ I 放晶体，其余普通格），整列紧列。
-            ("P.T..c", "TccTTT", AngleConstruction.H),
+            // 2026-11-16 再次更新：§13.6 的改正 2 让 B / N 不再满高——B 只铺到
+            // max(I)+1（= 源层 4），再往上留空（满高的 B 会把源普通格锚在原地，
+            // 顶针后落不到目标层）。所以这里从 TccTTT 变成 TccT..：
+            // P1 普通格 / P2·P3 晶体桥（I={2,3}）/ P4 陪落普通格 / P5·P6 留空。
+            ("P.T..c", "TccT..", AngleConstruction.H),
             ("TT.ccc", "TcTTPT", AngleConstruction.G),
             ("T.cccc", "cTTPTT", AngleConstruction.G)
         };

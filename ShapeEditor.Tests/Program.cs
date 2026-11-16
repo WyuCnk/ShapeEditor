@@ -20,6 +20,15 @@ internal static class Program
         }
 
         /*
+         * 诊断入口（不是测试项）：两段开关的失败清单与 7 步中间值。
+         * 不设置 SHAPE_TWO_STAGE_AUDIT 时行为与以前完全一致。
+         */
+        if (Environment.GetEnvironmentVariable("SHAPE_TWO_STAGE_AUDIT") == "1")
+        {
+            return TwoStageAudit.Run();
+        }
+
+        /*
          * WPF 的画刷等对象需要 STA 线程，
          * 测试统一在 STA 上跑。
          */
@@ -188,6 +197,7 @@ internal static class Program
             ("角工序:半边候选 3 多保险丝", AngleWorkOrderTests.HalfSideFuseHandlesMultipleTemporaryBlocks),
             ("角工序:P1 审计（§R1）", ConstructedHGeneralTests.P1AuditIsClean),
             ("角工序:§R9 三个样例（通用 H）", ConstructedHGeneralTests.ThreePaperSamplesUseGeneralH),
+            ("角工序:两段开关覆盖深间隙族", ConstructedHGeneralTests.StrictTwoStageCoversDeepGapFamily),
             ("角工序:≤8 层构造 H 语料", ConstructedHGeneralTests.HCorpusUnderEightLayers),
             ("角工序:§15 多刀半破三例", MultiCutHalfBreakTests.ThreeCorporaUseMultiCut),
             ("角工序:构造 H §20.1 逐列", ConstructedHPaperTests.PaperSolutionMatchesDocs),

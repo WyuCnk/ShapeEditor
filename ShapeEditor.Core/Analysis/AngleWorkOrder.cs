@@ -7289,7 +7289,9 @@ public static partial class AngleWorkOrderBuilder
         IEnumerable<int>? overrideILayers = null,
         IEnumerable<int>? overrideJLayers = null,
         string? summary = null,
-        IReadOnlyList<string>? derivationLimitations = null)
+        IReadOnlyList<string>? derivationLimitations = null,
+        int? bTop = null,
+        int? nTop = null)
     {        failureReason = null;
 
         var iLayers = new HashSet<int>();
@@ -7355,18 +7357,28 @@ public static partial class AngleWorkOrderBuilder
 
         for (int layer = 0; layer < layers; layer++)
         {
-            // B：z+1 ∈ I → 晶体，否则普通格（整列紧列）。
-            preState[layer, bColumn] = iLayers.Contains(layer + 1)
+            int position = layer + 1;
+
+            /*
+             * B：z+1 ∈ I → 晶体；否则普通格，但只铺到 bTop（改正 2），再往上留空。
+             */
+            preState[layer, bColumn] = iLayers.Contains(position)
                 ? ShapeCell.Crystal(color)
-                : ShapeCell.Shape('C', 'u');
+                : bTop is null || position <= bTop
+                    ? ShapeCell.Shape('C', 'u')
+                    : ShapeCell.Empty();
 
             // E：满高纯晶体柱。
             preState[layer, eColumn] = ShapeCell.Crystal(color);
 
-            // N：z+1 ∈ J → 针，否则普通格（整列紧列）。
-            preState[layer, nColumn] = jLayers.Contains(layer + 1)
+            /*
+             * N：z+1 ∈ J → 针；否则普通格，但只铺到 nTop（改正 2），再往上留空。
+             */
+            preState[layer, nColumn] = jLayers.Contains(position)
                 ? ShapeCell.Pin()
-                : ShapeCell.Shape('C', 'u');
+                : nTop is null || position <= nTop
+                    ? ShapeCell.Shape('C', 'u')
+                    : ShapeCell.Empty();
         }
 
         if (ShapeSignature.ColumnText(preState, column) ==
@@ -7702,7 +7714,8 @@ public static partial class AngleWorkOrderBuilder
         HPreState? plan = BuildPreStateH(
             targetCodes,
             layers,
-            out string? buildFailure);
+            out string? buildFailure,
+            out _);
 
         if (plan is null)
         {
@@ -7726,13 +7739,15 @@ public static partial class AngleWorkOrderBuilder
         (char[] bCodes, char[] eCodes, char[] nCodes) = BuildAuxColumns(
             iLayers,
             jLayers,
-            layers);
+            layers,
+            plan.BTop,
+            plan.NTop);
 
         char color = CrystalColor(target, column);
 
         var derivationLimitations = new List<string>
         {
-            "构造 H（§13.6 七步，不枚举）：最低晶体以下不动、及以上整体下移一格；" +
+            "构造 H（§13.6 七步 + 三处更正，不枚举）：最低晶体以下不动、及以上整体下移一格；" +
             "目标 L1 是针时 A[0] 放临时晶体（顶针补针），否则 A[0] 留空；" +
             "「下方有格且上方有格」的连续空段填临时晶体，并把空段上方的格抬一格。",
             "A = " + new string(plan.A) +
@@ -7740,8 +7755,10 @@ public static partial class AngleWorkOrderBuilder
             (plan.Descents.Count > 0
                 ? string.Join("、", plan.Descents.Select(pair => $"{pair.S}→{pair.D}"))
                 : "无") + "。",
-            "I = {" + string.Join(",", iLayers.Order()) + "}（B 的晶体桥层，1 起），" +
+            "I = {" + string.Join(",", iLayers.Order()) + "}（完整通道 ∪[d, s−1]，1 起），" +
             "J = {" + string.Join(",", jLayers.Order()) + "}（N 的针槽层，1 起）；" +
+            "B 最高有效层 " + plan.BTop + "（= 最高源层 − 1，再往上留空），" +
+            "N 最高有效层 " + plan.NTop + "（= 最高原生晶体目标层 − 1，再往上留空）；" +
             "B = " + new string(bCodes) +
             "，E = " + new string(eCodes) +
             "，N = " + new string(nCodes) + "。"
@@ -7766,7 +7783,9 @@ public static partial class AngleWorkOrderBuilder
             summary: "构造 H（§13.6 七步）：最低晶体以下不动、及以上整体下移一格；" +
                      "空段填临时晶体、上方格抬一格；再按降表推 I / J 生成 " +
                      "B / E / N；一次 Pin 同时引爆并整批落下。",
-            derivationLimitations: derivationLimitations);
+            derivationLimitations: derivationLimitations,
+            bTop: plan.BTop,
+            nTop: plan.NTop);
 
         if (order is null)
         {
@@ -7800,7 +7819,9 @@ public static partial class AngleWorkOrderBuilder
                     overrideJLayers: extendedJ,
                     summary: "构造 H（§13.6 七步 + 临时段下扩一格）：A 不变，" +
                              "把每段临时晶体向下扩一格后重推 I / J，一次 Pin 引爆并整批落下。",
-                    derivationLimitations: derivationLimitations);
+                    derivationLimitations: derivationLimitations,
+                    bTop: plan.BTop,
+                    nTop: plan.NTop);
 
                 if (order is null)
                 {
@@ -7838,7 +7859,9 @@ public static partial class AngleWorkOrderBuilder
                 summary: "构造 H（§13.6 七步 + 结构性降表）：A 不变，" +
                          "深落差的 B 桥铺到落点上下两层、相邻源层补针槽，" +
                          "一次 Pin 引爆并整批落下。",
-                derivationLimitations: derivationLimitations);
+                derivationLimitations: derivationLimitations,
+                bTop: plan.BTop,
+                nTop: plan.NTop);
 
             if (order is null)
             {
@@ -7875,7 +7898,9 @@ public static partial class AngleWorkOrderBuilder
                 summary: "构造 H（§13.6 七步 + 临时段针槽）：A 不变，" +
                          "临时晶体段的每一层都放针、B 只保留落点桥，" +
                          "一次 Pin 引爆并整批落下。",
-                derivationLimitations: derivationLimitations);
+                derivationLimitations: derivationLimitations,
+                bTop: plan.BTop,
+                nTop: plan.NTop);
 
             if (order is null)
             {
@@ -7892,13 +7917,29 @@ public static partial class AngleWorkOrderBuilder
         return order;
     }
 
-    /// <summary>§13.6 七步生成的前态 A 与降表（层号 1 起）。</summary>
+    /// <summary>
+    /// §13.6 七步生成的前态 A 与降表（层号 1 起）。
+    ///
+    /// <para>
+    /// <see cref="Descents"/> 的条目是「源层 s → 目标层 d」，两个层号都是<b>顶针后</b>的编号
+    /// （§13.6 第 5 步）。改正 1 之后 <c>I</c> 由完整通道 <c>∪[d, s−1]</c> 推出，
+    /// 所以这里必须保留真实的落点 <c>d</c>，不能只留 <c>s−1</c>。
+    /// </para>
+    /// <para>
+    /// <see cref="BTop"/> / <see cref="NTop"/> 是改正 2 的辅助列高度（<b>顶针前</b>的 1 起层号）：
+    /// B 的最高有效层 = 最高源层 − 1（= max(I) + 1），N 的最高有效层 = 最高原生晶体目标层 − 1。
+    /// 这两层以上一律留空，不再像以前那样满高。
+    /// </para>
+    /// </summary>
     private sealed record HPreState(
         char[] A,
         bool[] Temporary,
         int[] Origin,
         IReadOnlyList<(int S, int D)> Descents,
-        IReadOnlyList<int> TemporaryTops);
+        IReadOnlyList<int> TemporaryTops,
+        int BTop,
+        int NTop,
+        IReadOnlyList<string> Notes);
 
     /// <summary>
     /// §14.1 <c>BuildPreStateH(target, cap) → (A, descents)</c>，<b>严格按 §13.6 的 7 步</b>：
@@ -7921,13 +7962,16 @@ public static partial class AngleWorkOrderBuilder
     private static HPreState? BuildPreStateH(
         char[] targetCodes,
         int layers,
-        out string? failureReason)
+        out string? failureReason,
+        out string? failureStage)
     {
         failureReason = null;
+        failureStage = null;
 
         var a = new char[layers];
         var temporary = new bool[layers];
         var origin = new int[layers];
+        var notes = new List<string>();
 
         Array.Fill(a, ShapeSignature.EmptyCode);
         Array.Fill(origin, -1);
@@ -7950,10 +7994,34 @@ public static partial class AngleWorkOrderBuilder
         if (firstCrystal == 0)
         {
             failureReason = "目标列没有晶体，不走构造 H（构造 A / C）。";
+            failureStage = "第 1 步（定基准层 f0）";
             return null;
         }
 
         // ── 第 2 步：最低晶体以下不动，最低晶体及以上整体下移一格 ──
+        /*
+         * 改正 3 的配套（2026-11-16）：N2 的「最低晶体以下不动」要往外扩一层——
+         * 若最低晶体**正下方**就是普通格（晶体直接坐在材料上），这枚普通格也必须
+         * 跟着下移一格，否则晶体会与它抢同一个槽位（`..TcT.T.c` / `P.TcT.T.c`
+         * 的「第 4 层的目标格与第 3 层已经放好的格冲突」）。
+         * 普通格下移一格后顶针刚好把它送回原层，晶体仍留在 f−1，P1 也仍然成立。
+         * 只要正下方是空，扩层立刻停止 ⇒ 其余形态的 A 与原来逐格相同。
+         */
+        int shiftFrom = firstCrystal;
+
+        while (shiftFrom - 1 >= 1 &&
+               targetCodes[shiftFrom - 2] != ShapeSignature.EmptyCode)
+        {
+            shiftFrom--;
+        }
+
+        if (shiftFrom != firstCrystal)
+        {
+            notes.Add(
+                $"第 2 步：最低晶体 L{firstCrystal} 正下方是材料 ⇒ 下移边界从 L{firstCrystal} " +
+                $"扩到 L{shiftFrom}（这一段整体下移一格）。");
+        }
+
         for (int f = 1; f <= layers; f++)
         {
             char code = targetCodes[f - 1];
@@ -7973,10 +8041,11 @@ public static partial class AngleWorkOrderBuilder
 
                 failureReason =
                     $"第 {f} 层的针不在第 1 层：构造 H 的顶针只能补出第 1 层的针。";
+                failureStage = "第 2 步（逐格放置）";
                 return null;
             }
 
-            int slot = f < firstCrystal
+            int slot = f < shiftFrom
                 ? f
                 : f - 1;
 
@@ -7984,6 +8053,7 @@ public static partial class AngleWorkOrderBuilder
             {
                 failureReason =
                     $"第 {f} 层的目标格下移到第 {f - 1} 层后低于地面，换碎晶路线。";
+                failureStage = "第 2 步（逐格放置）";
                 return null;
             }
 
@@ -7992,6 +8062,7 @@ public static partial class AngleWorkOrderBuilder
             {
                 failureReason =
                     $"第 {f} 层的目标格与第 {slot} 层已经放好的格冲突。";
+                failureStage = "第 2 步（逐格放置）";
                 return null;
             }
 
@@ -8007,6 +8078,12 @@ public static partial class AngleWorkOrderBuilder
             {
                 Put(1, ShapeSignature.CrystalCode);
                 temporary[0] = true;
+                notes.Add("第 3 步：目标 L1 是针 ⇒ A[0] 放临时晶体（顶针补针）。");
+            }
+            else
+            {
+                notes.Add("第 3 步：目标 L1 是针 ⇒ A[0] 已非空（" +
+                          At(1) + "），顶针补针。");
             }
         }
         else if (At(1) != ShapeSignature.EmptyCode)
@@ -8023,6 +8100,7 @@ public static partial class AngleWorkOrderBuilder
             if (slot > layers)
             {
                 failureReason = "第 1 层的格抬到第 2 层时没有空位。";
+                failureStage = "第 3 步（第 1 层的针）";
                 return null;
             }
 
@@ -8030,6 +8108,11 @@ public static partial class AngleWorkOrderBuilder
             origin[slot - 1] = origin[0];
             Put(1, ShapeSignature.EmptyCode);
             origin[0] = -1;
+            notes.Add($"第 3 步：目标 L1 不是针 ⇒ A[0] 留空，第 1 层的格抬到第 {slot} 层。");
+        }
+        else
+        {
+            notes.Add("第 3 步：目标 L1 不是针 ⇒ A[0] 留空（顶针不补针）。");
         }
 
         // ── 第 4 步：临时晶体填充 + 抬升（自下而上，扫到稳定） ──
@@ -8093,6 +8176,9 @@ public static partial class AngleWorkOrderBuilder
                         origin[layer - 1] = -1;
                     }
 
+                    notes.Add(
+                        $"第 4 步：L{low}–L{high} 填临时晶体（上方普通格抬不动，不抬）。");
+
                     continue;
                 }
 
@@ -8107,6 +8193,10 @@ public static partial class AngleWorkOrderBuilder
                     temporary[layer - 1] = true;
                     origin[layer - 1] = -1;
                 }
+
+                notes.Add(
+                    $"第 4 步：L{low}–L{high} 填临时晶体；上方 L{high + 1} 的普通格抬到 " +
+                    $"L{high + 2}（让出的那一层并入填充段）。");
             }
             else if (above == ShapeSignature.CrystalCode)
             {
@@ -8118,6 +8208,7 @@ public static partial class AngleWorkOrderBuilder
                 {
                     failureReason =
                         $"第 {low - 1} 层不是普通格，抬不动（空段上方是晶体）。";
+                    failureStage = "第 4 步（临时晶体填充 / 抬升）";
                     return null;
                 }
 
@@ -8125,6 +8216,8 @@ public static partial class AngleWorkOrderBuilder
                 origin[high - 1] = origin[low - 2];
                 Put(low - 1, ShapeSignature.EmptyCode);
                 origin[low - 2] = -1;
+
+                int filled = 0;
 
                 if (low - 2 >= 1 &&
                     At(low - 2) != ShapeSignature.EmptyCode)
@@ -8139,13 +8232,22 @@ public static partial class AngleWorkOrderBuilder
                         Put(layer, ShapeSignature.CrystalCode);
                         temporary[layer - 1] = true;
                         origin[layer - 1] = -1;
+                        filled++;
                     }
                 }
+
+                notes.Add(
+                    $"第 4 步：L{low}–L{high} 是空段、上方 L{high + 1} 是晶体（不动）⇒ " +
+                    $"把 L{low - 1} 的普通格抬到 L{high}（抬 {high - low + 1}）；" +
+                    (filled > 0
+                        ? $"L{low - 1}–L{low - 1 + filled - 1} 填临时晶体。"
+                        : "下方没有填临时晶体。"));
             }
             else
             {
                 failureReason =
                     $"第 {high + 1} 层是针，构造 H 的空段填充不处理针。";
+                failureStage = "第 4 步（临时晶体填充 / 抬升）";
                 return null;
             }
         }
@@ -8181,6 +8283,7 @@ public static partial class AngleWorkOrderBuilder
                     failureReason =
                         $"A 第 {crystal} 层的原生晶体下方找不到可抬升的普通格" +
                         "（P1 抬不动，换碎晶路线）。";
+                    failureStage = "第 4 步（P1 自检）";
                     return null;
                 }
 
@@ -8189,6 +8292,9 @@ public static partial class AngleWorkOrderBuilder
                 Put(donor, ShapeSignature.EmptyCode);
                 origin[donor - 1] = -1;
                 repaired = true;
+                notes.Add(
+                    $"第 4 步（P1 自检）：L{crystal} 的原生晶体下方为空 ⇒ 把 L{donor} 的" +
+                    $"普通格抬到 L{crystal - 1}。");
             }
 
             if (!repaired)
@@ -8205,6 +8311,7 @@ public static partial class AngleWorkOrderBuilder
             {
                 failureReason =
                     $"A 第 {layer} 层的原生晶体下方为空（初始前态 P1 不满足）。";
+                failureStage = "第 4 步（P1 自检）";
                 return null;
             }
         }
@@ -8212,7 +8319,86 @@ public static partial class AngleWorkOrderBuilder
         if (!ShapeSignature.CheckColumn(new string(a)).IsLegal)
         {
             failureReason = "A 过不了五项条件：" + new string(a);
+            failureStage = "第 4 步（A 验收）";
             return null;
+        }
+
+        /*
+         * 改正 3（深间隙）：最低晶体以下的普通格也要抬，抬升量 = 通道长度 − 1。
+         *
+         * <para>
+         * N2 的「最低晶体以下不动」只在<b>没有深间隙</b>时成立。一旦这一格被抬到
+         * 目标层之上（抬升量 = 通道长度 − 1，也就是它下方必须被碎掉的临时晶体段长度），
+         * 它下方的空段就必须整段补成临时晶体，否则通道 [d, s−1] 的中段是空的，
+         * 源格会一路落到地面（或者残留空段）。
+         * </para>
+         * <para>
+         * 例：<c>P.T...c.</c> 的目标 T@3 被抬到 A@5（抬 2 = 通道 [3,5] 长 3 减 1），
+         * 它下方 L2–L4 全部是临时晶体；<c>..T..cTc</c> 的 T@3 抬到 A@4（抬 1）。
+         * </para>
+         * <para>
+         * 只补「下方已经有材料」的空格（悬空的临时晶体会让前态不稳定），
+         * 也不补会让原生晶体与临时晶体纵向相邻的空格（碎晶会误伤晶体）。
+         * </para>
+         */
+        for (int pass = 0; pass <= layers; pass++)
+        {
+            bool changed = false;
+
+            for (int position = 2; position <= layers; position++)
+            {
+                if (At(position) != ShapeSignature.SolidCode ||
+                    origin[position - 1] <= 0)
+                {
+                    continue;
+                }
+
+                int target = origin[position - 1];
+
+                if (target >= position)
+                {
+                    continue;
+                }
+
+                for (int cell = target - 1; cell <= position - 1; cell++)
+                {
+                    if (cell < 2 || cell > layers - 1 ||
+                        At(cell) != ShapeSignature.EmptyCode)
+                    {
+                        continue;
+                    }
+
+                    if (At(cell - 1) == ShapeSignature.EmptyCode)
+                    {
+                        continue;
+                    }
+
+                    if (At(cell + 1) == ShapeSignature.CrystalCode &&
+                        !temporary[cell])
+                    {
+                        continue;
+                    }
+
+                    if (At(cell - 1) == ShapeSignature.CrystalCode &&
+                        !temporary[cell - 2])
+                    {
+                        continue;
+                    }
+
+                    Put(cell, ShapeSignature.CrystalCode);
+                    temporary[cell - 1] = true;
+                    origin[cell - 1] = -1;
+                    changed = true;
+                    notes.Add(
+                        $"第 4 步（改正 3 深间隙）：L{position} 的普通格要降 {position - target} 层" +
+                        $"（通道长 {position - target + 1}）⇒ 把它下方 L{cell} 的空格补成临时晶体。");
+                }
+            }
+
+            if (!changed)
+            {
+                break;
+            }
         }
 
         // ── 第 5 步：降表（层号一律用顶针后 = A 的层号 + 1） ──
@@ -8239,11 +8425,18 @@ public static partial class AngleWorkOrderBuilder
                 failureReason =
                     $"A 第 {layer} 层的普通格顶针后只到第 {pinned} 层，" +
                     $"高于目标第 {targetLayer} 层，顶针无法把它送下去。";
+                failureStage = "第 5 步（降表）";
                 return null;
             }
 
-            // 只声明降 1 层，更深的落差由自由坍落完成。
-            descents.Add((pinned, pinned - 1));
+            /*
+             * 改正 1：降表记真实的「源层 s → 落点 d」，通道长度由第 5 步的
+             * I = ∪[d, s−1] 完整覆盖；不再只声明降 1 层。
+             */
+            descents.Add((pinned, targetLayer));
+            notes.Add(
+                $"第 5 步：L{layer} 的普通格顶针后到 L{pinned}，目标 L{targetLayer}" +
+                $"⇒ 通道 [{targetLayer}, {pinned - 1}]（长 {pinned - targetLayer}）。");
         }
 
         var temporaryTops = new List<int>();
@@ -8264,6 +8457,45 @@ public static partial class AngleWorkOrderBuilder
             }
 
             temporaryTops.Add(top);
+            notes.Add($"第 4 步：临时晶体段 L{layer}–L{top}（顶针后 L{layer + 1}–L{top + 1}）。");
+        }
+
+        /*
+         * 改正 2：辅助列不再满高。
+         *   B（晶体桥柱）最高有效层 = 最高源层 − 1（顶针前层号），
+         *       也就是「源普通格所在的那一层」——它要陪着源格一起落；
+         *       并且必须至少盖住 max(I)（B 的晶体桥都在 I 上，紧列不能留洞）。
+         *   N（针槽柱）最高有效层 = 最高原生晶体目标层 − 1（顶针前层号），
+         *       刚好在顶针后贴住最高那颗原生晶体，给它横向支撑。
+         * 再往上留空：满高的辅助列会把该落的格锚在原地。
+         */
+        int bTop = 0;
+
+        foreach ((int source, _) in descents)
+        {
+            bTop = Math.Max(bTop, source - 1);
+        }
+
+        foreach (int top in temporaryTops)
+        {
+            bTop = Math.Max(bTop, top);
+        }
+
+        int highestCrystal = 0;
+
+        for (int layer = 1; layer <= layers; layer++)
+        {
+            if (targetCodes[layer - 1] == ShapeSignature.CrystalCode)
+            {
+                highestCrystal = Math.Max(highestCrystal, layer);
+            }
+        }
+
+        int nTop = highestCrystal > 0 ? highestCrystal - 1 : 0;
+
+        foreach ((int source, _) in descents)
+        {
+            nTop = Math.Max(nTop, source - 1);
         }
 
         return new HPreState(
@@ -8271,7 +8503,10 @@ public static partial class AngleWorkOrderBuilder
             temporary,
             origin,
             descents,
-            temporaryTops);
+            temporaryTops,
+            bTop,
+            nTop,
+            notes);
     }
 
     /// <summary>
@@ -8279,7 +8514,7 @@ public static partial class AngleWorkOrderBuilder
     ///
     /// <code>
     /// J = { 源层 s }                      → N 的针放在 s−1 层
-    /// I = { 落点 d } ∪ { 每段临时晶体的最上层 } → B 的晶体放在对应层
+    /// I = ∪[d, s−1]（完整通道）∪ { 每段临时晶体的最上层 } → B 的晶体放在对应层
     /// </code>
     ///
     /// <para>
@@ -8288,9 +8523,13 @@ public static partial class AngleWorkOrderBuilder
     /// B 在 <c>z+1 ∈ I</c> 的层放晶体，N 在 <c>z+1 ∈ J</c> 的层放针。
     /// </para>
     /// <para>
-    /// <paramref name="extendTemporary"/> 对应第 7 步的确定性调整：
-    /// 第一次回放失败时，把每段临时晶体向下扩一格再走第 5–7 步。
-    /// 两种读法是固定的，不构成候选枚举。
+    /// <b>改正 1（2026-11-16 实测）</b>：I 用<b>完整通道</b> <c>∪[d, s−1]</c>，可跨多层；
+    /// 只声明落点那一层（<c>d = s−1</c>）在深间隙里会漏掉通道中段，B 没有桥，
+    /// 源格落不到目标层（<c>P.T...c</c>：I={3,4,5} ✔ / I={4} ✘）。
+    /// </para>
+    /// <para>
+    /// <paramref name="extendTemporary"/> 是历史读法（把每段临时晶体向下扩一格），
+    /// 完整通道落地后它只是同一集合的子集补充，保留它不影响结论。
     /// </para>
     /// </summary>
     private static (HashSet<int> I, HashSet<int> J) BuildDescents(
@@ -8308,7 +8547,12 @@ public static partial class AngleWorkOrderBuilder
         foreach ((int source, int destination) in plan.Descents)
         {
             jLayers.Add(source - 1);
-            iLayers.Add(destination - 1);
+
+            // 改正 1：完整通道 [d, s−1]（顶针后层号）⇒ 顶针前层号 [d−1, s−2]。
+            for (int layer = Math.Max(destination, 1); layer <= source - 1; layer++)
+            {
+                iLayers.Add(layer - 1);
+            }
         }
 
         foreach (int top in plan.TemporaryTops)
@@ -8339,11 +8583,27 @@ public static partial class AngleWorkOrderBuilder
     /// §14.3 <c>BuildAuxColumns(I, J, cap) → (B, E, N)</c>。
     /// <c>B[z]</c> 在 <c>z+1 ∈ I</c> 时放晶体，否则普通格；<c>E</c> 满高纯晶体；
     /// <c>N[z]</c> 在 <c>z+1 ∈ J</c> 时放针，否则普通格。
+    ///
+    /// <para>
+    /// <b>改正 2（2026-11-16 实测）</b>：B / N 不再满高。
+    /// </para>
+    /// <list type="bullet">
+    /// <item><paramref name="bTop"/>：B 的最高有效层（1 起）= 最高源层 − 1（= max(I)+1），
+    /// 它正好是「源普通格所在的那一层」，必须留成普通格陪着源格一起落；
+    /// 若临时晶体段顶更高，B 至少也要盖住 max(I)（晶体桥都在 I 上，紧列不能留洞）；</item>
+    /// <item><paramref name="nTop"/>：N 的最高有效层（1 起）= 最高原生晶体目标层 − 1，
+    /// 顶针后刚好贴住最高那颗原生晶体，给它横向支撑；</item>
+    /// <item>再往上留空——满高的辅助列会把该落的格锚在原地
+    /// （<c>P.T...c.</c> 满高 B/N 得到 <c>P....Tc</c> ✘）。</item>
+    /// </list>
+    /// <para>传 <c>null</c> 表示维持旧读法（满高），只有历史路线会用到。</para>
     /// </summary>
     private static (char[] B, char[] E, char[] N) BuildAuxColumns(
         HashSet<int> iLayers,
         HashSet<int> jLayers,
-        int layers)
+        int layers,
+        int? bTop = null,
+        int? nTop = null)
     {
         var b = new char[layers];
         var e = new char[layers];
@@ -8351,13 +8611,21 @@ public static partial class AngleWorkOrderBuilder
 
         for (int layer = 0; layer < layers; layer++)
         {
-            b[layer] = iLayers.Contains(layer + 1)
+            int position = layer + 1;
+
+            b[layer] = iLayers.Contains(position)
                 ? ShapeSignature.CrystalCode
-                : ShapeSignature.SolidCode;
+                : bTop is null || position <= bTop
+                    ? ShapeSignature.SolidCode
+                    : ShapeSignature.EmptyCode;
+
             e[layer] = ShapeSignature.CrystalCode;
-            n[layer] = jLayers.Contains(layer + 1)
+
+            n[layer] = jLayers.Contains(position)
                 ? ShapeSignature.PinCode
-                : ShapeSignature.SolidCode;
+                : nTop is null || position <= nTop
+                    ? ShapeSignature.SolidCode
+                    : ShapeSignature.EmptyCode;
         }
 
         return (b, e, n);
