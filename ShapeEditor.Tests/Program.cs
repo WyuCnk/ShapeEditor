@@ -201,6 +201,7 @@ internal static class Program
             ("角工序:≤8 层构造 H 语料", ConstructedHGeneralTests.HCorpusUnderEightLayers),
             ("角工序:§15 多刀半破三例", MultiCutHalfBreakTests.ThreeCorporaUseMultiCut),
             ("角工序:构造 H §0.4 逐列", ConstructedHPaperTests.GeneralSolutionMatchesDocs),
+            ("角工序:§0.8 十五个样例回归", FourStepAlgorithm6Tests.Docs08RegressionSamples),
             ("角工序:Q1 子配方审计（§19.4）", ConstructedHPaperTests.PinOrdersCarryQ1SubRecipe),
             ("角工序:构造 G 的 G5/G8/G8a", AuxiliaryColumnRulesTests.ConstructGFollowsG5G8AndG8a),
             ("角工序:整图 Hc 取法（§5.3）", AuxiliaryColumnRulesTests.TailBoundaryUsesWholeShapeHc),

@@ -19,12 +19,13 @@ internal static class ConstructedHPaperTests
     };
 
     /// <summary>
-    /// docs §0.4 / §13.6：目标 <c>.T..T..c</c>（8 层）的构造式前态逐列等于
-    /// <c>A=.TcccTc.</c>、<c>B=cTTTcT..</c>、<c>E=cccccccc</c>、<c>N=TPTTTPT.</c>，
-    /// 一次 Pin 得到目标列。
+    /// docs §0.4：目标 <c>.T..T..c</c>（8 层）的论文四步输出逐列等于
+    /// <c>A=..T..Tc.</c>、<c>B=ccT.....</c>、<c>E=cccccccc</c>、<c>N=TTPTTTT.</c>，
+    /// 先执行提前弱落，再顶针一次得到目标列。
     ///
     /// <para>
-    /// §20.3 的旧构造式已删除；这里改钉 §0.4 七步（含 §17.1 R1 独立源格）的输出。
+    /// <b>期望更新的原因</b>：算法 6 已从 §13.6 七步改成 §0.4 论文四步，
+    /// A 是正规列 v 整体低一层，B/E/N 只按本次下降表 M−提前+e 生成。
     /// </para>
     /// </summary>
     public static void GeneralSolutionMatchesDocs()
@@ -47,11 +48,11 @@ internal static class ConstructedHPaperTests
 
         ShapeDocument preState = preStateStep.Shape!;
 
-        // §0.4：四列逐列一致（A | B | E | N）。
-        Assert.Equal(".TcccTc.", ShapeSignature.ColumnText(preState, 0));
-        Assert.Equal("cTTTcT..", ShapeSignature.ColumnText(preState, 1));
+        // §0.4 四步：四列逐列一致（A | B | E | N）。
+        Assert.Equal("..T..Tc.", ShapeSignature.ColumnText(preState, 0));
+        Assert.Equal("ccT.....", ShapeSignature.ColumnText(preState, 1));
         Assert.Equal("cccccccc", ShapeSignature.ColumnText(preState, 2));
-        Assert.Equal("TPTTTPT.", ShapeSignature.ColumnText(preState, 3));
+        Assert.Equal("TTPTTTT.", ShapeSignature.ColumnText(preState, 3));
 
         // 稳定、四列合法、前态目标列 ≠ 目标。
         Assert.True(ShapeOps.IsStable(preState), "§0.4 的前态应稳定");
@@ -60,48 +61,44 @@ internal static class ConstructedHPaperTests
             "前态第 " + (badColumn + 1) + " 象限不过五项条件");
         Assert.NotEqual(text, ShapeSignature.ColumnText(preState, 0));
 
-        // §0.4：降表 / I / J 仍要在 Limitations 里如实写出（A 的推导可回查）。
+        // §0.4：四步的中间值仍要在 Limitations 里如实写出（可回查）。
         string limitations = string.Join("\n", order.Limitations);
 
         Assert.True(
-            limitations.Contains("§13.6 七步", StringComparison.Ordinal),
-            "Limitations 应写明 §13.6 七步：" + limitations);
+            limitations.Contains("算法 6（§0.4 论文四步）", StringComparison.Ordinal),
+            "Limitations 应写明 §0.4 论文四步：" + limitations);
 
-        // 一次真实顶针，目标列逐格等于目标。
+        // 提前弱落 → 一次真实顶针，目标列逐格等于目标。
         AngleWorkStep pinStep = order.Steps.First(
             step => step.Kind == AngleWorkStepKind.Pin);
 
+        ShapeDocument pinInput = order.Steps
+            .TakeWhile(step => step.Kind != AngleWorkStepKind.Pin)
+            .Last(step => step.Shape is not null)
+            .Shape!;
+
         Assert.True(
             ShapeOps.Same(
-                ShapePhysics.Pin(preState).Document,
+                ShapePhysics.Pin(pinInput).Document,
                 pinStep.Shape),
             "Pin 步快照应等于真实 ShapePhysics.Pin");
         Assert.Equal(text, ShapeSignature.ColumnText(pinStep.Shape!, 0));
 
-        // 整份前态的交换链子配方仍须可端到端回放。
-        Assert.True(order.SubRecipe is not null, "带洞前态必须带交换链子配方");
-        Assert.Equal(RecipeKind.Exchange, order.SubRecipe!.Kind);
-        Assert.Equal(0, order.SubRecipe.Rank);
+        // 带洞前态要么有整份交换链子配方、要么有 Q1 一层子配方。
         Assert.True(
-            Replay.Verify(order.SubRecipe, preState, out _),
-            "整份前态的交换链子配方应能回放");
-
-        // §19.4：A 带洞 ⇒ 必须有 Q1 子配方（紧列 → 半破 → 零件），且真实回放。
+            order.SubRecipe is not null || order.Q1SubRecipe is not null,
+            "带洞前态必须带子配方");
         Assert.True(order.Q1SubRecipe is not null, "A 带洞时必须挂 Q1 子配方");
         Assert.Equal(RecipeKind.Cut, order.Q1SubRecipe!.Kind);
         Assert.Equal(0, order.Q1SubRecipe.Rank);
 
         ShapeDocument q1Start = order.Q1SubRecipe.Steps[0].Shape!;
 
-        Assert.Equal(
-            "cTcccTc.",
-            ShapeSignature.ColumnText(q1Start, 0),
-            "Q1 子配方应从紧列 cTcccTc. 开始（洞填临时晶体）");
         Assert.True(
             AllColumnsTight(q1Start),
             "Q1 子配方的起点必须全是紧列（§5.1 / §6 第 7 条）");
         Assert.Equal(
-            ".TcccTc.",
+            "..T..Tc.",
             ShapeSignature.ColumnText(order.Q1SubRecipe.Shape, 0),
             "半破后的 Q1 应等于前态 A");
         Assert.True(

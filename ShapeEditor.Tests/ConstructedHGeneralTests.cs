@@ -133,17 +133,20 @@ internal static class ConstructedHGeneralTests
     }
 
     /// <summary>
-    /// §R9 的三个实测样例：前态每颗晶体下方非空（P1），一次 Pin 后目标列逐格等于目标；
-    /// 同时打印 A / B / E / N，便于与 docs 的样例对照。
+    /// §R9 的三个实测样例：前态每颗晶体下方非空（P1），顶针后再按论文四步的
+    /// 弱落恢复底块，末步逐格等于目标；同时打印 A / B / E / N，便于与 docs 对照。
+    ///
+    /// <para>
+    /// <b>期望 A 更新的原因</b>：算法 6 已按 §0.4 的论文四步重写，
+    /// A = 正规列 v 整体低一层（不再是 §13.6 七步的 A）。
+    /// </para>
     /// </summary>
     public static void ThreePaperSamplesUseGeneralH()
     {
         var cases = new (string Text, string ExpectedA)[]
         {
-            ("T...cT.T.c", "..TcTccTc."),
-            ("T..cT.T.c", ".TcTccTc."),
-            // ③ 的 docs 前态是半破路线（TccTcccTc）；这里走等价的顶针路线，
-            // 只要 P1 成立且 Pin 后逐格等于目标即可。
+            ("T...cT.T.c", "..TcT..Tc."),
+            ("T..cT.T.c", ".TcT..Tc."),
             ("T.T.cccTc", ".TTcccTc.")
         };
 
@@ -163,7 +166,7 @@ internal static class ConstructedHGeneralTests
 
             string a = ShapeSignature.ColumnText(preState, order.Column);
 
-            Assert.Equal(expectedA, a, text + " 的 A 应与 §13.6 的逐格推导一致");
+            Assert.Equal(expectedA, a, text + " 的 A 应与 §0.4 四步的逐格推导一致");
 
             for (int layer = 1; layer < a.Length; layer++)
             {
@@ -187,17 +190,24 @@ internal static class ConstructedHGeneralTests
             PhysicsResult pin = ShapePhysics.Pin(preState);
 
             Assert.True(pin.Success, text + " 的真实 Pin 失败：" + pin.Error);
-            Assert.Equal(
-                text,
-                ShapeSignature.ColumnText(pin.Document!, order.Column),
-                text + " 的 Pin 后目标列应逐格等于目标");
+            Assert.True(pin.Document is not null, text + " 的真实 Pin 没有产物");
 
             AngleWorkStep pinStep = Step(order, AngleWorkStepKind.Pin);
 
+            Assert.True(
+                ShapeOps.Same(pin.Document, pinStep.Shape),
+                text + " 的 Pin 步快照应等于真实 Pin");
+
+            // 四步的最后一步是逐块弱落；弱落恢复后才逐格等于目标。
+            AngleWorkStep? finalRestore = order.Steps.LastOrDefault(
+                step => step.Kind == AngleWorkStepKind.WeakDrop);
+
+            ShapeDocument restored = finalRestore?.Shape ?? pin.Document!;
+
             Assert.Equal(
                 text,
-                ShapeSignature.ColumnText(pinStep.Shape!, order.Column),
-                text + " 的 Pin 步快照应逐格等于目标");
+                ShapeSignature.ColumnText(restored, order.Column),
+                text + " 的弱落恢复后目标列应逐格等于目标");
 
             AngleWorkStep targetStep = Step(order, AngleWorkStepKind.Target);
 

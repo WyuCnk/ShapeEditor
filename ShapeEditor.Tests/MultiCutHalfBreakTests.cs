@@ -6,12 +6,20 @@ using ShapeEditor.Core.Physics;
 namespace ShapeEditor.Tests;
 
 /// <summary>
-/// §15 多刀半破的验收语料：<c>TT.T.c</c>、<c>TT.T.T.c</c>、<c>cTT.T.c</c>。
+/// §15 多刀半破的兜底验收：<c>cTT.T.ccc</c>（8 层）。
+///
+/// <para>
+/// <b>语料更新的原因</b>：按 §0.7，单刀路线（算法 6 的论文四步 / 构造 G /
+/// §11 通用计划）必须排在多刀之前。原来用多刀的 <c>TT.T.c</c>、<c>TT.T.T.c</c>
+/// 现在由论文四步完成；<c>cTT.T.c</c> 等由 §11 通用计划（两刀定向碎晶）完成。
+/// ≤9 层穷举里只剩 <c>cTT.T.ccc</c> 仍真正落到带
+/// <see cref="AngleWorkStepKind.Exchange"/> 的 §15 多刀。
+/// </para>
 ///
 /// <para>
 /// 口径：<b>刀数 == 初始临时晶体连通块数 K</b>；每刀一个真实
 /// <see cref="ShapePhysics.Cut"/>（Cut 步的 Shape 是落定后的结果），
-/// 轮间用新增的 <see cref="AngleWorkStepKind.Exchange"/> 步重装辅助柱；
+/// 轮间用 <see cref="AngleWorkStepKind.Exchange"/> 步重装辅助柱；
 /// 末步 <see cref="AngleWorkStepKind.Target"/> 逐格等于目标。
 /// </para>
 /// </summary>
@@ -21,7 +29,7 @@ internal static class MultiCutHalfBreakTests
 
     public static void ThreeCorporaUseMultiCut()
     {
-        foreach (string text in new[] { "TT.T.c", "TT.T.T.c", "cTT.T.c" })
+        foreach (string text in new[] { "cTT.T.ccc" })
         {
             ShapeDocument target = BuildColumn(text);
             AngleWorkOrder order = AngleWorkOrderBuilder.Build(
@@ -154,6 +162,38 @@ internal static class MultiCutHalfBreakTests
             Console.WriteLine(
                 $"  MULTICUT {text} K={blocks} cuts={cuts} exchanges={exchanges} " +
                 $"pre={preColumn} final={ShapeSignature.ColumnText(current, 0)}");
+        }
+
+        /*
+         * §0.7：单刀路线必须排在多刀之前。<c>TT.T.c</c>（论文例 2）与
+         * <c>TT.T.T.c</c> 现在由算法 6 的论文四步完成，步骤链含 WeakDrop，
+         * 末步逐格等于目标，且不应再出现 Cut / Exchange。
+         */
+        foreach (string text in new[] { "TT.T.c", "TT.T.T.c" })
+        {
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(
+                BuildColumn(text),
+                0,
+                text.Length);
+
+            Assert.True(order.IsComplete, text + " 应完成：" + (order.Note ?? "?"));
+            Assert.Equal(AngleAlgorithm.Algorithm6, order.Algorithm, text);
+            Assert.Equal(AngleConstruction.H, order.Construction, text);
+            Assert.True(
+                order.Steps.Any(step => step.Kind == AngleWorkStepKind.WeakDrop),
+                text + " 应含弱落恢复步");
+            Assert.False(
+                order.Steps.Any(step =>
+                    step.Kind is AngleWorkStepKind.Cut or
+                    AngleWorkStepKind.Exchange),
+                text + " 不应再走多刀");
+            Assert.Equal(
+                text,
+                ShapeSignature.ColumnText(
+                    order.Steps.Last(
+                        step => step.Kind == AngleWorkStepKind.Target).Shape!,
+                    0),
+                text + " 的末步应逐格等于目标");
         }
     }
 

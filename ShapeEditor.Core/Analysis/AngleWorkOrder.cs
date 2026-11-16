@@ -35,6 +35,14 @@ public enum AngleWorkStepKind
     Pin,
 
     /// <summary>
+    /// 弱落（构造 E，论文 §0.4 第四步 ⑥）：整块普通格失去侧向粘连后
+    /// 落到同列最近的下方材料之上。算法 6 用它按底块提升的逆序恢复各块，
+    /// 块内从最低格到最高格依次掉落；<see cref="AngleWorkStep.Shape"/> 是
+    /// 这一块恢复完成后的图形。
+    /// </summary>
+    WeakDrop,
+
+    /// <summary>
     /// 轮间交换（§15.3 / 构造 C 支柱交接）：多刀半破在相邻两刀之间，
     /// 把桥梁柱的针层与保险丝柱的晶体层换到下一块的锚层。
     /// </summary>
@@ -705,31 +713,10 @@ public static partial class AngleWorkOrderBuilder
         }
 
         /*
-         * 三·补二、多刀半破（§15）：目标列有一个以上「紧贴晶体下方的缺口」时，
-         * 每个缺口一枚临时晶体块，K 非空就继续切，刀数 == |K|。
-         * 它比构造 D 的单刀 / 两刀更一般，所以在分档之前先试；
-         * 连续缺口、底针、以及缺口下方不是普通格的形态不在此列。
+         * 三·补二、多刀半破（§15）不再在分档之前抢先匹配：
+         * §0.7 要求单刀路线（算法 6 的论文四步）先做，确实做不了才降级到多刀。
+         * 多刀入口见 Algorithm4 分支与算法 6 的四步失败兜底。
          */
-        if (parts == 4)
-        {
-            AngleWorkOrder? multiCut = TryBuildMultiCutHalfBreak(
-                target,
-                column,
-                layers,
-                parts,
-                kind);
-
-            if (multiCut is not null &&
-                multiCut.IsComplete &&
-                !HasCyclicPreState(multiCut, target) &&
-                !multiCut.HasIllegalPreState(out _, out _))
-            {
-                return ApplyIsolatedColumnRule(
-                    Label(multiCut, AngleAlgorithm.Algorithm4, attempt: false),
-                    target,
-                    column);
-            }
-        }
 
         /*
          * 四、分档（§6）：先按论文选分支，不要先试「填充+暴破」。
@@ -791,6 +778,16 @@ public static partial class AngleWorkOrderBuilder
         }
 
         /*
+         * 算法 6 的档内已经包含「论文四步 → §15 多刀」两级；失败就如实报未覆盖，
+         * 不再落到旧七步 / 塔式枚举 / FillBreak 兜底（§0.4 / §0.7）。
+         */
+        if (algorithm == AngleAlgorithm.Algorithm6)
+        {
+            return tierOrder ??
+                   ConstructHUncovered(column, kind, tierRejectionReason);
+        }
+
+        /*
          * 三·补、路线 F（n = 4、底格非针、D 不成立、F 成立）：
          * 先试【构造 G】——§15 的四象限单孔环下落（环伙伴 B + 保险丝柱 B′ + 一刀），
          * 它能把「长段（≥3）恢复」锁成恰好一层；
@@ -827,6 +824,28 @@ public static partial class AngleWorkOrderBuilder
                 !generic.HasIllegalPreState(out _, out _))
             {
                 return ApplyIsolatedColumnRule(generic, target, column);
+            }
+
+            /*
+             * 单刀路线（构造 G / §11 通用计划）都没通过，才降级到 §15 多刀半破。
+             * 多刀是结构性兜底：刀数 == 临时晶体连通块数 K，K 空即停。
+             */
+            AngleWorkOrder? multiCut = TryBuildMultiCutHalfBreak(
+                target,
+                column,
+                layers,
+                parts,
+                kind);
+
+            if (multiCut is not null &&
+                multiCut.IsComplete &&
+                !HasCyclicPreState(multiCut, target) &&
+                !multiCut.HasIllegalPreState(out _, out _))
+            {
+                return ApplyIsolatedColumnRule(
+                    Label(multiCut, AngleAlgorithm.Algorithm4, attempt: false),
+                    target,
+                    column);
             }
         }
 
@@ -1880,37 +1899,19 @@ public static partial class AngleWorkOrderBuilder
     #region 算法 6（n = 4、D 成立）：底块提升 → 正规化 → 构造 H → 构造 C
 
     /// <summary>
-    /// 算法 6：n = 4、D 成立（最低晶体以下至少两空）时的正解（TODO.md §3.1.1）。
+    /// 算法 6：n = 4、D 成立（最低晶体以下至少两空）时的正解，
+    /// 严格按 docs §0.4 的<b>论文四步</b>：
     ///
-    /// <para><b>四步</b>：</para>
     /// <list type="number">
-    /// <item><b>底块提升 / 正规化</b>：把目标列的晶体整体下移一层（抵消顶针的抬升），
-    /// 普通格留在原位——顶针会把它们抬起一层，再由构造 H 让它们整批落回原位。</item>
-    /// <item><b>构造 H（造塔 X）</b>：给塔补三根辅助列（支撑柱 S / 落块柱 B /
-    /// 引爆柱 F），使 X 稳定、每列过五项条件、且 <see cref="ExchangeChain.TryBuild"/>
-    /// 能用四片 + 两次交换装出来（rank 0）。</item>
-    /// <item><b>顶针</b>：一次真实 <see cref="ShapePhysics.Pin"/>，把塔抬一层并让
-    /// 引爆柱顶端的晶体整簇破碎，落块柱带着目标列的普通格整批落回目标层。</item>
-    /// <item><b>构造 C（支柱交接）</b>：把支撑柱换成一根满高新柱、拆掉旧柱与
-    /// 辅助列，目标列逐格保持不变；最后一步提取目标角。</item>
+    /// <item><b>底块提升</b>：最下方连续普通块沿上方空段抬到紧贴下一份材料（至多两次）；</item>
+    /// <item><b>正规化 + 底格恢复</b>：算法 1 得到 v 与恢复表 M；
+    /// 最后一块按起点决定用弱落还是额外动作 e；</item>
+    /// <item><b>提前弱落</b>：有 e 时，找出被第 b 层那枚普通格挡住的那条 M（至多一条）；</item>
+    /// <item><b>正向制作</b>：v 低一层 → 提前弱落 → 构造 H（M − 提前 + e）一次顶针 →
+    /// 按底块提升逆序逐块弱落恢复。</item>
     /// </list>
     /// <para>
-    /// 候选塔全部用真实物理回放：稳定 → 每列五项条件 → 交换链（含
-    /// <see cref="Replay.Verify"/>）→ 顶针后目标列逐格对齐 → 支柱交接后仍稳定。
-    /// 任何一步不过就换下一份候选；全部不过返回 null，由调用方退回兜底链。
-    /// 这里没有任何「按 n × 层数」的查表：候选由目标列的结构生成。
-    /// </para>
-    /// </summary>
-    /// <summary>
-    /// 算法 6：先按 §0.4 七步 / 塔式 / 通用计划生成；全部失败且目标底层是
-    /// 普通格时，再做一次<b>底块提升</b>构造 H（docs §21.3 ① / §20.5）。
-    ///
-    /// <para>
-    /// 底块提升放在所有既有候选<b>之后</b>：既有候选已经覆盖的形态（<c>T.T.c</c>、
-    /// <c>T.T..c</c> 等）保持原输出不变，只有它们都回放失败、且底层又是普通格时
-    /// 才用这条推导。实测（≤9 层穷举）只有 9 层的 <c>T..cT.T.c</c>、<c>T.T.cccTc</c>
-    /// 与 8 层的 <c>T.T..ccc</c> 会走到这里；前两者是 docs §21.3 的缺口，
-    /// 最后一个原先由兜底构造 G 完成、现在改由算法 6 的 H 完成（成功数不变）。
+    /// 四步做不出来时才按 §0.7 降级到 §15 多刀；不退回旧七步 / 塔式枚举 / FillBreak。
     /// </para>
     /// </summary>
     private static AngleWorkOrder? TryBuildAlgorithm6(
@@ -1920,189 +1921,42 @@ public static partial class AngleWorkOrderBuilder
         int parts,
         AngleBuildKind kind)
     {
-        AngleWorkOrder? core = TryBuildAlgorithm6Core(
-            target,
-            column,
-            layers,
-            parts,
-            kind);
-
-        return core;
-    }
-
-    private static AngleWorkOrder? TryBuildAlgorithm6Core(
-        ShapeDocument target,
-        int column,
-        int layers,
-        int parts,
-        AngleBuildKind kind)
-    {
-        if (parts != 4)
-        {
-            return null;
-        }
-
         /*
-         * 构造 H 的构造性入口（docs §18.4）：先按 I/J 直接生成前态 A/B/E/N，
-         * 再用真实 Pin 回放验收。它覆盖「D ✔ + 多个短晶体段」这一族
-         * （.T.cTc / .T.cTT.c / .T.cT.Tc / .T.T.T.cT.Tc），
-         * 不再走 support × block × fuse × 列编码的枚举。
+         * §0.4：算法 6 先走论文四步（底块提升 → 正规化 + M/e/提前弱落 →
+         * 低一层制作 + 构造 H 顶针 → 逐块弱落恢复）。
+         * 四步做不出来时才降级到 §15 多刀；不退回旧七步 / 塔式枚举 / FillBreak。
          */
-        AngleWorkOrder? constructedH = TryBuildConstructedH(
+        AngleWorkOrder? fourStep = TryBuildFourStepAlgorithm6(
             target,
             column,
             layers,
             parts,
             kind,
-            AngleAlgorithm.Algorithm6,
-            out string? constructedHFailure);
+            out FourStepTrace trace);
 
-        if (constructedH is not null)
+        if (fourStep is not null)
         {
-            return constructedH;
+            return fourStep;
         }
 
-        // ── 第一步：底块提升 + 正规化（晶体下移一层，普通格留原位）──
-        string? shiftedTower = BuildShiftedTowerColumn(
-            target,
-            column,
-            layers);
-
-        if (shiftedTower is null)
-        {
-            /*
-             * 先试 §11 通用计划：它一次就能覆盖「晶体下移会与普通格重叠」的
-             * 形态（TT..Tc 一族），而且回放很快；
-             * 通用计划不成立时再压缩缺口、走塔式构造（.T.cTc 一族）。
-             */
-            AngleWorkOrder? alternative = TryAlternativeAlgorithm6(
-                target,
-                column,
-                layers,
-                kind);
-
-            if (alternative is not null)
-            {
-                return alternative;
-            }
-
-            string? compressed = CompressGapBelowCrystal(
-                target,
-                column,
-                layers);
-
-            if (compressed is not null)
-            {
-                var seeds = new List<string>();
-
-                string? lifted = LiftBottomSolid(compressed);
-
-                // 底块提升后的形态优先（算法 6 的「抬升最下连续普通块」）：
-                // T..Tc 一族在抬升后的塔上就能一次 Pin 成功。
-                if (lifted is not null)
-                {
-                    seeds.Add(lifted);
-                }
-
-                if (!seeds.Contains(compressed, StringComparer.Ordinal))
-                {
-                    seeds.Add(compressed);
-                }
-
-                foreach (string seed in seeds)
-                {
-                    AngleWorkOrder? compressedOrder = TryBuildTowerStyleOrder(
-                        target,
-                        column,
-                        layers,
-                        parts,
-                        kind,
-                        allowBottomPin: false,
-                        AngleAlgorithm.Algorithm6,
-                        extraTowerColumn: seed);
-
-                    if (compressedOrder is not null)
-                    {
-                        return compressedOrder;
-                    }
-                }
-            }
-
-            return null;
-        }
-
-        /*
-         * 用户塔式构造优先（TODO.md §7.2 的 T.T.c、§7.7 的 .T.T.c）：
-         * 底块要提升（正规塔是 T.Tc.、底层普通格要抬到第 2 层，
-         * 否则 Pin 会在第 1 层补出一枚目标里没有的顶针），或者多个普通块
-         * 被缺口隔开（.T.Tc.，通用构造 H 的单针支撑柱撑不住）时，
-         * 直接用从目标列生成的塔 X 做一次 Pin + 构造 C，不再走填充+暴破。
-         */
-        if (ShouldUseTowerStyleH(shiftedTower))
-        {
-            AngleWorkOrder? towerStyle = TryBuildTowerStyleOrder(
-                target,
-                column,
-                layers,
-                parts,
-                kind,
-                allowBottomPin: false,
-                AngleAlgorithm.Algorithm6);
-
-            if (towerStyle is not null)
-            {
-                return towerStyle;
-            }
-        }
-
-        string? normalizedTower = shiftedTower[0] ==
-                                  ShapeSignature.EmptyCode
-            ? shiftedTower
-            : null;
-
-        if (normalizedTower is null)
-        {
-            AngleWorkOrder? alternativeTower = TryAlternativeAlgorithm6(
-                target,
-                column,
-                layers,
-                kind);
-
-            return alternativeTower ?? ConstructHUncovered(column, kind, constructedHFailure);
-        }
-
-        /*
-         * 构造 H 已在函数开头按 I/J 构造性生成并回放验证过；走到这里说明它没覆盖
-         * 该形态。算法 6 还剩两条<b>确定性</b>构造，按顺序试，不做候选枚举：
-         * 两刀级联（构造 D）与 §11 通用计划（提升 + 定向碎晶）。
-         */
-        if (!CanUseConstructH(normalizedTower))
-        {
-            AngleWorkOrder? twoCut = TryBuildTwoCutCascade(
-                target,
-                column,
-                layers,
-                parts,
-                kind);
-
-            if (twoCut is not null)
-            {
-                return twoCut;
-            }
-        }
-
-        AngleWorkOrder? genericOrder = TryAlternativeAlgorithm6(
+        AngleWorkOrder? multiCut = TryBuildMultiCutHalfBreak(
             target,
             column,
             layers,
+            parts,
             kind);
 
-        if (genericOrder is not null)
+        if (multiCut is not null &&
+            multiCut.IsComplete &&
+            !HasCyclicPreState(multiCut, target) &&
+            !multiCut.HasIllegalPreState(out _, out _))
         {
-            return genericOrder;
+            return AddLimitation(
+                Label(multiCut, AngleAlgorithm.Algorithm6, attempt: true),
+                "算法 6 四步未通过，按 §0.7 降级到 §15 多刀：" + trace.Describe());
         }
 
-        return ConstructHUncovered(column, kind, constructedHFailure);
+        return ConstructHUncovered(column, kind, trace.Describe());
     }
 
     /// <summary>
@@ -2123,32 +1977,6 @@ public static partial class AngleWorkOrderBuilder
                 "构造 H 只按 docs §18.4 的 I/J 规则直接生成 A/B/E/N，" +
                 "不做 support × block × fuse 的候选枚举；生成或回放验证失败即报未覆盖。"),
             construction: AngleConstruction.H);
-    }
-
-    /// <summary>
-    /// 算法 6 的后备路线：§11 通用计划（提升 + 定向碎晶），带真实回放与假阳性闸门。
-    /// </summary>
-    private static AngleWorkOrder? TryAlternativeAlgorithm6(
-        ShapeDocument target,
-        int column,
-        int layers,
-        AngleBuildKind kind)
-    {
-        AngleWorkOrder? generic = TryBuildGenericFourQuadrantOrder(
-            target,
-            column,
-            layers,
-            kind);
-
-        if (generic is not null &&
-            generic.IsComplete &&
-            !HasCyclicPreState(generic, target) &&
-            !generic.HasIllegalPreState(out _, out _))
-        {
-            return generic;
-        }
-
-        return null;
     }
 
     /// <summary>

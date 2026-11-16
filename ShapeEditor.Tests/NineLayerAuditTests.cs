@@ -122,7 +122,7 @@ internal static class NineLayerAuditTests
                 }
             }
 
-            // ③ 真实 Pin 逐格等于目标。
+            // ③ 真实 Pin 后再按论文四步的弱落恢复底块，目标列逐格等于目标。
             PhysicsResult pin = ShapePhysics.Pin(preState);
 
             Assert.True(pin.Success, text + " 的真实 Pin 失败：" + pin.Error);
@@ -130,16 +130,28 @@ internal static class NineLayerAuditTests
 
             ShapeDocument pinned = pin.Document!;
 
+            AngleWorkStep pinStep = order.Steps.First(
+                step => step.Kind == AngleWorkStepKind.Pin);
+
+            Assert.True(
+                ShapeOps.Same(pinned, pinStep.Shape),
+                text + " 的 Pin 步快照应等于真实 Pin");
+
+            AngleWorkStep? finalRestore = order.Steps.LastOrDefault(
+                step => step.Kind == AngleWorkStepKind.WeakDrop);
+
+            ShapeDocument restored = finalRestore?.Shape ?? pinned;
+
             Assert.Equal(
                 text,
-                ShapeSignature.ColumnText(pinned, order.Column),
-                text + " 的 Pin 没有逐格得到目标列");
+                ShapeSignature.ColumnText(restored, order.Column),
+                text + " 的弱落恢复后目标列应逐格等于目标");
 
             Assert.True(
                 ShapeOps.Same(
-                    ShapeOps.Project(pinned, order.Column, 1),
+                    ShapeOps.Project(restored, order.Column, 1),
                     ShapeOps.Project(target, order.Column, 1)),
-                text + " 的 Pin 结果不是目标角");
+                text + " 的弱落恢复结果不是目标角");
 
             // ④ 顶针后晶体桥必须全部删除。
             foreach (int auxiliary in order.AuxiliaryColumns)

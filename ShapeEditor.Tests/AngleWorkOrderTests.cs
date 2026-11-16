@@ -698,9 +698,9 @@ internal static class AngleWorkOrderTests
         }
 
         /*
-         * `T..T.c` 的 D 同样成立（算法 6），现在由 §13.6 通用构造 H 直接完成：
-         * 前态 A 把支撑普通格抬到晶体正下方（P1），一次 Pin 即得目标，
-         * 不再是构造 D 的「两列辅助」案例。
+         * `T..T.c` 的 D 同样成立（算法 6），现在由 §0.4 论文四步直接完成：
+         * 底块提升 → 正规化 → 构造 H 顶针 → 逐块弱落恢复，
+         * Pin 只是中间态，最终由 WeakDrop 把底块放回目标层。
          */
         {
             ShapeDocument target = FromColumns(4, 6, (0, "T..T.c"));
@@ -712,12 +712,15 @@ internal static class AngleWorkOrderTests
             Assert.True(
                 order.Steps.Any(step => step.Kind == AngleWorkStepKind.Pin),
                 "T..T.c 的构造 H 应有 Pin 步");
+            Assert.True(
+                order.Steps.Any(step => step.Kind == AngleWorkStepKind.WeakDrop),
+                "T..T.c 应有弱落恢复步");
             Assert.Equal(
                 "T..T.c",
                 ShapeSignature.ColumnText(
-                    Step(order, AngleWorkStepKind.Pin).Shape!,
+                    Step(order, AngleWorkStepKind.Target).Shape!,
                     0),
-                "T..T.c 的一次 Pin 后目标列应等于目标");
+                "T..T.c 的末步目标列应等于目标");
         }
 
         // T7：底针 + 普通格可抬升 ⇒ 现在由构造 H（按 I/J 构造性生成）一次顶针完成。
@@ -1107,14 +1110,16 @@ internal static class AngleWorkOrderTests
             Assert.True(order.Note is null, $"{text} 不应有未实现说明");
             Assert.Equal(AngleAlgorithm.Algorithm6, order.Algorithm);
 
-            // 断言更新的原因：前两个例子现在由 §13.6 通用构造 H（P1 + 一次 Pin）
-            // 完成，不再走塔式构造 C。
+            // 断言更新的原因：这两个例子现在由 §0.4 的论文四步（算法 6）完成：
+            // 底块提升 → 正规化 → 构造 H 一次顶针 → 逐块弱落恢复；
+            // 步骤链因此多了一步 WeakDrop（恢复底块提升）。
             Assert.Equal(AngleConstruction.H, order.Construction);
 
             AssertStepKinds(
                 order,
                 AngleWorkStepKind.PreState,
                 AngleWorkStepKind.Pin,
+                AngleWorkStepKind.WeakDrop,
                 AngleWorkStepKind.Note,
                 AngleWorkStepKind.Target);
 
@@ -1271,6 +1276,7 @@ internal static class AngleWorkOrderTests
                 step.Shape is not null &&
                 step.Kind is AngleWorkStepKind.Cut or
                     AngleWorkStepKind.Pin or
+                    AngleWorkStepKind.WeakDrop or
                     AngleWorkStepKind.Support);
 
             Assert.Equal(
@@ -1567,10 +1573,11 @@ internal static class AngleWorkOrderTests
                 $"{text} 的末步目标列应逐格等于目标");
             AssertColumnCells(targetStep.Shape!, 0, text);
 
-            // 最后一条操作步（Pin/Cut/Collapse/Support）也必须已经等于目标。
+            // 最后一条操作步（Pin/WeakDrop/Cut/Collapse/Support）也必须已经等于目标。
             AngleWorkStep lastOperational = order.Steps.Last(step =>
                 step.Shape is not null &&
                 step.Kind is AngleWorkStepKind.Pin or
+                    AngleWorkStepKind.WeakDrop or
                     AngleWorkStepKind.Cut or
                     AngleWorkStepKind.Collapse or
                     AngleWorkStepKind.Support);
@@ -1626,18 +1633,42 @@ internal static class AngleWorkOrderTests
             }
             else if (route.Construction == AngleConstruction.H)
             {
-                // 构造 H：一次 Pin 直接把目标列做到目标，不需要换支撑柱。
+                // 构造 H：一次 Pin 完成批量下降；若还有底块提升，再由
+                // WeakDrop 按逆序恢复。最终目标列必须逐格等于目标。
+                ShapeDocument pinInput = order.Steps
+                    .TakeWhile(step => step.Kind != AngleWorkStepKind.Pin)
+                    .Last(step => step.Shape is not null)
+                    .Shape!;
+
                 Assert.True(
                     ShapeOps.Same(
-                        ShapePhysics.Pin(preState).Document,
+                        ShapePhysics.Pin(pinInput).Document,
                         Step(order, AngleWorkStepKind.Pin).Shape),
                     $"{text} 的 Pin 步应等于真实顶针结果");
-                Assert.Equal(
-                    text,
-                    ShapeSignature.ColumnText(
-                        Step(order, AngleWorkStepKind.Pin).Shape!,
-                        0),
-                    $"{text} 的 Pin 后目标列应等于目标");
+
+                AngleWorkStep pinStep = Step(order, AngleWorkStepKind.Pin);
+                int pinIndex = order.Steps
+                    .ToList()
+                    .FindIndex(step => step.Kind == AngleWorkStepKind.Pin);
+                AngleWorkStep? finalRestore = order.Steps
+                    .Skip(pinIndex + 1)
+                    .LastOrDefault(step => step.Kind == AngleWorkStepKind.WeakDrop);
+
+                if (finalRestore is not null)
+                {
+                    Assert.Equal(
+                        text,
+                        ShapeSignature.ColumnText(finalRestore.Shape!, 0),
+                        $"{text} 的弱落恢复后目标列应等于目标");
+                }
+                else
+                {
+                    Assert.Equal(
+                        text,
+                        ShapeSignature.ColumnText(pinStep.Shape!, 0),
+                        $"{text} 的 Pin 后目标列应等于目标");
+                }
+
                 Assert.False(
                     order.Steps.Any(step => step.Kind == AngleWorkStepKind.Support),
                     $"{text} 的构造 H 不需要构造 C 交接步");
@@ -1777,10 +1808,9 @@ internal static class AngleWorkOrderTests
         }
 
         /*
-         * 断言更新的原因（§13.6）：`T.T.c` 现在由通用构造 H 完成。它的前态 A
-         * 与用户给出的塔不再是同一座（A 把支撑普通格抬到晶体正下方以满足 P1），
-         * 但真实 Pin 后目标列仍逐格等于目标；用户塔自身的稳定性 / 可交换性 /
-         * 顶针结果已在上面的循环里独立核对。
+         * 断言更新的原因（§0.4 四步）：`T.T.c` 现在由算法 6 的论文四步完成：
+         * 底块提升 → 正规化 → 构造 H 顶针 → 按逆序逐块弱落。
+         * Pin 只是中间态，最终由两次 WeakDrop 把两个底块放回目标层。
          */
         {
             AngleWorkOrder generated = AngleWorkOrderBuilder.Build(
@@ -1803,17 +1833,20 @@ internal static class AngleWorkOrderTests
                 ShapeSignature.AllColumnsLegal(generatedTt, out _),
                 "T.T.c 的构造 H 前态每列都应合法");
             Assert.Equal(
+                2,
+                generated.Steps.Count(step => step.Kind == AngleWorkStepKind.WeakDrop),
+                "T.T.c 有两次底块提升，应有两次弱落恢复");
+            Assert.Equal(
                 "T.T.c",
                 ShapeSignature.ColumnText(
-                    Step(generated, AngleWorkStepKind.Pin).Shape!,
+                    Step(generated, AngleWorkStepKind.Target).Shape!,
                     0),
-                "T.T.c 的构造 H 一次 Pin 后目标列应等于目标");
+                "T.T.c 的末步目标列应等于目标");
         }
 
         /*
-         * 断言更新的原因（docs §18.4）：`T.T.c` 仍走「底块提升塔 + 构造 C」，
-         * `P.T.c` 的底针位置用临时晶体顶住后，构造性构造 H 已能按 I/J 一次顶针完成，
-         * 不再需要构造 C 交接步。
+         * 断言更新的原因：`T.T.c` 走算法 6 的论文四步（构造 H + 逐块弱落），
+         * `P.T.c` 的底针位置用临时晶体顶住后，构造性构造 H 已能按 I/J 一次顶针完成。
          */
         foreach ((string Text, AngleWorkStepKind[] Kinds) in new[]
                  {
@@ -1821,6 +1854,8 @@ internal static class AngleWorkOrderTests
                      {
                          AngleWorkStepKind.PreState,
                          AngleWorkStepKind.Pin,
+                         AngleWorkStepKind.WeakDrop,
+                         AngleWorkStepKind.WeakDrop,
                          AngleWorkStepKind.Note,
                          AngleWorkStepKind.Target
                      }),
@@ -2226,9 +2261,9 @@ internal static class AngleWorkOrderTests
             "顶针(X) 第 1 列应逐格等于 .T.T.c");
 
         /*
-         * 生成器一侧（docs §18.4）：`.T.T.c` 现在由<b>构造性构造 H</b> 完成——
-         * A = 目标列下移一层再把最下方普通块上抬一层，B/E/N 按 I/J 生成，
-         * 一次 Pin 整批落下；不再走「造塔 X + 交换链子配方 + 构造 C」的枚举路线。
+         * 生成器一侧（§0.4 论文四步）：`.T.T.c` 现在走
+         * 底块提升 → 正规化 + M → 低一层 → 提前弱落 → 构造 H 顶针 → 逐块弱落。
+         * 它的最后一块最低格由 e 放回第 2 层，所以没有额外的整块弱落步。
          */
         ShapeDocument target = FromColumns(4, cap, (0, text));
 
@@ -2243,6 +2278,7 @@ internal static class AngleWorkOrderTests
         AssertStepKinds(
             order,
             AngleWorkStepKind.PreState,
+            AngleWorkStepKind.WeakDrop,
             AngleWorkStepKind.Pin,
             AngleWorkStepKind.Note,
             AngleWorkStepKind.Target);
@@ -2253,7 +2289,8 @@ internal static class AngleWorkOrderTests
             order.Steps.Count(step => step.Kind == AngleWorkStepKind.Pin));
 
         ShapeDocument pre = order.Steps[0].Shape!;
-        ShapeDocument pinned = order.Steps[1].Shape!;
+        ShapeDocument pinInput = order.Steps[1].Shape!;
+        ShapeDocument pinned = Step(order, AngleWorkStepKind.Pin).Shape!;
 
         // 前态每列合法、稳定；四列布局 A | B | E | N。
         Assert.True(
@@ -2277,23 +2314,25 @@ internal static class AngleWorkOrderTests
             ShapeSignature.ColumnText(pre, 0)[0],
             "前态 A 的第 1 层必须为空");
 
-        // A 带洞 ⇒ 必须附带交换链子配方（rank 0）证明可造，并端到端回放。
-        Assert.True(order.SubRecipe is not null, "构造 H 的带洞前态必须带子配方");
-        Assert.Equal(RecipeKind.Exchange, order.SubRecipe!.Kind);
-        Assert.Equal(0, order.SubRecipe.Rank);
+        // A 带洞 ⇒ 要么整份交换链子配方、要么 Q1 一层子配方证明可造。
         Assert.True(
-            ShapeOps.Same(order.SubRecipe.Shape, pre),
-            "子配方产物必须等于前态");
+            order.SubRecipe is not null || order.Q1SubRecipe is not null,
+            "构造 H 的带洞前态必须带子配方");
+        Assert.True(
+            order.Q1SubRecipe is not null,
+            ".T.Tc. 的洞需要 Q1 子配方证明可造");
+        Assert.Equal(RecipeKind.Cut, order.Q1SubRecipe!.Kind);
+        Assert.Equal(0, order.Q1SubRecipe.Rank);
         Assert.True(
             Replay.Verify(
-                order.SubRecipe,
-                pre,
+                order.Q1SubRecipe,
+                null,
                 out IReadOnlyList<string> subErrors),
-            "前态子配方应能端到端回放：" + string.Join(",", subErrors));
+            "Q1 子配方应能端到端回放：" + string.Join(",", subErrors));
 
         // Pin 步等于真实顶针；顶针后目标列逐格等于目标。
         Assert.True(
-            ShapeOps.Same(ShapePhysics.Pin(pre).Document, pinned),
+            ShapeOps.Same(ShapePhysics.Pin(pinInput).Document, pinned),
             "Pin 步快照应等于真实顶针结果");
         AssertColumnCells(pinned, 0, text);
         Assert.Equal(

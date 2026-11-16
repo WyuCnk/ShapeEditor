@@ -591,3 +591,33 @@ R1 要清掉必须引入**第二次顶针 / 第二次落地**（多一个停靠�
    「§0.4 覆盖深间隙与 §17 三族」并加入三族代表例；原 §20.3 逐列测试改成
    §0.4 逐列（`B=cTTTcT..`、`N=TPTTTPT.`）；`TwoStageAudit` 不再切开关，
    输出前缀保留 `TWOSTAGE` 以便和归零前的基线直接对比。
+
+---
+
+## 6. 2026-11-16 算法 6 改为论文四步后的状态
+
+> 本轮把算法 6 从「§13.6 七步 + R1」改成
+> `docs/angle-work-order-general-algorithm.md` §0.4 的**论文四步**：
+> 底块提升 → 算法 1 正规化（v + M）→ 低一层制作 + 提前弱落 → 构造 H 顶针 →
+> 按底块提升逆序逐块弱落。多刀（§15）降级为兜底，单刀四步先跑。
+
+- 实现：`ShapeEditor.Core/Analysis/AngleWorkOrderAlgorithm6.cs`
+  （`TryBuildFourStepAlgorithm6`）；新增步骤类型
+  `AngleWorkStepKind.WeakDrop`（构造 E 的逐块弱落）。
+- 四步的中间值全部写进工序单的 `Limitations`：B1/B2、w、v、M、e、提前记录、
+  本次下降表、I/J、BTop/NTop 以及 B/E/N 的逐列文本。
+- 失败处理：四步做不出来 → 先按 §0.7 降级 §15 多刀；多刀也不成立才报未覆盖。
+  本轮 ≤9 层穷举里**没有形态需要报「四步失败」清单（0 例）**。
+- 验证（默认模式，2026-11-16）：
+  `AUDIT success=2125 failures=0 falsePositives=0`、
+  `LAYERAUDIT 7 = 4320/0`、`LAYERAUDIT 8 = 12646/0`、`NINEAUDIT = 36508/0`、
+  `TIGHT onlyAux=0`、`HOLES targetHoleNoSub=0`、`FILLBREAK n=0`、
+  `COLLAPSE steps=0`、`Q1AUDIT missing=0`、`P1AUDIT/P1ALL violations=0`、
+  `HALFAUDIT halfComplete=6`。
+- 测试：174 项原有测试 + 新增「§0.8 十五个样例回归」= **175/175 通过**
+  （2 项 XFAIL 保持）。
+- `TT.T.c`（论文例 2）的步骤链：
+  `PreState .TTTc. → Pin .T.TTc → WeakDrop 4→3、5→4（.TTT.c）→`
+  `WeakDrop 2→1、3→2（TT.T.c）→ Target`。
+  `TT.T.T.c` 同样由四步完成；≤9 层穷举里仍走 §15 多刀 `Exchange` 的只剩
+  `cTT.T.ccc`。

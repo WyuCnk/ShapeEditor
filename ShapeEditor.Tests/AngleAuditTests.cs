@@ -244,7 +244,8 @@ internal static class AngleAuditTests
     /// 目标列（被求解的角）允许有洞，但必须「可造」：
     /// </para>
     /// <list type="bullet">
-    /// <item>带真实子配方（<see cref="AngleWorkOrder.SubRecipe"/>，算法 6 的造塔）；
+    /// <item>带真实子配方（<see cref="AngleWorkOrder.SubRecipe"/>，算法 6 的造塔；
+    /// 或算法 6 论文四步的 <see cref="AngleWorkOrder.Q1SubRecipe"/> 一层半破子配方）；
     /// 或半边候选 1/2 的两根 S 列（<see cref="HalfWorkOrder.TargetColumnsHaveSubRecipe"/>）；</item>
     /// <item>或者是<b>后续前态</b>——它由上一刀/顶针真实产生（目标列与上一步逐格相同），
     /// 不是凭空出现；初始前态不享受这条豁免。</item>
@@ -386,6 +387,7 @@ internal static class AngleAuditTests
 
                         bool hasSubRecipe =
                             order.SubRecipe is not null ||
+                            order.Q1SubRecipe is not null ||
                             (order.Half is { TargetColumnsHaveSubRecipe: true } half &&
                              half.Target.Columns.Contains(order.Column));
 
