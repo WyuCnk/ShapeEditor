@@ -1599,5 +1599,103 @@ T.T.cccTc  A=.TTcccTc.  B=TcTTTTTTT  E=ccccccccc  N=TPPTTTTTT
 4. §21.1 表：9 层从 `36508 / 2` 改为 `36508 / 0`。
 5. §21.3：两个缺口改为「已修复」，并贴 `NINEGAP` 四列与 `NINEAUDIT` 行。
 6. §21.4：结论改为「≤9 层全绿（19181 + 36508 个 S 列零失败）」。
-7. §17.2 族 B：补「底块提升已在构造 H 之前执行（`TryBuildConstructedHLifted`）」。
+7. §17.2 族 B：补「底块提升已并入 §13.6 通用构造 H 的 `BuildPreStateH`（底块整体抬一格）」。
 
+
+### 7.20 §13.6 / §14 通用构造 H 前态（2026-11-16）
+
+#### 根因
+
+- 旧实现 `TryBuildConstructedHLifted` / `DeriveLiftedHColumn` 只做「底块整体抬一格 +
+  晶体整体下移一格 + 普通格两种确定性落位」，**没有逐颗晶体检查 P1**：
+  10 层 `T...cT.T.c` 的前态 `= .T.cT.T.c.` 里 L4、L9 两颗晶体下方都是空（docs §R8 的原证据）。
+- 同时 `TryBuildConstructedHCore` 的「下移一格」形态也允许晶下间隙，例如
+  `.T...c` 前态 `= .T..c.`（L5 晶体下方为空）、`.T.T.c` 前态 `= .TT.c.`。
+- 这套特判不通用：目标有多个晶体段 / 深间隙时，整体平移无法同时满足
+  「晶体在 f−1」与「每颗晶体下方是普通格」。
+
+#### 修法（`ShapeEditor.Core/Analysis/AngleWorkOrder.cs`，全程扫描、不枚举）
+
+1. **`BuildPreStateH(target, cap) → (A, descents)`**（§14.1）：
+   - ① 晶体放 `f−1`；`f−1 < 1` 或槽位被占 ⇒ 失败，换碎晶路线。
+   - ② 普通格先放 `f`；目标里紧贴晶体上方的普通格放 `f−1`（避免临时晶体与原生晶体
+     纵向融合）；随后 P1 扫描：每颗晶体下方为空 ⇒ 把「下方最近的普通格」抬到它正下方
+     （可跨多层，反复扫描直到稳定）。槽位冲突时先试另一侧相邻层，再向上找空位。
+   - ③ 空段只填「下方有格且上方有格」的连续空层；空段紧邻原生晶体时不填。
+   - ④ 降表：A 第 a 层普通格若 `a = f−1` 则不声明；否则声明 `s = a+1 → d = a`，
+     更大的落差交给坍落。目标底层是普通格时，最下方连续块整体抬一格（A 第 1 层空，
+     Pin 不补针）。
+2. **`BuildDescents(A, target) → (I, J)`**（§14.2）：
+   - `J = {s−1}`（核按 0 起下标存针槽层）；
+   - 基础 `I`：目标底层是普通格 ⇒ `{d_min}`；否则 `1 … d_min−1`；
+   - 深落差（A 层 − 目标层 ≥ 2）补 `f−1、f` 两枚 B 晶体桥；
+   - 临时段顶层在「段内没有桥、也没有针槽」时补桥；单层段、深落差已覆盖的段不补；
+   - 相邻源层只隔一层时补中间针槽。
+3. **`BuildAuxColumns(I, J, cap) → (B, E, N)`**（§14.3）：
+   `B[z]` 在 `z+1 ∈ I` 时放晶体，`E` 全晶体，`N[z]` 在 `z+1 ∈ J` 时放针。
+4. **P1 闸门**：`TryBuildConstructedHPaperCore` / `TryBuildConstructedHCore` 在真实 Pin
+   之前调用 `HasNativeCrystalGap`；原生晶体下方为空的前态直接作废（不进入回放）。
+5. **删除** `TryBuildConstructedHLifted` / `DeriveLiftedHColumn` 及其调用点；
+   `TryBuildConstructedH` 的顺序改为「§20.3 构造式 → §13.6 通用前态 → 带下降通道扫描 →
+   下移一格扫描」，全部失败才报 Uncovered。通用前态的 I/J 回放失败时只做一次
+   确定性校正（临时段内桥改针槽），不枚举候选、不退回 FillBreak。
+
+#### §R9 三个样例（构造 H，一次 Pin 逐格等于目标）
+
+| 目标 | A | B | E | N |
+|---|---|---|---|---|
+| `T...cT.T.c` | `..TcTccTc.` | `cTcTTTcTTT` | `cccccccccc` | `TTPTTTTPTT` |
+| `T..cT.T.c` | `.TcTccTc.` | `TcTTTcTTT` | `ccccccccc` | `TPTTTTPTT` |
+| `T.T.cccTc` | `.TTcccTc.` | `TcTTTTTTT` | `ccccccccc` | `TPPTTTTTT` |
+
+- ①② 的 A 与 docs §R9 逐格一致；B / N 因 core 的「桥层 / 针槽层」编码口径不同而不完全相同，
+  但真实 Pin 后目标列逐格等于目标，属于等价前态。
+- ③ docs 给的是半破路线（`A = TccTcccTc`、两根辅助列）；这里走等价的顶针路线
+  `A = .TTcccTc.`（P1 成立），Pin 后逐格等于目标。
+
+#### 验收数字（本轮全量）
+
+| 项 | 结果 |
+|---|---|
+| `P1AUDIT`（≤6 层全部构造 H 前态） | `prestates=219 violations=0`；`T...cT.T.c` / `T..cT.T.c` / `T.T.cccTc` 三例逐颗晶体下方非空。附带 `P1ALL prestates=442 violations=1`：唯一的违规是 `TT.T.c` 的构造 D 前态（目标本身要求的晶下间隙，碎晶路线不靠拆晶体下方造洞），不属于 P1 约束的顶针路线 |
+| ≤8 层构造 H 语料 | 3 层 0 / 4 层 5 / 5 层 37 / 6 层 177 / 7 层 696 / 8 层 2458，**合计 3373**，P1 + 前态合法 + 末步全过 |
+| `AUDIT`（≤6） | `total=5440 legal=2126 s=2125 success=2125 failures=0 falsePositives=0` |
+| `LAYERAUDIT` | 7 层 `s=4320 success=4320`；8 层 `s=12646 success=12646`；均 0 失败 0 假阳性 |
+| `NINEAUDIT` | `s=36508 success=36508 failures=0 falsePositives=0 fillBreak=0` |
+| `CONSTR`（≤6） | `A=1087 C=597 D=216 G=6 H=219`；`FILLBREAK n=0`、`COLLAPSE steps=0` |
+| `TIGHT` / `HOLES` | `onlyAux=0 both=0`；`targetHole=120 withSub=119 derived=1 noSub=0` |
+| `Q1AUDIT` | `hOrders=915 paper=51 holed=473 found=473 missing=0 invalid=0` |
+| `ISOLATED` / `HALFAUDIT` | `withPillar=1314 downgraded=604 verified=604 isolatedOrders=1054`；`halfComplete=6 problems=0` |
+| 全量测试 | **172/172** 通过（169 项原测试 + 3 项新验收；2 项 XFAIL claw / 二择保持不变） |
+
+#### 失败样例
+
+**无。** ≤9 层穷举（36508 个 S 列）全部完成；原 3 个 9 层缺口
+`T..cT.T.c` / `T.T.cccTc` / `.T..T.cTc` 均由通用构造 H 覆盖，没有保留特判。
+
+#### 文档待更新（`docs/` 由开发者维护，本次未动；行号按本次阅读的版本）
+
+1. §7.2 第 179–210 行：`I = ∪[d, s−1] ∪ 临时块最上层` 的说法与实现不一致。
+   实现是：`J = {s−1}`（0 起存针槽层）；`I` 为基础层集合 + 深落差 `f−1、f` +
+   「段内无桥且无针槽」的临时段顶层；相邻源层隔一层时补中间针槽。
+2. §12.2（约 480–503 行）与 §13.1（约 530–543 行）：「A ≈ 正规核心整体下移 k 层、
+   丢掉最底 k 层」只是早期观察，不是实现规则；实际按 §13.6 ①②③ 逐格扫描。
+   §13.2 / §13.3 / §13.5 的「卡点」已由 §13.6 解决，可标为历史记录。
+3. §13.4（约 574–614 行）：I/J 的 `+1` 口径与 core 的内部编码差一位；
+   实现里 `J = s−1`、`I` 是 B 晶体桥层（0 起下标），生成 B/N 时用 `z+1 ∈ I/J`。
+4. §13.6 ④（约 675–679 行）：补「临时段单层不补桥；深落差已覆盖的段不补桥；
+   段内有针槽时不补桥」；⑤ 的 B/N 生成与 core 的 `z+1 ∈ I/J` 一致。
+5. §13.6 ⑥（约 681 行）「失败则回 ②③ 调整 k 与空段」：实现改为只做一次
+   固定 I/J 校正（临时段内桥改针槽），不枚举候选、不退回 FillBreak。
+6. §13.7（约 686–695 行）的「≤8 层约 170 例」：本轮实际 ≤8 层构造 H = 3373 例
+   （≤6 层 219 例），全部通过；不是 170 例。
+7. §14.1（约 703–714 行）：`BuildPreStateH(target, cap)` 的实现签名是
+   `BuildPreStateH(targetCodes, layers, out failure)`；除 ①–④ 外还包含
+   「底块提升一格」与「槽位冲突先试另一侧再向上找空位」两条扫描规则。
+8. §14.2（约 716–723 行）：返回值是 `(I, J)`（不是 descents）；I 的完整规则见上。
+9. §14.4 / §14.5（约 732–747 行）：补 `P1AUDIT prestates=219 violations=0`、
+   `HCORPUS total=3373`，以及「≤9 层失败 0」的实测数字。
+10. §11（约 456–467 行）与 §12.3 的旧构造分布：现为
+    `A=1087 C=597 D=216 G=6 H=219`；9 层 `failures=0`、`fillBreak=0`。
+11. §R9 ③（约 387–398 行）：docs 用半破路线；实现用等价的顶针路线
+    `A=.TTcccTc.`，应补一句「等价前态，Pin 后逐格等于目标」。

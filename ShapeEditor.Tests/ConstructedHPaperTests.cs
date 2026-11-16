@@ -287,27 +287,25 @@ internal static class ConstructedHPaperTests
         Assert.True(holed > 0, "构造 H 的前态 A 应至少有一个带洞的样本");
         Assert.Equal(0, invalid, "Q1 子配方审计失败：" + string.Join(" | ", invalidCases));
 
-        // 确实找不到一层紧列子配方的两例：保持现状，但必须写明原因。
+        // 断言更新的原因（§13.6 / §R1）：通用构造 H 现在保证前态 A 里每颗原生
+        // 晶体下方都不是空（P1），因此不再出现「目标本身要求」的晶下间隙，
+        // 也不再有 ≤6 层的两例 Q1 缺失（`.T...c` / `.T.T.c` 都改由 P1 前态完成）。
         Assert.Equal(
-            2,
+            0,
             missingSix,
-            "≤6 层 Q1 子配方缺失应只有两例：" + string.Join(" ", missingCases));
+            "≤6 层 Q1 子配方缺失应为 0：" + string.Join(" ", missingCases));
         Assert.True(
-            missingCases.Contains(".T...c") && missingCases.Contains(".T.T.c"),
-            "缺少 Q1 子配方的案例应为 .T...c / .T.T.c，实际：" +
+            missingCases.Count == 0,
+            "≤6 层不应有缺少 Q1 子配方的案例，实际：" +
             string.Join(" ", missingCases));
 
-        // §19.1：晶下间隙确实不可避免的案例要写明「目标本身要求」；
-        // 可避免的写法必须优先贴住，语料里不应出现「本可贴住却没贴」。
+        // §19.1：P1 硬约束生效后，「晶下间隙」不再出现在构造 H 的前态里。
         Assert.Equal(
-            1,
-            requiredGapNotesSix,
-            "≤6 层应只有一个「目标本身要求」的晶下间隙案例");
-        Assert.True(
-            requiredGapCasesSix.Count == 1 && requiredGapCasesSix[0] == ".T...c",
-            "≤6 层「目标本身要求」的晶下间隙案例应为 .T...c，实际：" +
-            string.Join(" ", requiredGapCasesSix));
-        Assert.True(requiredGapNotes > 0, "应至少有一个「目标本身要求」的晶下间隙案例");
+            0,
+            requiredGapNotes,
+            "P1 生效后不应再有「目标本身要求的晶下间隙」：" +
+            string.Join(" ", requiredGapCases));
+        Assert.Equal(0, requiredGapNotesSix, "≤6 层不应再有晶下间隙说明");
         Assert.Equal(0, avoidableGapNotes, "可避免的晶下间隙必须优先贴住");
     }
 

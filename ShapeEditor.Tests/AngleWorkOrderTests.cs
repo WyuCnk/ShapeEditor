@@ -637,8 +637,13 @@ internal static class AngleWorkOrderTests
     /// </summary>
     public static void DirectionalBreakPrefersTwoColumnsAndAnnotatesFillBreak()
     {
-        // T4：通用构造 D 的两列布局。
-        foreach (string text in new[] { "cTT..T.c", "T.T..c" })
+        /*
+         * T4：通用构造 D 的两列布局。
+         * 断言更新的原因：`T.T..c` 现在由 §13.6 的通用构造 H 覆盖（前态 A 按
+         * 晶体 f−1、普通格跨越空层放置，P1 每颗晶体下方都有普通格），
+         * 不再走构造 D 的两列辅助路线；T4 的两列最少化仍由 `cTT..T.c` 守住。
+         */
+        foreach (string text in new[] { "cTT..T.c" })
         {
             int cap = text.Length;
             ShapeDocument target = FromColumns(4, cap, (0, text));
@@ -677,10 +682,25 @@ internal static class AngleWorkOrderTests
             ReplayGenericAlgorithm4(order, target, 0);
         }
 
+        // T4 的另一例 `T.T..c` 由 §13.6 通用构造 H 完成（一次 Pin）：
+        // 前态 A 每颗原生晶体下方都是普通格（P1），末步等于目标。
+        {
+            const string text = "T.T..c";
+            ShapeDocument target = FromColumns(4, text.Length, (0, text));
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, text.Length);
+
+            Assert.True(order.IsComplete, order.Note ?? text + " 应可制作");
+            Assert.Equal(AngleConstruction.H, order.Construction, text);
+            Assert.Equal(
+                text,
+                ShapeSignature.ColumnText(Step(order, AngleWorkStepKind.Target).Shape!, 0),
+                text + " 的末步目标列应等于目标");
+        }
+
         /*
-         * `T..T.c` 的 D 同样成立（算法 6），但塔式构造 C 现在先命中：
-         * 托针柱针位 / 落块柱桥锚由扫描直接生成，一次 Pin + 构造 C 即得目标，
-         * 因此它不再是构造 D 的「两列辅助」案例。
+         * `T..T.c` 的 D 同样成立（算法 6），现在由 §13.6 通用构造 H 直接完成：
+         * 前态 A 把支撑普通格抬到晶体正下方（P1），一次 Pin 即得目标，
+         * 不再是构造 D 的「两列辅助」案例。
          */
         {
             ShapeDocument target = FromColumns(4, 6, (0, "T..T.c"));
@@ -688,16 +708,16 @@ internal static class AngleWorkOrderTests
 
             Assert.True(order.IsComplete, order.Note ?? "T..T.c 应可制作");
             Assert.Equal(AngleAlgorithm.Algorithm6, order.Algorithm);
-            Assert.Equal(AngleConstruction.C, order.Construction);
+            Assert.Equal(AngleConstruction.H, order.Construction);
             Assert.True(
                 order.Steps.Any(step => step.Kind == AngleWorkStepKind.Pin),
-                "T..T.c 的塔式构造 C 应有 Pin 步");
+                "T..T.c 的构造 H 应有 Pin 步");
             Assert.Equal(
                 "T..T.c",
                 ShapeSignature.ColumnText(
-                    Step(order, AngleWorkStepKind.Support).Shape!,
+                    Step(order, AngleWorkStepKind.Pin).Shape!,
                     0),
-                "T..T.c 的构造 C 交接后目标列应等于目标");
+                "T..T.c 的一次 Pin 后目标列应等于目标");
         }
 
         // T7：底针 + 普通格可抬升 ⇒ 现在由构造 H（按 I/J 构造性生成）一次顶针完成。
@@ -1086,13 +1106,16 @@ internal static class AngleWorkOrderTests
                 order.Note ?? $"{text} 应由算法 6 的塔式构造 C 完成");
             Assert.True(order.Note is null, $"{text} 不应有未实现说明");
             Assert.Equal(AngleAlgorithm.Algorithm6, order.Algorithm);
-            Assert.Equal(AngleConstruction.C, order.Construction);
+
+            // 断言更新的原因：前两个例子现在由 §13.6 通用构造 H（P1 + 一次 Pin）
+            // 完成，不再走塔式构造 C。
+            Assert.Equal(AngleConstruction.H, order.Construction);
 
             AssertStepKinds(
                 order,
                 AngleWorkStepKind.PreState,
                 AngleWorkStepKind.Pin,
-                AngleWorkStepKind.Support,
+                AngleWorkStepKind.Note,
                 AngleWorkStepKind.Target);
 
             // 每一步都用真实物理回放，最终列逐格等于目标。
@@ -1219,7 +1242,7 @@ internal static class AngleWorkOrderTests
     {
         var cases = new (string Text, int TargetLayers, int Parts, AngleConstruction Construction)[]
         {
-            ("T..ccc", 6, 4, AngleConstruction.C),
+            ("T..ccc", 6, 4, AngleConstruction.H),
             ("cT..ccc", 8, 4, AngleConstruction.G),
             // `.T..c.` 现在由构造性构造 H 完成（docs §18.4），不再走塔 X + 构造 C。
             (".T..c.", 6, 4, AngleConstruction.H),
@@ -1518,9 +1541,9 @@ internal static class AngleWorkOrderTests
              int Cuts) route = text switch
             {
                 ".T.c" => (AngleAlgorithm.Algorithm6, AngleConstruction.H, 1, 0),
-                "T.T.c" => (AngleAlgorithm.Algorithm6, AngleConstruction.C, 1, 0),
+                "T.T.c" => (AngleAlgorithm.Algorithm6, AngleConstruction.H, 1, 0),
                 "P.T.c" => (AngleAlgorithm.Algorithm5, AngleConstruction.H, 1, 0),
-                ".TT.c" => (AngleAlgorithm.Algorithm2, AngleConstruction.D, 0, 2),
+                ".TT.c" => (AngleAlgorithm.Algorithm6, AngleConstruction.H, 1, 0),
                 ".T..c" => (AngleAlgorithm.Algorithm6, AngleConstruction.H, 1, 0),
                 ".T.T.c" => (AngleAlgorithm.Algorithm6, AngleConstruction.H, 1, 0),
                 _ => throw new InvalidOperationException("未登记的回归角：" + text)
@@ -1753,26 +1776,38 @@ internal static class AngleWorkOrderTests
             }
         }
 
-        // `T.T.c` 的塔就是用户给的那一座：逐列结构一致。
-        ShapeDocument generatedTt = Step(
-                AngleWorkOrderBuilder.Build(
-                    FromColumns(4, 5, (0, "T.T.c")),
-                    0,
-                    5),
-                AngleWorkStepKind.PreState)
-            .Shape!;
-
-        ShapeDocument userTt = Parse(
-            "--CucrP-:CucrcrP-:CuCucrP-:cr--crCu:----cr--",
-            5,
-            4);
-
-        for (int part = 0; part < 4; part++)
+        /*
+         * 断言更新的原因（§13.6）：`T.T.c` 现在由通用构造 H 完成。它的前态 A
+         * 与用户给出的塔不再是同一座（A 把支撑普通格抬到晶体正下方以满足 P1），
+         * 但真实 Pin 后目标列仍逐格等于目标；用户塔自身的稳定性 / 可交换性 /
+         * 顶针结果已在上面的循环里独立核对。
+         */
         {
+            AngleWorkOrder generated = AngleWorkOrderBuilder.Build(
+                FromColumns(4, 5, (0, "T.T.c")),
+                0,
+                5);
+
+            Assert.True(generated.IsComplete, generated.Note ?? "T.T.c 应可制作");
+            Assert.Equal(AngleConstruction.H, generated.Construction);
+
+            ShapeDocument generatedTt = Step(
+                    generated,
+                    AngleWorkStepKind.PreState)
+                .Shape!;
+
+            Assert.True(
+                ShapeOps.IsStable(generatedTt),
+                "T.T.c 的构造 H 前态应稳定");
+            Assert.True(
+                ShapeSignature.AllColumnsLegal(generatedTt, out _),
+                "T.T.c 的构造 H 前态每列都应合法");
             Assert.Equal(
-                ShapeSignature.ColumnText(userTt, part),
-                ShapeSignature.ColumnText(generatedTt, part),
-                $"T.T.c 的造塔前态第 {part + 1} 象限应与用户给出的塔一致");
+                "T.T.c",
+                ShapeSignature.ColumnText(
+                    Step(generated, AngleWorkStepKind.Pin).Shape!,
+                    0),
+                "T.T.c 的构造 H 一次 Pin 后目标列应等于目标");
         }
 
         /*
@@ -1786,7 +1821,7 @@ internal static class AngleWorkOrderTests
                      {
                          AngleWorkStepKind.PreState,
                          AngleWorkStepKind.Pin,
-                         AngleWorkStepKind.Support,
+                         AngleWorkStepKind.Note,
                          AngleWorkStepKind.Target
                      }),
                      ("P.T.c", new[]
@@ -3842,7 +3877,9 @@ internal static class AngleWorkOrderTests
     {
         foreach ((string text, AngleAlgorithm algorithm) in new[]
                  {
-                     ("T.T..c", AngleAlgorithm.Algorithm4),
+                     // 断言更新的原因：T.T..c 现在由 §13.6 通用构造 H 直接完成
+                     // （P1：晶体下方抬普通格），不再退回算法 4。
+                     ("T.T..c", AngleAlgorithm.Algorithm6),
                      ("P.T..c", AngleAlgorithm.Algorithm5),
                      ("P..T.c", AngleAlgorithm.Algorithm5)
                  })
