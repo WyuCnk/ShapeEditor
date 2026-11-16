@@ -416,27 +416,6 @@ public static partial class AngleWorkOrderBuilder
     public const string IllegalPreStateReason = "前态存在非法列";
 
     /// <summary>
-    /// 临时验证开关（docs §11 / §15 的清理项）：<c>true</c> 时
-    /// <see cref="TryBuildConstructedH"/> 只走前两段——§20.3 构造式与 §13.6 七步，
-    /// 跳过「带下降通道扫描」与「下移一格扫描」两段。
-    ///
-    /// <para>
-    /// 用途：确认后两段是否还有存在价值。实测（2026-11-16，§13.6 七步落地后）：
-    /// 开关打开时 3–6 层失败 0、7 层 1、8 层 10、9 层 61（共 72 例，见
-    /// <c>docs/angle-work-order-uncovered-h.md</c>），所以后两段仍保留；
-    /// 等这些形态归零后再连同本开关一起删除。环境变量
-    /// <c>SHAPE_CONSTRUCT_H_STRICT_TWO_STAGE=1</c> 也可以打开它，
-    /// 方便直接跑既有测试而不改代码。
-    /// </para>
-    /// </summary>
-    public static bool ConstructHStrictTwoStage { get; set; } =
-        string.Equals(
-            Environment.GetEnvironmentVariable(
-                "SHAPE_CONSTRUCT_H_STRICT_TWO_STAGE"),
-            "1",
-            StringComparison.Ordinal);
-
-    /// <summary>
     /// 验收条件七（docs §6 第 7 条 / §17.7）：逐个象限检查前态列的「洞」。
     ///
     /// <code>
@@ -1453,6 +1432,11 @@ public static partial class AngleWorkOrderBuilder
     /// <item>最后清掉辅助象限，得到完整目标角。</item>
     /// </list>
     /// <para>
+    /// <b>§17.3 R3</b>：<c>Hc</c> 以上无论是 <c>T</c> 还是 <c>P</c>，都走这里的
+    /// 「剥尾 + 最后 Stack」，<b>不参与顶针</b>——顶针只负责核心（<c>Hc</c> 及以下）。
+    /// 下面 <c>hasTail</c> 只要求非空，因此针和普通格一视同仁。
+    /// </para>
+    /// <para>
     /// 返回 null 表示「没有尾部」或核心本身没做出来，交由原来的流程处理。
     /// </para>
     /// </summary>
@@ -1918,7 +1902,7 @@ public static partial class AngleWorkOrderBuilder
     /// </para>
     /// </summary>
     /// <summary>
-    /// 算法 6：先按 §20.3 构造式 / 塔式 / 通用计划生成；全部失败且目标底层是
+    /// 算法 6：先按 §0.4 七步 / 塔式 / 通用计划生成；全部失败且目标底层是
     /// 普通格时，再做一次<b>底块提升</b>构造 H（docs §21.3 ① / §20.5）。
     ///
     /// <para>
@@ -6954,327 +6938,10 @@ public static partial class AngleWorkOrderBuilder
 
     #endregion
 
-    #region 构造 H（构造性生成：按 I/J 算，不枚举）
+    #region 构造 H（§0.4 七步 + §17.1 独立源格；A | B | E | N）
 
-    /// <summary>
-    /// 构造性构造 H（docs §18.4）：由目标列<b>扫描</b>出四列 <c>A | B | E | N</c>，
-    /// 再用真实 <see cref="ShapePhysics.Pin"/> 回放验收。
-    /// <b>不枚举候选、不靠搜索凑</b>：失败就返回 null，由调用方如实报未覆盖。
-    ///
-    /// <para><b>两种确定性形态（先后各试一次，不枚举参数）</b>：</para>
-    /// <list type="number">
-    /// <item><b>带下降通道</b>：每段晶体（连续 <c>c</c>）的正下方为空 ⇒ 这个空段是
-    /// 「通道」：通道最下面一格普通格是源（落点 <c>d</c>），通道顶端是源层
-    /// <c>s = 空段顶</c>；把源格提到前态 <c>s−1</c> 层，顶针后沿通道落回 d。
-    /// 快通道保证目标列的原生晶体与临时晶体之间隔着普通格，碎晶不会误伤。</item>
-    /// <item><b>无下降通道</b>（A = 目标列下移一层）：Pin 之后每格本来就在目标层，
-    /// 只需要碎掉临时晶体。</item>
-    /// </list>
-    ///
-    /// <para><b>底层规则</b>：Pin 只给「第 1 层非空」的列补针。</para>
-    /// <list type="bullet">
-    /// <item>目标底层为空 ⇒ 前态第 1 层必须为空：把最下方连续普通块整体上抬一层，
-    /// 逐个记录下降（源层 <c>s = d+1</c>），顶针后逐对落回；</item>
-    /// <item>目标底层是针 ⇒ 第 1 层垫一枚临时晶体（Pin 把它补成针，晶体本身被炸掉）。</item>
-    /// </list>
-    ///
-    /// <para><b>四列</b>：A = 目标列整体下移一层（源格放到前态 s−1 层）；
-    /// B：前态第 z 层放晶体 ⇔ <c>z+1 ∈ I</c>，其余普通格；
-    /// E：满高纯晶体柱（顶针时顶端超限整根碎掉，用来引爆）；
-    /// N：前态第 z 层放针 ⇔ <c>z+1 ∈ J</c>，其余普通格。
-    /// <c>I = ∪[d, s−1]</c> 并上每段临时晶体的最高层，<c>J = 所有源层 s</c>。</para>
-    ///
-    /// <para>
-    /// 目标列的洞先填同层临时晶体（通道 / 紧列化），填不了的（会与原生晶体纵向
-    /// 融合、或填了过不了五项条件）就撤掉；第 1 层始终保留为空/针。
-    /// A 若仍带洞，用交换链子配方（<see cref="ExchangeChain"/> +
-    /// <see cref="Replay"/>.Verify）证明可造，拿不到就如实报未覆盖。
-    /// </para>
-    /// </summary>
-    #region 构造 H（§20.3 构造式：目标列 → 抬高后的列）
-
-    /// <summary>
-    /// 构造式构造 H（docs §20.3 / §20.5）：<b>由目标列 → 抬高后的列逐格比对</b>
-    /// 推出降表、<c>I</c>、<c>J</c>，再生成 A | B | E | N，用真实
-    /// <see cref="ShapePhysics.Pin"/> 验收。<b>不扫描「晶体正下方的空段」</b>。
-    ///
-    /// <para><b>推导规则（§20.3 ④）</b>：目标列的每个内部空段（上下都有材料）处理一次：</para>
-    /// <list type="bullet">
-    /// <item>空段上方的材料是<b>普通格</b> ⇒ 把它抬高一层（它就是「要降的格」），
-    /// 空段连同它让出来的那一层用临时晶体填满——<b>只填让出来的段，不做「全填」</b>；</item>
-    /// <item>空段上方的材料是<b>晶体</b> ⇒ 晶体下移一层（顶针会把它抬回去），
-    /// 空出来的那一格留给下方空段抬高上来的普通格。</item>
-    /// </list>
-    /// <para>
-    /// 两种处理顺序（从下往上 / 从上往下）都是确定性扫描，先后各试一次，
-    /// <b>不做参数枚举</b>。普通格 0 起第 <c>k</c> 层给出降表 <c>k+2 → k+1</c>
-    /// （§20.3 ①，层号用顶针后）；<c>I = ∪[d, s−1]</c> 并入临时晶体段最高层，
-    /// <c>J = {s}</c>（§20.3 ②③）；B / N 直接按 I / J 生成（§20.3 ⑤）。
-    /// </para>
-    /// <para>
-    /// 回放只作验收（§20.5 第 4 条）：不过就退回扫描路线，绝不扩大搜索。
-    /// </para>
-    /// </summary>
-    private static AngleWorkOrder? TryBuildConstructedHPaper(
-        ShapeDocument target,
-        int column,
-        int layers,
-        int parts,
-        AngleBuildKind kind,
-        AngleAlgorithm algorithm,
-        out string? failureReason)
-    {
-        failureReason = null;
-
-        if (parts != 4)
-        {
-            failureReason = "构造 H 需要四象限的环（A | B | E | N）。";
-            return null;
-        }
-
-        if (layers < 2 || layers < target.LayerCount)
-        {
-            failureReason = "cap 装不下目标列的完整高度，构造 H 的前态放不下。";
-            return null;
-        }
-
-        if (target[0, column].Type is not (CellType.Pin or CellType.Empty))
-        {
-            failureReason = "构造 H 的顶针会在第 1 层补针，目标底层必须是针或空。";
-            return null;
-        }
-
-        var targetCodes = new char[layers];
-
-        for (int layer = 0; layer < layers; layer++)
-        {
-            targetCodes[layer] = CodeOf(
-                layer < target.LayerCount
-                    ? target[layer, column]
-                    : ShapeCell.Empty());
-        }
-
-        // 底针链（算法 5）走扫描路线：§20.3 的构造式只讨论普通格与晶体。
-        for (int layer = 0; layer < layers; layer++)
-        {
-            if (targetCodes[layer] == ShapeSignature.PinCode)
-            {
-                failureReason = "目标列含顶针，§20.3 构造式只处理普通格 / 晶体。";
-                return null;
-            }
-        }
-
-        char color = CrystalColor(target, column);
-        string? deriveFailure = null;
-
-        foreach (bool topDown in new[] { false, true })
-        {
-            char[]? raised = DeriveRaisedColumn(
-                targetCodes,
-                layers,
-                topDown,
-                out bool[]? temporary,
-                out string? why);
-
-            if (raised is null || temporary is null)
-            {
-                deriveFailure = why;
-                continue;
-            }
-
-            AngleWorkOrder? order = TryBuildConstructedHPaperCore(
-                target,
-                column,
-                layers,
-                parts,
-                kind,
-                algorithm,
-                raised,
-                temporary,
-                color,
-                topDown,
-                out string? coreFailure);
-
-            if (order is not null)
-            {
-                failureReason = null;
-                return order;
-            }
-
-            deriveFailure = coreFailure;
-        }
-
-        failureReason = "按 §20.3 构造式推导抬高后的列失败：" + deriveFailure;
-        return null;
-    }
-
-    /// <summary>
-    /// §20.3 ④：由目标列推出「抬高后的列」A。返回 null 表示这份目标列不能按
-    /// 构造式抬高（调用方退回扫描路线）。
-    ///
-    /// <para>
-    /// <paramref name="topDown"/> 只决定内部空段的处理顺序：两种顺序都是确定性扫描，
-    /// 不引入搜索参数。
-    /// </para>
-    /// </summary>
-    private static char[]? DeriveRaisedColumn(
-        char[] targetCodes,
-        int layers,
-        bool topDown,
-        out bool[]? temporary,
-        out string? failureReason)
-    {
-        temporary = null;
-        failureReason = null;
-
-        var raised = (char[])targetCodes.Clone();
-        var temp = new bool[layers];
-
-        var gaps = new List<(int Lo, int Hi)>();
-        int index = 0;
-
-        while (index < layers)
-        {
-            if (targetCodes[index] != ShapeSignature.EmptyCode)
-            {
-                index++;
-                continue;
-            }
-
-            int lo = index;
-
-            while (index < layers &&
-                   targetCodes[index] == ShapeSignature.EmptyCode)
-            {
-                index++;
-            }
-
-            int hi = index - 1;
-
-            if (lo > 0 &&
-                hi + 1 < layers &&
-                targetCodes[lo - 1] != ShapeSignature.EmptyCode &&
-                targetCodes[hi + 1] != ShapeSignature.EmptyCode)
-            {
-                gaps.Add((lo, hi));
-            }
-        }
-
-        gaps.Sort((left, right) => topDown
-            ? right.Hi.CompareTo(left.Hi)
-            : left.Lo.CompareTo(right.Lo));
-
-        foreach ((int lo, int hi) in gaps)
-        {
-            char upper = targetCodes[hi + 1];
-
-            if (upper == ShapeSignature.SolidCode)
-            {
-                /*
-                 * §20.3 ④ 前半：把要降的普通格抬高一层，让出来的段填临时晶体。
-                 * 抬高目标 = 空段上方的第一格再上一层；填晶体范围 = 空段 + 它让出的那一层。
-                 */
-                int destination = hi + 2;
-
-                if (destination >= layers ||
-                    raised[destination] != ShapeSignature.EmptyCode ||
-                    raised[hi + 1] != ShapeSignature.SolidCode)
-                {
-                    failureReason =
-                        $"第 {hi + 2} 层的普通格抬到第 {destination + 1} 层时没有空位。";
-                    return null;
-                }
-
-                raised[destination] = ShapeSignature.SolidCode;
-                raised[hi + 1] = ShapeSignature.EmptyCode;
-
-                for (int layer = lo; layer <= hi + 1; layer++)
-                {
-                    raised[layer] = ShapeSignature.CrystalCode;
-                    temp[layer] = true;
-                }
-            }
-            else if (upper == ShapeSignature.CrystalCode)
-            {
-                /*
-                 * §20.3 ④ 后半：晶体下移一层（顶针抬回原层）；空出来的那一格
-                 * 留给下方空段抬高上来的普通格，填不上时在下面补临时晶体。
-                 */
-                if (raised[hi] != ShapeSignature.EmptyCode ||
-                    raised[hi + 1] != ShapeSignature.CrystalCode)
-                {
-                    failureReason =
-                        $"第 {hi + 2} 层的晶体下移时第 {hi + 1} 层已被占用。";
-                    return null;
-                }
-
-                raised[hi] = ShapeSignature.CrystalCode;
-                raised[hi + 1] = ShapeSignature.EmptyCode;
-            }
-            else
-            {
-                failureReason = "空段上方的材料不是普通格或晶体（§20.3 不处理顶针）。";
-                return null;
-            }
-        }
-
-        // 让出来的段若还剩内部空洞（上下都有材料），补成临时晶体。
-        int top = layers - 1;
-
-        while (top >= 0 && raised[top] == ShapeSignature.EmptyCode)
-        {
-            top--;
-        }
-
-        for (int layer = 1; layer < top; layer++)
-        {
-            if (raised[layer] == ShapeSignature.EmptyCode &&
-                raised[layer - 1] != ShapeSignature.EmptyCode &&
-                raised[layer + 1] != ShapeSignature.EmptyCode)
-            {
-                raised[layer] = ShapeSignature.CrystalCode;
-                temp[layer] = true;
-            }
-        }
-
-        // 目标底层为空 ⇒ 前态第 1 层必须为空（否则 Pin 会补出目标没有的针）。
-        if (targetCodes[0] == ShapeSignature.EmptyCode &&
-            raised[0] != ShapeSignature.EmptyCode)
-        {
-            failureReason = "前态第 1 层不为空，Pin 会补出目标没有的针。";
-            return null;
-        }
-
-        // 临时晶体与原生晶体纵向相邻 ⇒ 碎晶会连带炸掉目标晶体：退回扫描路线。
-        for (int layer = 0; layer < layers; layer++)
-        {
-            if (!temp[layer])
-            {
-                continue;
-            }
-
-            bool touchesNative =
-                (layer > 0 &&
-                 raised[layer - 1] == ShapeSignature.CrystalCode &&
-                 !temp[layer - 1]) ||
-                (layer + 1 < layers &&
-                 raised[layer + 1] == ShapeSignature.CrystalCode &&
-                 !temp[layer + 1]);
-
-            if (touchesNative)
-            {
-                failureReason =
-                    $"第 {layer + 1} 层的临时晶体与原生晶体纵向相邻，碎晶会误伤目标晶体。";
-                return null;
-            }
-        }
-
-        temporary = temp;
-        return raised;
-    }
-
-    /// <summary>§20.3 ⑤：按 I / J 生成 A | B | E | N，并用真实 Pin 验收。</summary>
-    private static AngleWorkOrder? TryBuildConstructedHPaperCore(
+    /// <summary>§0.4 第 6 步：按 I / J 生成 A | B | E | N，并用真实 Pin 验收。</summary>
+    private static AngleWorkOrder? TryBuildConstructedHRing(
         ShapeDocument target,
         int column,
         int layers,
@@ -7292,7 +6959,8 @@ public static partial class AngleWorkOrderBuilder
         IReadOnlyList<string>? derivationLimitations = null,
         int? bTop = null,
         int? nTop = null)
-    {        failureReason = null;
+    {
+        failureReason = null;
 
         var iLayers = new HashSet<int>();
         var jLayers = new HashSet<int>();
@@ -7305,13 +6973,13 @@ public static partial class AngleWorkOrderBuilder
                 continue;
             }
 
-            // §20.3 ①：普通格 0 起第 k 层顶针后在 k+1 层，降到 k ⇒ 降表 k+2 → k+1。
+            // §0.4 第 5 步：普通格 0 起第 k 层顶针后在 k+1 层，降到 k ⇒ 降表 k+2 → k+1。
             descents.Add($"{layer + 2}→{layer + 1}");
             iLayers.Add(layer);
             jLayers.Add(layer + 1);
         }
 
-        // §20.3 ②：每段临时晶体的最高层并入 I（B 的晶体桥在那里与它咬合）。
+        // §0.4 第 6 步：每段临时晶体的最高层并入 I（B 的晶体桥在那里与它咬合）。
         for (int layer = 0; layer < layers; layer++)
         {
             if (!temporary[layer] ||
@@ -7332,7 +7000,7 @@ public static partial class AngleWorkOrderBuilder
         }
 
         /*
-         * 算法 6 的「底块提升」变体（§20.3 ①/② 的补充推导）直接把降表算好，
+         * §0.4 第 5 步的补充推导（底块提升已并入第 ② 步的下移边界外扩）直接把降表算好，
          * 用 I / J 覆盖上面按「晶体正下方空段」推出来的集合，不再二次推导。
          */
         if (overrideILayers is not null)
@@ -7384,7 +7052,7 @@ public static partial class AngleWorkOrderBuilder
         if (ShapeSignature.ColumnText(preState, column) ==
             ShapeSignature.ColumnText(target, column))
         {
-            failureReason = "§20.3 推出的 A 与目标列相同（循环）。";
+            failureReason = "§0.4 推出的 A 与目标列相同（循环）。";
             return null;
         }
 
@@ -7400,13 +7068,13 @@ public static partial class AngleWorkOrderBuilder
              !Replay.Verify(subRecipe, preState, out _)))
         {
             failureReason =
-                "§20.3 推出的 A 带洞，交换链子配方没能装配出这份前态。";
+                "§0.4 推出的 A 带洞，交换链子配方没能装配出这份前态。";
             return null;
         }
 
         var limitations = BaseLimitations(
             summary ??
-            "构造 H（§20.3 构造式，由目标列 → 抬高后的列逐格比对得出）：" +
+            "构造 H（§0.4 七步，由目标列 → 抬高后的列逐格比对得出）：" +
             "A = 目标列把要降的普通格抬高一层、只把让出来的段填临时晶体；" +
             "B 按 z+1 ∈ I 放晶体、E 是满高纯晶体柱、N 按 z+1 ∈ J 放针；" +
             "一次 Pin 同时引爆并整批落下。");
@@ -7418,7 +7086,7 @@ public static partial class AngleWorkOrderBuilder
         else
         {
             limitations.Add(
-                "降表（§20.3 ①，层号用顶针后）：" +
+                "降表（§0.4 第 5 步，层号用顶针后）：" +
                 (descents.Count > 0 ? string.Join("、", descents) : "无") +
                 $"，I = {{{string.Join(",", iLayers.Order().Select(layer => layer + 1))}}}" +
                 $"，J = {{{string.Join(",", jLayers.Order().Select(layer => layer + 1))}}}。");
@@ -7475,7 +7143,7 @@ public static partial class AngleWorkOrderBuilder
 
         if (!ShapeOps.IsStable(preState))
         {
-            failureReason = "§20.3 构造式的前态不稳定。";
+            failureReason = "§0.4 构造式的前态不稳定。";
             return null;
         }
 
@@ -7497,7 +7165,7 @@ public static partial class AngleWorkOrderBuilder
                 layers,
                 out string? difference))
         {
-            failureReason = "§20.3 构造式一次顶针后的目标列与目标不符：" + difference;
+            failureReason = "§0.4 一次顶针后的目标列与目标不符：" + difference;
             return null;
         }
 
@@ -7543,6 +7211,20 @@ public static partial class AngleWorkOrderBuilder
 
     #endregion
 
+    #region 构造 H（§0.4 七步：前态 / 降表 / 辅助列；§17.1 R1）
+
+    /// <summary>
+    /// 构造 H 的唯一入口（docs §0.2 ⑥ / §13.6 / §17.4）：只走 §0.4 的七步
+    /// （最低晶体以下不动、及以上整体下移一格；L1 的针由顶针补；空段填临时晶体；
+    /// 降表用完整通道；B / E / N 按 I / J 生成），再由 §17.1 的独立源格读法兜住
+    /// 「一次顶针要多个下降」与「底部连续针段」。<b>不枚举、不退回 FillBreak</b>。
+    ///
+    /// <para>
+    /// §20.3 的旧构造式与「带下降通道 / 下移一格」两段扫描已删除：≤8 层全量
+    /// 与 9 层全枚举在 §0.4 单独口径下失败数都是 0（见
+    /// <c>docs/angle-work-order-uncovered-h.md</c>）。
+    /// </para>
+    /// </summary>
     private static AngleWorkOrder? TryBuildConstructedH(
         ShapeDocument target,
         int column,
@@ -7552,31 +7234,6 @@ public static partial class AngleWorkOrderBuilder
         AngleAlgorithm algorithm,
         out string? failureReason)
     {
-        /*
-         * ① §20.3 构造式：由「目标列 → 抬高后的列」逐格比对推出降表 / I / J。
-         *    这是既有形态的固定写法，保留它可以让老语料的输出与工序单不变。
-         */
-        AngleWorkOrder? paper = TryBuildConstructedHPaper(
-            target,
-            column,
-            layers,
-            parts,
-            kind,
-            algorithm,
-            out string? paperFailure);
-
-        if (paper is not null)
-        {
-            failureReason = null;
-            return AttachQ1SubRecipe(paper);
-        }
-
-        /*
-         * ② §13.6 / §14 的通用构造：逐格扫描生成前态 A（晶体放 f−1、普通格按跨越的
-         *    空层数放 f+k、空段只填「下方有格且上方有格」的连续空层），再由 A 与
-         *    目标逐层比对推出降表 / I / J，最后按 I / J 生成 B / E / N。
-         *    P1（每颗原生晶体下方非空）是硬约束；失败不退回枚举。
-         */
         AngleWorkOrder? general = TryBuildConstructedHGeneral(
             target,
             column,
@@ -7592,62 +7249,10 @@ public static partial class AngleWorkOrderBuilder
             return AttachQ1SubRecipe(general);
         }
 
-        /*
-         * 验证开关：只保留前两段（§20.3 构造式 → §13.6 通用前态）。
-         * 后两段与两段是互斥的候选，不是前置条件；打开开关就能量出
-         * 「两段够不够用」，够用则把后两段整段删除。
-         */
-        if (ConstructHStrictTwoStage)
-        {
-            failureReason =
-                $"两段开关（§20.3 → §13.6）：§20.3 构造式：{paperFailure}；" +
-                $"§13.6 通用构造：{generalFailure}；" +
-                "已跳过「带下降通道扫描」与「下移一格扫描」两段。";
-            return null;
-        }
-
-        /*
-         * ③ 确定性扫描形态①：先把「晶体正下方空段」的最低普通格提到空段顶端
-         *    （A 里形成可碎掉的下降通道；原生晶体与临时晶体被普通格隔开）。
-         */
-        AngleWorkOrder? lifted = TryBuildConstructedHCore(
-            target,
-            column,
-            layers,
-            parts,
-            kind,
-            algorithm,
-            liftGapSources: true,
-            out string? liftedFailure);
-
-        if (lifted is not null)
-        {
-            failureReason = null;
-            return AttachQ1SubRecipe(lifted);
-        }
-
-        /*
-         * ④ 确定性扫描形态②：直接取 A = 目标列下移一层（Pin 之后每格正好落在目标层）。
-         *    前态必须满足 P1（底针角除外），否则在验收里如实作废。
-         */
-        AngleWorkOrder? plain = TryBuildConstructedHCore(
-            target,
-            column,
-            layers,
-            parts,
-            kind,
-            algorithm,
-            liftGapSources: false,
-            out string? plainFailure);
-
-        failureReason = plain is not null
-            ? null
-            : $"§20.3 构造式：{paperFailure}；§13.6 通用构造：{generalFailure}；" +
-              $"带下降通道：{liftedFailure}；" +
-              $"下移一格：{plainFailure}";
-
-        return plain is null ? null : AttachQ1SubRecipe(plain);
+        failureReason = "§0.4（§13.6 七步 + §17.1 独立源格）：" + generalFailure;
+        return null;
     }
+
     /// <summary>
     /// §13.6 / §14 的构造式构造 H：<b>严格按 §13.6 的 7 步</b>生成前态 A、降表与 I / J，
     /// 再按 I / J 生成 B | E | N，最后用真实 <see cref="ShapePhysics.Pin"/> 验收。
@@ -7656,9 +7261,9 @@ public static partial class AngleWorkOrderBuilder
     /// 第 1 步定基准层 f0；第 2 步「最低晶体以下不动、及以上整体下移一格」（N2）；
     /// 第 3 步按目标 L1 是否为针决定 A[0] 非空 / 为空（N1）；
     /// 第 4 步填内部空段并把空段上方的格抬一格，P1 自检只查<b>初始前态</b>（N3）；
-    /// 第 5 步只声明降 1 层；第 6 步按 I / J 生成 B / E / N；
-    /// 第 7 步真实 Pin 验收，失败先做一次固定调整（临时段下扩一格），
-    /// 再退到两种结构性读法，仍失败才返回 Uncovered——<b>不枚举、不退 FillBreak</b>。
+    /// 第 5 步用完整通道 <c>∪[d, s−1]</c> 推降表；第 6 步按 I / J 生成 B / E / N；
+    /// 第 7 步真实 Pin 验收，失败再退到 §17.1 的独立源格读法（R1）——
+    /// <b>不枚举、不退 FillBreak</b>。
     /// </para>
     /// </summary>
     private static AngleWorkOrder? TryBuildConstructedHGeneral(
@@ -7705,8 +7310,33 @@ public static partial class AngleWorkOrderBuilder
 
             if (layer != 0)
             {
+                /*
+                 * §17.2 R2（底部连续针段）：目标里第 2..m 层的针不是「构造 H 的顶针
+                 * 补出来的一枚」，而是 N2 下移一格后原样留在 A 底部的原生针：
+                 * m 枚底针 = A 里的 (m−1) 枚原生针 + 最后一次 Pin 在 L1 补的 1 枚。
+                 * 这与 §17.2 的「顶针 m 次」是 P2 的等价写法（前态整体下移一格 =
+                 * 顶针的逆）：把 A 再上移一层并把底部换成临时晶体，就得到文档里
+                 * 「A = ccTcTc.. + 顶针两次」的形态。终止条件仍由底针段长度 m
+                 * 结构性地决定，不按次数枚举。
+                 */
+                AngleWorkOrder? r2Order = TryBuildConstructedHRuleR1(
+                    target,
+                    column,
+                    layers,
+                    parts,
+                    kind,
+                    algorithm,
+                    out string? r2Failure);
+
+                if (r2Order is not null)
+                {
+                    failureReason = null;
+                    return r2Order;
+                }
+
                 failureReason = "目标列第 " + (layer + 1) +
-                                " 层含顶针，构造 H 的顶针只能补出第 1 层的针。";
+                                " 层含顶针，构造 H 的顶针只能补出第 1 层的针；" +
+                                "§17.2 R2 独立源格读法：" + r2Failure;
                 return null;
             }
         }
@@ -7719,7 +7349,29 @@ public static partial class AngleWorkOrderBuilder
 
         if (plan is null)
         {
-            failureReason = buildFailure;
+            /*
+             * §17.1 R1：七步在「一次顶针要多个下降」的形态上失败时，
+             * 改用独立源格读法——每颗原生晶体正下方的空段，把空段下方最近的
+             * 普通格提到空段顶端，整段空层填临时晶体（每枚源 T 由临时晶体隔开）。
+             * 它同时覆盖 §17.2 的底部连续针段（原生针留在 A 底部）与 §17.3 的核心
+             * （尾部已由构造 C 剥掉）。
+             */
+            AngleWorkOrder? r1Order = TryBuildConstructedHRuleR1(
+                target,
+                column,
+                layers,
+                parts,
+                kind,
+                algorithm,
+                out string? r1Failure);
+
+            if (r1Order is not null)
+            {
+                failureReason = null;
+                return r1Order;
+            }
+
+            failureReason = buildFailure + "；§17.1 R1 独立源格读法：" + r1Failure;
             return null;
         }
 
@@ -7766,7 +7418,7 @@ public static partial class AngleWorkOrderBuilder
 
         string? coreFailure = null;
 
-        AngleWorkOrder? order = TryBuildConstructedHPaperCore(
+        AngleWorkOrder? order = TryBuildConstructedHRing(
             target,
             column,
             layers,
@@ -7803,7 +7455,7 @@ public static partial class AngleWorkOrderBuilder
 
             if (extendedFailure is null)
             {
-                order = TryBuildConstructedHPaperCore(
+                order = TryBuildConstructedHRing(
                     target,
                     column,
                     layers,
@@ -7842,7 +7494,7 @@ public static partial class AngleWorkOrderBuilder
                 targetCodes,
                 layers);
 
-            order = TryBuildConstructedHPaperCore(
+            order = TryBuildConstructedHRing(
                 target,
                 column,
                 layers,
@@ -7881,7 +7533,7 @@ public static partial class AngleWorkOrderBuilder
                 targetCodes,
                 layers);
 
-            order = TryBuildConstructedHPaperCore(
+            order = TryBuildConstructedHRing(
                 target,
                 column,
                 layers,
@@ -7907,6 +7559,32 @@ public static partial class AngleWorkOrderBuilder
                 coreFailure = coreFailure + "；临时段针槽：" + tempPinFailure;
             }
         }
+        if (order is null)
+        {
+            /*
+             * §17.1 R1（固定结构读法，不枚举）：七步的「空段上方普通格抬一格」
+             * 只抬一层，遇到「一次顶针要多个下降」时 A 的源格位置不对。这里改成
+             * 独立源格：每颗原生晶体正下方的空段，把空段下方最近的普通格整段提到
+             * 空段顶端，空段全部填临时晶体——于是每个要下降的普通格在 A 里都是
+             * 一枚独立的 T，两枚之间由临时晶体隔开（P.T.T..c：A = cTcccTc.）。
+             * §17.2 的底部连续针段由 N2 下移一格保留在 A 的底部（m−1 枚原生针），
+             * 最后一次 Pin 在 L1 补出第 m 枚，结构性终止条件仍是「底针全部就位」。
+             */
+            order = TryBuildConstructedHRuleR1(
+                target,
+                column,
+                layers,
+                parts,
+                kind,
+                algorithm,
+                out string? independentFailure);
+
+            if (order is null)
+            {
+                coreFailure = coreFailure + "；§17.1 R1 独立源格：" + independentFailure;
+            }
+        }
+
         if (order is null)
         {
             failureReason = coreFailure ?? "§13.6 通用前态没有通过真实 Pin 回放。";
@@ -8519,7 +8197,7 @@ public static partial class AngleWorkOrderBuilder
     ///
     /// <para>
     /// 这里的 I / J 直接用<b>前态（顶针前）的 1 起层号</b>保存，正好等于
-    /// <see cref="TryBuildConstructedHPaperCore"/> 的 override 口径：
+    /// <see cref="TryBuildConstructedHRing"/> 的 override 口径：
     /// B 在 <c>z+1 ∈ I</c> 的层放晶体，N 在 <c>z+1 ∈ J</c> 的层放针。
     /// </para>
     /// <para>
@@ -9126,17 +8804,28 @@ public static partial class AngleWorkOrderBuilder
     }
 
     /// <summary>
-    /// 构造性构造 H 的单次尝试。<paramref name="liftGapSources"/> 决定是否把
-    /// 「晶体正下方空段」里的普通格提到空段顶端（形成可碎的下降通道）。
+    /// §17.1 R1：<b>独立源格读法</b>（固定结构，不是候选枚举）。
+    ///
+    /// <para>
+    /// 先取 A = 目标列整体下移一格（P2：Pin 会把整体抬起一层）；对每颗「正下方为空」
+    /// 的原生晶体，把它下方空段再往下的最近一枚普通格提到空段顶端，整段空层填临时
+    /// 晶体——于是每个要下降的普通格在 A 里都是一枚独立的 T，两枚之间由临时晶体
+    /// 隔开（<c>P.T.T..c</c>：A = cTcccTc.）。晶体与临时晶体之间始终隔着一枚普通格，
+    /// 碎晶不会误伤目标晶体。
+    /// </para>
+    /// <para>
+    /// §17.2 的底部连续针段也由同一条规则覆盖：N2 下移一格后，目标的第 2..m 枚底针
+    /// 原样留在 A 的底部（m−1 枚原生针），最后一次 Pin 在 L1 补出第 m 枚，
+    /// 所以「底针全部就位」就是结构性终止条件。
+    /// </para>
     /// </summary>
-    private static AngleWorkOrder? TryBuildConstructedHCore(
+    private static AngleWorkOrder? TryBuildConstructedHRuleR1(
         ShapeDocument target,
         int column,
         int layers,
         int parts,
         AngleBuildKind kind,
         AngleAlgorithm algorithm,
-        bool liftGapSources,
         out string? failureReason)
     {
         failureReason = null;
@@ -9212,11 +8901,10 @@ public static partial class AngleWorkOrderBuilder
         }
 
         /*
-         * ⓪（可选）晶体正下方的空段：通道最下面的普通格是源，通道顶端是源层
+         * ⓪ 晶体正下方的空段：通道最下面的普通格是源，通道顶端是源层
          * s。把它提到 s 层，A 里就多出一段「可碎掉的通道」——目标列的原生晶体
          * 与临时晶体之间被这枚普通格隔开，碎晶不会连带炸掉目标晶体。
          */
-        if (liftGapSources)
         {
             for (int bottom = 1; bottom < layers; bottom++)
             {

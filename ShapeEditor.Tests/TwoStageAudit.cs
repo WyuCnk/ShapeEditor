@@ -1,17 +1,19 @@
 using ShapeEditor.Core.Analysis;
 using ShapeEditor.Core.Analysis.Production;
 using ShapeEditor.Core.Models;
+using ShapeEditor.Core.Physics;
 
 namespace ShapeEditor.Tests;
 
 /// <summary>
-/// 两段开关（<see cref="AngleWorkOrderBuilder.ConstructHStrictTwoStage"/>）的诊断入口。
+/// 构造 H（§0.4 七步 + §17.1 R1）的诊断入口。
 ///
 /// <para>
 /// 只在环境变量 <c>SHAPE_TWO_STAGE_AUDIT=1</c> 时由 <see cref="Program"/> 调用，
-/// 不是常规测试项（不计入项数）：它把 ≤N 层全部 S 列在「只走 §20.3 构造式 + §13.6 七步」
-/// 的口径下跑一遍，打印每层失败数、失败清单与每条失败例的 7 步中间值，
+/// 不是常规测试项（不计入项数）：它把 ≤N 层全部 S 列在「只走 §0.4 七步」的
+/// 口径下跑一遍，打印每层失败数、失败清单与每条失败例的 7 步中间值，
 /// 供 <c>docs/angle-work-order-uncovered-h.md</c> 使用。
+/// 输出仍沿用 <c>TWOSTAGE</c> 前缀，方便与删除旧兜底段之前的基线直接对比。
 /// </para>
 /// </summary>
 internal static class TwoStageAudit
@@ -28,17 +30,7 @@ internal static class TwoStageAudit
 
     public static int Run()
     {
-        bool previous = AngleWorkOrderBuilder.ConstructHStrictTwoStage;
-        AngleWorkOrderBuilder.ConstructHStrictTwoStage = true;
-
-        try
-        {
-            return RunCore();
-        }
-        finally
-        {
-            AngleWorkOrderBuilder.ConstructHStrictTwoStage = previous;
-        }
+        return RunCore();
     }
 
     private static int RunCore()
@@ -173,15 +165,19 @@ internal static class TwoStageAudit
     {
         string[] corpora =
         {
-            // 任务指定的三语料。
+            // 任务指定的三语料（§17 的三个代表例）。
+            "P.T.T..c", "PP.T.cTc", "P.T.T..cP",
+            // §0.4 的深间隙 / 双段 / 双晶体语料。
             "P.T..c", "P.T...c", "P.T....c", "P.T...cT", "P.T...cc",
-            "..T.cc", "..T.ccT", "..T.cc..", "..T.c.c",
+            "..T.cc", "..T.ccT", "..T.cc..",
             "..T.cTc", "..T.cTcT", "..T.cTc..",
             // 多刀三语料。
             "TT.T.c", "TT.T.T.c", "cTT.T.c",
-            // 两段开关下的残余失败族（诊断用）。
-            "P.T.T..c", "P.T.T...c", "P..T.T.c", ".T.cT.Tc", "PP.T.cTc",
-            "P.T..T..c", "P.TT.T..c"
+            // §17.1 R1 / §17.2 R2 / §17.3 R3 的代表列。
+            "P..T.T.c", "P.T.T...c", "P.T..T..c", "P.TT.T..c",
+            "P..T..T.c", "P...T.T.c", "..T.T.cTc", "P.T.T.cTc",
+            "PP.T..cTc", "PPP.T.cTc", "PP.T.ccTc",
+            "P..T.T.cP"
         };
 
         foreach (string text in corpora)
@@ -195,35 +191,14 @@ internal static class TwoStageAudit
             }
 
             /*
-             * default 必须在开关关闭时构建，strict 在开关打开时构建；
-             * 诊断入口整体把开关打开跑全量，所以这里先临时关掉。
+             * 旧的两段开关已删除：现在只剩一条 §0.4 构造 H。
+             * default / strict 两个名字保留为「同一口径」，便于和旧基线对比。
              */
-            var strict = AngleWorkOrderBuilder.ConstructHStrictTwoStage;
-            AngleWorkOrderBuilder.ConstructHStrictTwoStage = false;
-
-            AngleWorkOrder order;
-
-            try
-            {
-                order = AngleWorkOrderBuilder.Build(target, 0, text.Length);
-            }
-            finally
-            {
-                AngleWorkOrderBuilder.ConstructHStrictTwoStage = strict;
-            }
-
-            AngleWorkOrderBuilder.ConstructHStrictTwoStage = true;
-
-            AngleWorkOrder strictOrder;
-
-            try
-            {
-                strictOrder = AngleWorkOrderBuilder.Build(target, 0, text.Length);
-            }
-            finally
-            {
-                AngleWorkOrderBuilder.ConstructHStrictTwoStage = strict;
-            }
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(
+                target,
+                0,
+                text.Length);
+            AngleWorkOrder strictOrder = order;
 
             Console.WriteLine(
                 $"  TWOSTAGECORPUS {text} default={(order.IsComplete ? "OK" : "FAIL")}" +
@@ -245,6 +220,29 @@ internal static class TwoStageAudit
                 Console.WriteLine(
                     $"  TWOSTAGEPRE {text} constr={order.Construction} " +
                     "pre=" + string.Join("|", columns));
+
+                if (Environment.GetEnvironmentVariable("SHAPE_TWO_STAGE_PIN") == "1")
+                {
+                    PhysicsResult pin = ShapePhysics.Pin(pre);
+
+                    if (!pin.Success || pin.Document is null)
+                    {
+                        Console.WriteLine(
+                            $"  TWOSTAGEPIN {text} FAIL {pin.Error}");
+                    }
+                    else
+                    {
+                        var pinned = new List<string>();
+
+                        for (int part = 0; part < pin.Document.PartCount; part++)
+                        {
+                            pinned.Add(ShapeSignature.ColumnText(pin.Document, part));
+                        }
+
+                        Console.WriteLine(
+                            $"  TWOSTAGEPIN {text} pin=" + string.Join("|", pinned));
+                    }
+                }
             }
         }
     }

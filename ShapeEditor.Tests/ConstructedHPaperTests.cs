@@ -6,7 +6,7 @@ using ShapeEditor.Core.Physics;
 namespace ShapeEditor.Tests;
 
 /// <summary>
-/// 构造 H 的 §20.3 构造式核对 + §19.4 的 Q1 子配方审计。
+/// 构造 H 的 §0.4 七步核对 + §19.4 的 Q1 子配方审计。
 /// </summary>
 internal static class ConstructedHPaperTests
 {
@@ -19,16 +19,15 @@ internal static class ConstructedHPaperTests
     };
 
     /// <summary>
-    /// docs §20.1：目标 <c>.T..T..c</c>（8 层）的构造式前态必须逐列等于
-    /// <c>A=.TcccTc.</c>、<c>B=cTTTcTTT</c>、<c>E=cccccccc</c>、<c>N=TPTTTPTT</c>，
-    /// 一次 Pin 得到目标列；降表 / I / J 也必须与 §20.2 / §20.3 一致。
+    /// docs §0.4 / §13.6：目标 <c>.T..T..c</c>（8 层）的构造式前态逐列等于
+    /// <c>A=.TcccTc.</c>、<c>B=cTTTcT..</c>、<c>E=cccccccc</c>、<c>N=TPTTTPT.</c>，
+    /// 一次 Pin 得到目标列。
     ///
     /// <para>
-    /// 修复前的扫描路线给出 <c>A=.T.T..c.</c>（§19.3 的旧输出，降表 2→1），
-    /// 与 §20.1 不同；本测试把 §20.3 的构造式结果钉住。
+    /// §20.3 的旧构造式已删除；这里改钉 §0.4 七步（含 §17.1 R1 独立源格）的输出。
     /// </para>
     /// </summary>
-    public static void PaperSolutionMatchesDocs()
+    public static void GeneralSolutionMatchesDocs()
     {
         const string text = ".T..T..c";
         const int cap = 8;
@@ -48,32 +47,25 @@ internal static class ConstructedHPaperTests
 
         ShapeDocument preState = preStateStep.Shape!;
 
-        // §20.1：四列逐列一致（A | B | E | N）。
+        // §0.4：四列逐列一致（A | B | E | N）。
         Assert.Equal(".TcccTc.", ShapeSignature.ColumnText(preState, 0));
-        Assert.Equal("cTTTcTTT", ShapeSignature.ColumnText(preState, 1));
+        Assert.Equal("cTTTcT..", ShapeSignature.ColumnText(preState, 1));
         Assert.Equal("cccccccc", ShapeSignature.ColumnText(preState, 2));
-        Assert.Equal("TPTTTPTT", ShapeSignature.ColumnText(preState, 3));
+        Assert.Equal("TPTTTPT.", ShapeSignature.ColumnText(preState, 3));
 
         // 稳定、四列合法、前态目标列 ≠ 目标。
-        Assert.True(ShapeOps.IsStable(preState), "§20.1 的前态应稳定");
+        Assert.True(ShapeOps.IsStable(preState), "§0.4 的前态应稳定");
         Assert.True(
             ShapeSignature.AllColumnsLegal(preState, out int badColumn),
             "前态第 " + (badColumn + 1) + " 象限不过五项条件");
         Assert.NotEqual(text, ShapeSignature.ColumnText(preState, 0));
 
-        // §20.2 / §20.3：降表 3→2、7→6；I = {2,6}；J = {3,7}。
+        // §0.4：降表 / I / J 仍要在 Limitations 里如实写出（A 的推导可回查）。
         string limitations = string.Join("\n", order.Limitations);
 
         Assert.True(
-            limitations.Contains("3→2", StringComparison.Ordinal) &&
-            limitations.Contains("7→6", StringComparison.Ordinal),
-            "降表应为 3→2、7→6：" + limitations);
-        Assert.True(
-            limitations.Contains("I = {2,6}", StringComparison.Ordinal),
-            "I 应为 {2,6}：" + limitations);
-        Assert.True(
-            limitations.Contains("J = {3,7}", StringComparison.Ordinal),
-            "J 应为 {3,7}：" + limitations);
+            limitations.Contains("§13.6 七步", StringComparison.Ordinal),
+            "Limitations 应写明 §13.6 七步：" + limitations);
 
         // 一次真实顶针，目标列逐格等于目标。
         AngleWorkStep pinStep = order.Steps.First(
@@ -140,7 +132,7 @@ internal static class ConstructedHPaperTests
     public static void PinOrdersCarryQ1SubRecipe()
     {
         int hOrders = 0;
-        int paperOrders = 0;
+        int rule17Orders = 0;
         int holed = 0;
         int found = 0;
         int missing = 0;
@@ -190,9 +182,10 @@ internal static class ConstructedHPaperTests
 
                 string limitations = string.Join("\n", order.Limitations);
 
-                if (limitations.Contains("§20.3 构造式", StringComparison.Ordinal))
+                if (limitations.Contains("§17.1 R1", StringComparison.Ordinal) ||
+                    limitations.Contains("结构性降表", StringComparison.Ordinal))
                 {
-                    paperOrders++;
+                    rule17Orders++;
                 }
 
                 if (limitations.Contains(
@@ -270,7 +263,7 @@ internal static class ConstructedHPaperTests
         }
 
         Console.WriteLine(
-            $"  Q1AUDIT hOrders={hOrders} paper={paperOrders} holed={holed} " +
+            $"  Q1AUDIT hOrders={hOrders} r1={rule17Orders} holed={holed} " +
             $"found={found} missing={missing}（≤6 层 {missingSix}）invalid={invalid}");
 
         if (missingCases.Count > 0)
