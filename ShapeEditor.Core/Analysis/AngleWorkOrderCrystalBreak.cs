@@ -26,10 +26,16 @@ namespace ShapeEditor.Core.Analysis;
 /// </para>
 ///
 /// <para>
-/// <b>一刀不够时</b>（上下两块普通格的落点互相依赖，例如 <c>T.T.c</c>）：先切最上面的临时晶体块，
-/// 轮间按 §0.12.2 生成五步「交换支撑柱」工序（旋转 / 装新柱 / 接管 / 拆旧柱与保险丝 / 转回），
-/// 第二刀再切剩下的块。每一步都用真实 <see cref="ShapeOps.Rotate"/> /
+/// <b>一刀不够时</b>（临时晶体是多个不连续块，例如 <c>T.T.c</c>、<c>T.T.T.c</c>）：
+/// 按「<c>K = 临时晶体块集合</c>」<b>逐块切</b>——每轮取当前最上面的一块，一刀，
+/// <c>K = K \ {块}</c>，<b><c>K = ∅</c> 即停</b>（终止条件是集合空，不是轮数上限）；
+/// 每刀之前按 §0.12.2 生成五步「交换支撑柱」工序（旋转 / 装新柱 / 接管 / 拆旧柱与保险丝 /
+/// 在刀后逆旋转）。每一步都用真实 <see cref="ShapeOps.Rotate"/> /
 /// <see cref="ShapePhysics.Cut"/> 回放，并逐格核对目标列。
+/// </para>
+/// <para>
+/// <b>只切一块</b>是关键：其余块留下的临时晶体正好当下一刀的刹车，
+/// 上一刀被提升的普通格才会停在自己的落点。
 /// </para>
 /// </summary>
 public static partial class AngleWorkOrderBuilder
@@ -121,9 +127,10 @@ public static partial class AngleWorkOrderBuilder
     }
 
     /// <summary>
-    /// 用真实物理回放一份碎晶计划。计划只有两种固定形态（不是候选搜索）：
-    /// ① <paramref name="singleCut"/>：全部临时晶体块一刀碎；
-    /// ② 否则：最上面的块一刀，剩下的块第二刀（轮间五步交换支撑柱）。
+    /// 用真实物理回放一份碎晶计划。切割排程只有两种固定形态（不是候选搜索）：
+    /// ① <paramref name="singleCut"/>：全部临时晶体块一刀碎（锚层可被同一刀覆盖时）；
+    /// ② 否则：<b>逐块切</b>——每轮取当前最上面的一块，一刀；刀前按 §0.12.2 五步换柱，
+    ///    直到 <c>K</c>（临时晶体块集合）清空。刀数 = 初始块数。
     /// </summary>
     private static AngleWorkOrder? ReplayCrystalBreak(
         ShapeDocument target,
@@ -228,22 +235,23 @@ public static partial class AngleWorkOrderBuilder
                 bridgeColumn,
                 rotation,
                 blocks,
-                blocks,
                 multiCut: false);
         }
 
-        // ── 第二刀：先按 §0.12.2 生成五步交换支撑柱，再切剩下的块 ──
-        List<(int Bottom, int Top)> remaining =
-            FindTemporaryBlocks(targetColumn, currentText.ToCharArray());
-
-        if (remaining.Count == 0)
+        /*
+         * ── 多刀（docs §三）：K = 临时晶体块集合，while K ≠ ∅ 逐块切 ──
+         *
+         * 每轮只切「当前最上面的一块」：
+         *   · 若该块在刀口另一侧 ⇒ 先按 §0.12.2 生成五步交换支撑柱；
+         *   · 一刀 → 落定；
+         *   · K = K \ {块}，直到 K 清空（终止条件是集合空，不是轮数上限）。
+         *
+         * 只切一块是关键：其余块留下的临时晶体正好当下一刀的刹车，
+         * 上一刀被提升的普通格才会停在自己的落点。
+         */
+        if (currentText == targetColumn)
         {
-            // 第一刀已经把目标列做对（或剩下的块已经不在了）。
-            if (currentText != targetColumn)
-            {
-                return null;
-            }
-
+            // 第一刀已经把目标列做对（剩下的块已经不在了）。
             return BuildCrystalBreakOrder(
                 target,
                 column,
@@ -255,75 +263,117 @@ public static partial class AngleWorkOrderBuilder
                 bridgeColumn,
                 rotation,
                 blocks,
-                firstCut,
                 multiCut: false);
         }
 
-        if (!AppendSupportExchange(
-                steps,
-                current,
-                column,
-                cap,
-                parts,
-                holderColumn,
-                bridgeColumn,
+        int cuts = 1;
+        bool reachedTarget = false;
+        for (int round = 0; round <= blocks.Count; round++)
+        {
+            if (!NativeCrystalsPreserved(current, target, column) ||
+                !AuxiliaryCrystalsCleared(current, holderColumn, bridgeColumn))
+            {
+                return null;
+            }
+
+            currentText = ColumnTextPadded(current, column, cap);
+
+            List<(int Bottom, int Top)> remaining =
+                FindTemporaryBlocks(targetColumn, currentText.ToCharArray());
+
+            if (remaining.Count == 0)
+            {
+                if (currentText != targetColumn)
+                {
+                    return null;
+                }
+
+                reachedTarget = true;
+                break;
+            }
+
+            // 取一块：从上到下（顶层的块先切）。
+            (int Bottom, int Top) next = remaining[0];
+
+            foreach ((int bottom, int top) in remaining)
+            {
+                if (top > next.Top)
+                {
+                    next = (bottom, top);
+                }
+            }
+
+            if (!AppendSupportExchange(
+                    steps,
+                    current,
+                    column,
+                    cap,
+                    parts,
+                    holderColumn,
+                    bridgeColumn,
+                    targetColumn,
+                    next,
+                    cuts,
+                    color,
+                    out ShapeDocument? exchangeState,
+                    out _))
+            {
+                return null;
+            }
+
+            if (exchangeState is null)
+            {
+                return null;
+            }
+
+            ShapeDocument? afterCut = CutAndRotateBack(
+                exchangeState,
+                rotation,
+                out _);
+
+            if (afterCut is null ||
+                !ShapeOps.IsStable(afterCut) ||
+                !ShapeSignature.AllColumnsLegal(afterCut, out _))
+            {
+                return null;
+            }
+
+            // 每一刀都是在「顺转 1 个象限」的坐标系里切的，转回来后才回到原象限。
+            ShapeDocument rotatedBack = ShapeOps.Rotate(afterCut, -1);
+
+            if (!ShapeOps.IsStable(rotatedBack))
+            {
+                return null;
+            }
+
+            steps.Add(new AngleWorkStep(
+                $"第 {cuts + 1} 刀（真实 Cut 后落定）：切第 {next.Bottom + 1}–" +
+                $"{next.Top + 1} 层的临时晶体块，上方普通格落回目标层" +
+                $"；目标列 = {ColumnTextPadded(rotatedBack, column, cap)}",
+                afterCut,
+                AngleWorkStepKind.Cut));
+
+            steps.Add(new AngleWorkStep(
+                $"第 {cuts} 轮换柱 ⑤ 逆旋转 1 个象限，回到原象限（换柱工序的最后一步）" +
+                $"；四列短代码 = {ExportCodes(rotatedBack)}",
+                rotatedBack,
+                AngleWorkStepKind.Exchange));
+
+            cuts++;
+            current = rotatedBack;
+
+            // 进展检查：每刀必须清掉一个块，否则说明这一刀没切到。
+            List<(int Bottom, int Top)> after = FindTemporaryBlocks(
                 targetColumn,
-                remaining,
-                color,
-                out ShapeDocument? exchangeState,
-                out string? exchangeFailure))
-        {
-            return null;
+                ColumnTextPadded(current, column, cap).ToCharArray());
+
+            if (after.Count >= remaining.Count)
+            {
+                return null;
+            }
         }
 
-        if (exchangeState is null)
-        {
-            return null;
-        }
-
-        CutResult? secondCut = null;
-
-        ShapeDocument? afterSecond = CutAndRotateBack(
-            exchangeState,
-            rotation,
-            out secondCut);
-
-        if (afterSecond is null ||
-            !ShapeOps.IsStable(afterSecond) ||
-            !ShapeSignature.AllColumnsLegal(afterSecond, out _))
-        {
-            return null;
-        }
-
-        // 第二刀是在「顺转 1 个象限」的坐标系里切的，转回来后才回到原象限。
-        ShapeDocument rotatedBack = ShapeOps.Rotate(afterSecond, -1);
-
-        if (!ShapeOps.IsStable(rotatedBack))
-        {
-            return null;
-        }
-
-        steps.Add(new AngleWorkStep(
-            "第 2 刀（真实 Cut 后落定）：剩下的临时晶体块碎掉，" +
-            "上方普通格落回目标层" +
-            $"；目标列 = {ColumnTextPadded(rotatedBack, column, cap)}",
-            afterSecond,
-            AngleWorkStepKind.Cut));
-
-        steps.Add(new AngleWorkStep(
-            "⑤ 逆旋转 1 个象限，回到原象限（换柱工序的最后一步）" +
-            $"；四列短代码 = {ExportCodes(rotatedBack)}",
-            rotatedBack,
-            AngleWorkStepKind.Exchange));
-
-        string finalText = ColumnTextPadded(rotatedBack, column, cap);
-
-        if (finalText != targetColumn)
-        {
-            return null;
-        }
-
-        if (!NativeCrystalsPreserved(rotatedBack, target, column))
+        if (!reachedTarget)
         {
             return null;
         }
@@ -334,13 +384,12 @@ public static partial class AngleWorkOrderBuilder
             cap,
             kind,
             steps,
-            rotatedBack,
+            current,
             holderColumn,
             bridgeColumn,
             rotation,
             blocks,
-            blocks,
-            multiCut: true);
+            multiCut: cuts > 1);
     }
 
     /// <summary>
@@ -494,13 +543,18 @@ public static partial class AngleWorkOrderBuilder
     }
 
     /// <summary>
-    /// §0.12.2 的五步交换支撑柱（≤2 刀形态）：旋转 1 个象限 → 装新托柱 → 新柱接管 →
-    /// 拆旧柱并装下一刀保险丝 → （真正的第二刀）→ 逆旋转。
+    /// §0.12.2 的五步交换支撑柱（多刀形态，每一刀前一轮）：旋转 1 个象限 → 装新托柱 →
+    /// 新柱接管 → 拆旧柱并装下一刀保险丝 → （真正的下一刀）→ 逆旋转。
     ///
     /// <para>
-    /// 这里生成前四步与「进入下一刀」的快照；第五步（逆旋转）在第二刀之后由
+    /// 这里生成前四步与「进入下一刀」的快照；第五步（逆旋转）在下一刀之后由
     /// <see cref="ReplayCrystalBreak"/> 追加，这样刀口始终落在支撑柱与目标列之间。
     /// 每一步都是真实 <see cref="ShapeOps.Rotate"/> / 直接改列后的稳定快照。
+    /// </para>
+    /// <para>
+    /// <paramref name="cutBlock"/> 是<b>下一刀要切的那一块</b>：新托柱的针按这一块的提升记录放，
+    /// 新保险丝也只在它的锚层放晶体。其余块的临时晶体必须留在刀口这一侧（不被误切），
+    /// 它们正是这一刀的刹车。
     /// </para>
     /// </summary>
     private static bool AppendSupportExchange(
@@ -512,7 +566,8 @@ public static partial class AngleWorkOrderBuilder
         int holderColumn,
         int bridgeColumn,
         string targetColumn,
-        IReadOnlyList<(int Bottom, int Top)> remaining,
+        (int Bottom, int Top) cutBlock,
+        int round,
         char color,
         out ShapeDocument? exchangeState,
         out string? failure)
@@ -534,8 +589,9 @@ public static partial class AngleWorkOrderBuilder
         }
 
         steps.Add(new AngleWorkStep(
-            "① 顺转 1 个象限：旧支撑柱落到第 " + (oldSupportAfterRotation + 1) +
-            " 象限，目标列到第 " + (Wrap(column + 1, parts) + 1) + " 象限" +
+            $"第 {round} 轮换柱 ① 顺转 1 个象限：旧支撑柱落到第 " +
+            $"{oldSupportAfterRotation + 1} 象限，目标列到第 " +
+            $"{Wrap(column + 1, parts) + 1} 象限" +
             $"；四列短代码 = {ExportCodes(rotated)}",
             rotated,
             AngleWorkStepKind.Exchange));
@@ -548,9 +604,9 @@ public static partial class AngleWorkOrderBuilder
             .ToList();
 
         var activeLifts = lifts
-            .Where(lift => remaining.Any(block =>
-                lift.Core - 1 >= block.Bottom &&
-                lift.Core - 1 <= block.Top))
+            .Where(lift =>
+                lift.Core - 1 >= cutBlock.Bottom &&
+                lift.Core - 1 <= cutBlock.Top)
             .ToList();
 
         string support = BuildCrystalBreakSupport(cap, activeLifts);
@@ -568,20 +624,20 @@ public static partial class AngleWorkOrderBuilder
         }
 
         steps.Add(new AngleWorkStep(
-            "② 在另一侧装新支撑柱（连续接地、覆盖目标高度，按下一刀放针）" +
+            $"第 {round} 轮换柱 ② 在另一侧装新支撑柱（连续接地、覆盖目标高度，按下一刀放针）" +
             $"；四列短代码 = {ExportCodes(withNewSupport)}",
             withNewSupport,
             AngleWorkStepKind.Support));
 
         // ③ 新柱接管：两侧同时托住目标列。
         steps.Add(new AngleWorkStep(
-            "③ 新柱接管支撑（此时目标列被两侧同时托住）" +
+            $"第 {round} 轮换柱 ③ 新柱接管支撑（此时目标列被两侧同时托住）" +
             $"；四列短代码 = {ExportCodes(withNewSupport)}",
             withNewSupport,
             AngleWorkStepKind.Exchange));
 
-        // ④ 拆旧柱与旧保险丝，并在旧柱位置装下一刀的保险丝。
-        string fuse = BuildCrystalBreakFuse(cap, remaining);
+        // ④ 拆旧柱与旧保险丝，并在旧柱位置装下一刀的保险丝（只在下一块的锚层放晶体）。
+        string fuse = BuildCrystalBreakFuse(cap, new[] { cutBlock });
 
         ShapeDocument withFuse = withNewSupport.Clone();
 
@@ -596,7 +652,7 @@ public static partial class AngleWorkOrderBuilder
         }
 
         steps.Add(new AngleWorkStep(
-            "④ 拆掉旧支撑柱与旧保险丝，在同一侧装下一刀的保险丝" +
+            $"第 {round} 轮换柱 ④ 拆掉旧支撑柱与旧保险丝，在同一侧装下一刀的保险丝" +
             $"；四列短代码 = {ExportCodes(withFuse)}",
             withFuse,
             AngleWorkStepKind.Support));
@@ -672,7 +728,6 @@ public static partial class AngleWorkOrderBuilder
         int bridgeColumn,
         int rotation,
         IReadOnlyList<(int Bottom, int Top)> blocks,
-        IReadOnlyList<(int Bottom, int Top)> fusedBlocks,
         bool multiCut)
     {
         var handover = new ShapeDocument(cap, 4);
@@ -719,10 +774,13 @@ public static partial class AngleWorkOrderBuilder
 
         if (multiCut)
         {
+            int cuts = steps.Count(step => step.Kind == AngleWorkStepKind.Cut);
+
             limitations.Add(
-                "多刀：第 1 刀切最上面的块，轮间按 §0.12.2 五步交换支撑柱" +
-                "（顺转 1 象限 → 装新柱 → 新柱接管 → 拆旧柱并装保险丝 → 逆旋转），" +
-                "第 2 刀切剩下的块；每一步都带完整四列短代码并真实回放。");
+                $"多刀：共 {cuts} 刀（= 临时晶体块数），每轮只切当前最上面的一块；" +
+                "刀前按 §0.12.2 五步交换支撑柱" +
+                "（顺转 1 象限 → 装新柱 → 新柱接管 → 拆旧柱并装下一刀保险丝 → 刀后逆旋转），" +
+                "每一步都带完整四列短代码并真实回放；K 清空即停。");
         }
 
         return new AngleWorkOrder(

@@ -42,6 +42,10 @@ internal static class Probes
                 RunStats();
                 return 0;
 
+            case "cut":
+                RunCut();
+                return 0;
+
             default:
                 Console.WriteLine("未知 SHAPE_PROBE_MODE：" + mode);
                 return 1;
@@ -89,15 +93,65 @@ internal static class Probes
         }
     }
 
+    /// <summary>
+    /// 直接看一次真实 Cut：读 A|S|·|F 四列（<c>SHAPE_PROBE_A..D</c>），打印两半与西半的落定结果。
+    /// </summary>
+    private static void RunCut()
+    {
+        string[] columns =
+        {
+            Env("SHAPE_PROBE_A"),
+            Env("SHAPE_PROBE_B"),
+            Env("SHAPE_PROBE_C"),
+            Env("SHAPE_PROBE_D")
+        };
+
+        int cap = Math.Max(1, columns.Max(text => text.Length));
+
+        ShapeDocument document = BuildCorner(
+            columns[0],
+            columns[1],
+            columns[2],
+            columns[3],
+            cap);
+
+        Console.WriteLine("in  = " + Describe(document));
+
+        CutResult cut = ShapePhysics.Cut(document);
+
+        Console.WriteLine("out success=" + cut.Success + " err=" + cut.Error);
+
+        if (cut.West is not null)
+        {
+            Console.WriteLine("west= " + Describe(cut.West));
+        }
+
+        if (cut.East is not null)
+        {
+            Console.WriteLine("east= " + Describe(cut.East));
+        }
+    }
+
+    private static string Describe(ShapeDocument document)
+    {
+        return string.Join(
+            " | ",
+            Enumerable.Range(0, document.PartCount)
+                .Select(part => ShapeSignature.ColumnText(document, part)));
+    }
+
     private static void RunRoute()
     {
         string target = Env("SHAPE_PROBE_TARGET");
         ShapeDocument document = BuildColumn(target);
 
+        bool old = Environment.GetEnvironmentVariable("SHAPE_PROBE_OLD") == "1";
+
         AngleWorkOrder order = AngleWorkOrderBuilder.Build(
             document,
             0,
-            Math.Max(target.Length, 1));
+            Math.Max(target.Length, 1),
+            preferCrystalBreak: !old);
 
         Console.WriteLine("目标 = " + target);
         Console.WriteLine(
@@ -170,11 +224,14 @@ internal static class Probes
         var weakOther = new Dictionary<int, int>();
         var multiCut = new Dictionary<int, int>();
         var anyCut = new Dictionary<int, int>();
+        var cutOne = new Dictionary<int, int>();
+        var cutMulti = new Dictionary<int, int>();
         var pin = new Dictionary<int, int>();
         var failures = new List<string>();
         var weakColumns = new List<string>();
         var weakOtherColumns = new List<string>();
         int peak = 0;
+        int peakCuts = 0;
 
         // O-v2：路线占比与 M1–M7 新旧对比。
         var routes = new Dictionary<AngleRoute, int>();
@@ -196,6 +253,7 @@ internal static class Probes
         double newBuildMs = 0;
         double oldBuildMs = 0;
         int compared = 0;
+        var lexWorseCases = new List<string>();
 
         foreach (string column in Residual47)
         {
@@ -214,6 +272,8 @@ internal static class Probes
             weakOther[layers] = 0;
             multiCut[layers] = 0;
             anyCut[layers] = 0;
+            cutOne[layers] = 0;
+            cutMulti[layers] = 0;
             pin[layers] = 0;
 
             int combinations = (int)Math.Pow(alphabet.Length, layers);
@@ -345,6 +405,15 @@ internal static class Probes
                     else
                     {
                         lexWorse++;
+
+                        if (lexWorseCases.Count < 20)
+                        {
+                            lexWorseCases.Add(
+                                text + " new=" + order.EffectiveRoute + "/" +
+                                string.Join("/", metrics.ToVector()) +
+                                " old=" + oldOrder.EffectiveRoute + "/" +
+                                string.Join("/", oldMetrics.ToVector()));
+                        }
                     }
 
                     compared++;
@@ -375,11 +444,22 @@ internal static class Probes
                 if (cuts > 1)
                 {
                     multiCut[layers]++;
+
+                    if (order.EffectiveRoute == AngleRoute.CrystalBreak)
+                    {
+                        cutMulti[layers]++;
+                    }
                 }
 
                 if (cuts > 0)
                 {
                     anyCut[layers]++;
+
+                    if (cuts == 1 &&
+                        order.EffectiveRoute == AngleRoute.CrystalBreak)
+                    {
+                        cutOne[layers]++;
+                    }
                 }
 
                 if (order.Steps.Any(step => step.Kind == AngleWorkStepKind.Pin))
@@ -388,6 +468,7 @@ internal static class Probes
                 }
 
                 peak = Math.Max(peak, weakDrops);
+                peakCuts = Math.Max(peakCuts, cuts);
             }
 
             watch.Stop();
@@ -400,13 +481,16 @@ internal static class Probes
                 " weakL1T=" + weakSolid[layers] +
                 " weakOther=" + weakOther[layers] +
                 " multiCut=" + multiCut[layers] +
+                " 碎晶一刀=" + cutOne[layers] +
+                " 碎晶多刀=" + cutMulti[layers] +
                 " anyCut=" + anyCut[layers] +
                 " pin=" + pin[layers] +
                 " ms=" + watch.ElapsedMilliseconds);
         }
 
         Console.WriteLine("STATS failures=" + failures.Count);
-        Console.WriteLine("STATS peakWeakPerColumn=" + peak);
+        Console.WriteLine(
+            "STATS peakWeakPerColumn=" + peak + " peakCuts=" + peakCuts);
 
         int successTotal = success.Values.Sum();
 
@@ -440,6 +524,12 @@ internal static class Probes
             " lexBetter=" + lexBetter +
             " lexEqual=" + lexEqual +
             " lexWorse=" + lexWorse);
+
+        if (lexWorseCases.Count > 0)
+        {
+            Console.WriteLine(
+                "LEXWORSE n=" + lexWorse + "：" + string.Join(" | ", lexWorseCases));
+        }
 
         string[] names = { "M1", "M2", "M3", "M4", "M5", "M6", "M7" };
 

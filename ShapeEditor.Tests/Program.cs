@@ -234,6 +234,7 @@ internal static class Program
             ("角工序:O-v2 五步交换支撑柱", AngleRouteOptimalV2Tests.SupportExchangeHasFiveSteps),
             ("角工序:O-v2 收尾统一形态", AngleRouteOptimalV2Tests.TargetShapeIsUnified),
             ("角工序:O-v2 指标 M1–M7", AngleRouteOptimalV2Tests.MetricsRecordedAndNotWorse),
+            ("角工序:O-v2 碎晶前态 P1 与抬升上界", AngleRouteOptimalV2Tests.CrystalBreakPreStateSatisfiesP1AndMaximalLift),
 
             // 交接规格 §5 的 9 组验收语料。
             ("语料1:角判据计数 4..12688", ProductionPathAcceptanceTests.AngleCriterionCounts),
