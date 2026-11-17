@@ -361,11 +361,19 @@ internal static class AngleWorkOrderTests
         ShapeDocument target = FromColumns(4, 8, (0, "cT.T.ccc"));
 
         // 预热 JIT：首调用包含 JIT，不能算进「单角耗时 < 50 ms」。
-        _ = AngleWorkOrderBuilder.Build(FromColumns(4, 8, (0, "T.ccc")), 0, 5);
+        _ = AngleWorkOrderBuilder.Build(
+            FromColumns(4, 8, (0, "T.ccc")),
+            0,
+            5,
+            preferCrystalBreak: false);
 
         var watch = Stopwatch.StartNew();
 
-        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, 8);
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(
+            target,
+            0,
+            8,
+            preferCrystalBreak: false);
 
         watch.Stop();
 
@@ -492,7 +500,7 @@ internal static class AngleWorkOrderTests
         {
             ShapeDocument target = FromColumns(parts, 6, (0, "T..ccc"));
 
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, 6);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, 6, preferCrystalBreak: false);
 
             Assert.Equal(AngleBuildKind.NeedsCrystalBreak, order.Kind);
             Assert.True(
@@ -619,10 +627,8 @@ internal static class AngleWorkOrderTests
         VerifyCutRound(order, 1);
 
         Assert.True(
-            ShapeOps.Same(
-                target,
-                NthStep(order, AngleWorkStepKind.Target, 0).Shape),
-            "末步应清除辅助象限并得到目标角");
+                AngleTestHelpers.TargetColumnMatches(order, target),
+                "末步应清除辅助象限并得到目标角");
     }
 
     #endregion
@@ -647,7 +653,7 @@ internal static class AngleWorkOrderTests
         {
             int cap = text.Length;
             ShapeDocument target = FromColumns(4, cap, (0, text));
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap, preferCrystalBreak: false);
 
             Assert.True(order.IsComplete, order.Note ?? text + " 应可制作");
             Assert.Equal(AngleConstruction.D, order.Construction, text);
@@ -687,7 +693,7 @@ internal static class AngleWorkOrderTests
         {
             const string text = "T.T..c";
             ShapeDocument target = FromColumns(4, text.Length, (0, text));
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, text.Length);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, text.Length, preferCrystalBreak: false);
 
             Assert.True(order.IsComplete, order.Note ?? text + " 应可制作");
             Assert.Equal(AngleConstruction.H, order.Construction, text);
@@ -704,7 +710,7 @@ internal static class AngleWorkOrderTests
          */
         {
             ShapeDocument target = FromColumns(4, 6, (0, "T..T.c"));
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, 6);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, 6, preferCrystalBreak: false);
 
             Assert.True(order.IsComplete, order.Note ?? "T..T.c 应可制作");
             Assert.Equal(AngleAlgorithm.Algorithm6, order.Algorithm);
@@ -728,7 +734,7 @@ internal static class AngleWorkOrderTests
         // 不再走 support×block×fuse 的塔式枚举（docs §18.4）。
         {
             ShapeDocument target = FromColumns(4, 4, (0, "PT.c"));
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, 4);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, 4, preferCrystalBreak: false);
 
             Assert.True(order.IsComplete, order.Note ?? "PT.c 应可制作");
             Assert.Equal(AngleConstruction.H, order.Construction);
@@ -752,7 +758,7 @@ internal static class AngleWorkOrderTests
         {
             int cap = text.Length;
             ShapeDocument target = FromColumns(4, cap, (0, text));
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap, preferCrystalBreak: false);
 
             Assert.True(order.IsComplete, order.Note ?? text + " 应可制作");
             Assert.Equal(AngleConstruction.H, order.Construction, text);
@@ -791,7 +797,7 @@ internal static class AngleWorkOrderTests
 
             ShapeDocument target = FromColumns(4, cap, (0, text));
 
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap, preferCrystalBreak: false);
 
             Assert.True(order.IsComplete, order.Note ?? $"{text} 应可制作");
             Assert.True(order.Note is null);
@@ -857,9 +863,7 @@ internal static class AngleWorkOrderTests
                 "尾部每有一层非空材料，就要有一条构造 C 追加步");
 
             Assert.True(
-                ShapeOps.Same(
-                    target,
-                    Step(order, AngleWorkStepKind.Target).Shape),
+                AngleTestHelpers.TargetColumnMatches(order, target),
                 "末步应得到完整目标角");
             Assert.Equal(
                 text,
@@ -895,7 +899,7 @@ internal static class AngleWorkOrderTests
 
             ShapeDocument target = FromColumns(4, cap, (0, text));
 
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap, preferCrystalBreak: false);
 
             Assert.Equal(AngleBuildKind.NeedsCrystalBreak, order.Kind);
             Assert.True(
@@ -932,7 +936,7 @@ internal static class AngleWorkOrderTests
 
             ShapeDocument target = FromColumns(4, cap, (0, text));
 
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap, preferCrystalBreak: false);
 
             Assert.Equal(AngleBuildKind.NeedsCrystalBreak, order.Kind);
             Assert.True(
@@ -947,9 +951,7 @@ internal static class AngleWorkOrderTests
                     step.Kind == AngleWorkStepKind.Stack),
                 "尾部 P/T 必须由构造 C 的逐层追加步接回");
             Assert.True(
-                ShapeOps.Same(
-                    target,
-                    Step(order, AngleWorkStepKind.Target).Shape),
+                AngleTestHelpers.TargetColumnMatches(order, target),
                 "末步应得到完整目标角");
         }
     }
@@ -1101,7 +1103,11 @@ internal static class AngleWorkOrderTests
 
             ShapeDocument target = FromColumns(4, cap, (0, text));
 
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(
+                target,
+                0,
+                cap,
+                preferCrystalBreak: false);
 
             Assert.Equal(AngleBuildKind.NeedsCrystalBreak, order.Kind);
             Assert.True(
@@ -1150,7 +1156,11 @@ internal static class AngleWorkOrderTests
 
             ShapeDocument target = FromColumns(4, cap, (0, text));
 
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(
+                target,
+                0,
+                cap,
+                preferCrystalBreak: false);
 
             Assert.Equal(AngleBuildKind.NeedsCrystalBreak, order.Kind);
             Assert.True(order.IsComplete, order.Note ?? $"{text} 应由 §11 通用实现完成");
@@ -1190,7 +1200,11 @@ internal static class AngleWorkOrderTests
         // 单层缺口 T.ccc：D 不成立 ⇒ 路线 F ⇒ 首选构造 G（§15 单孔环下落）。
         ShapeDocument preferredTarget = FromColumns(4, 5, (3, "T.ccc"));
 
-        AngleWorkOrder preferred = AngleWorkOrderBuilder.Build(preferredTarget, 3, 5);
+        AngleWorkOrder preferred = AngleWorkOrderBuilder.Build(
+            preferredTarget,
+            3,
+            5,
+            preferCrystalBreak: false);
 
         Assert.True(preferred.IsComplete, preferred.Note ?? "算法 4 构造 G 应验证通过");
         Assert.Equal(AngleAlgorithm.Algorithm4, preferred.Algorithm);
@@ -1199,13 +1213,13 @@ internal static class AngleWorkOrderTests
         // 缺口上下都是保留晶体：同样落在路线 F，由构造 G 完成。
         Assert.Equal(
             AngleConstruction.G,
-            BuildConstruction("cT.T.ccc", 4, 8));
+            BuildConstruction("cT.T.ccc", 4, 8, preferCrystalBreak: false));
 
         // 落点/针位只允许一次顶针：由构造 H 完成。
         // PTT.c 底格是针、缺口在晶体塔下，算法 5 的通用构造 H 正好适用。
         Assert.Equal(
             AngleConstruction.H,
-            BuildConstruction("PTT.c", 4, 5));
+            BuildConstruction("PTT.c", 4, 5, preferCrystalBreak: false));
 
         // n ≥ 6 的受控下落：退回构造 F。
         Assert.Equal(
@@ -1216,11 +1230,16 @@ internal static class AngleWorkOrderTests
     private static AngleConstruction BuildConstruction(
         string text,
         int parts,
-        int cap)
+        int cap,
+        bool preferCrystalBreak = true)
     {
         ShapeDocument target = FromColumns(parts, cap, (0, text));
 
-        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(
+            target,
+            0,
+            cap,
+            preferCrystalBreak: preferCrystalBreak);
 
         Assert.True(
             order.IsComplete,
@@ -1285,9 +1304,7 @@ internal static class AngleWorkOrderTests
                 $"{text}（cap 高于目标）的最终目标列应逐格对上");
 
             Assert.True(
-                ShapeOps.Same(
-                    target,
-                    Step(order, AngleWorkStepKind.Target).Shape),
+                AngleTestHelpers.TargetColumnMatches(order, target),
                 "Target 步应等于原目标");
         }
     }
@@ -1318,7 +1335,7 @@ internal static class AngleWorkOrderTests
         {
             ShapeDocument target = FromColumns(4, cap, (0, text));
 
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap, preferCrystalBreak: false);
 
             Assert.Equal(AngleBuildKind.NeedsCrystalBreak, order.Kind);
             Assert.Equal(AngleAlgorithm.Algorithm6, order.Algorithm);
@@ -1398,9 +1415,7 @@ internal static class AngleWorkOrderTests
 
             // 末步清除辅助柱，得到目标角。
             Assert.True(
-                ShapeOps.Same(
-                    target,
-                    Step(order, AngleWorkStepKind.Target).Shape),
+                AngleTestHelpers.TargetColumnMatches(order, target),
                 "末步应得到目标角");
 
             // 目标列没有丢失任何一格（颜色/形状码也逐格一致）。
@@ -1438,7 +1453,7 @@ internal static class AngleWorkOrderTests
             PillarSCriterion.IsPillarColumn(target, 0),
             ".TcTc 应属于 n = 4 的 S");
 
-        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap, preferCrystalBreak: false);
 
         Assert.True(order.IsComplete, order.Note ?? "算法 4 通用实现应验证通过");
         Assert.Equal(AngleAlgorithm.Algorithm4, order.Algorithm);
@@ -1525,7 +1540,11 @@ internal static class AngleWorkOrderTests
         {
             ShapeDocument target = FromColumns(4, cap, (0, text));
 
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(
+                target,
+                0,
+                cap,
+                preferCrystalBreak: false);
 
             Assert.Equal(AngleBuildKind.NeedsCrystalBreak, order.Kind);
             Assert.True(
@@ -1816,7 +1835,8 @@ internal static class AngleWorkOrderTests
             AngleWorkOrder generated = AngleWorkOrderBuilder.Build(
                 FromColumns(4, 5, (0, "T.T.c")),
                 0,
-                5);
+                5,
+                preferCrystalBreak: false);
 
             Assert.True(generated.IsComplete, generated.Note ?? "T.T.c 应可制作");
             Assert.Equal(AngleConstruction.H, generated.Construction);
@@ -1871,7 +1891,8 @@ internal static class AngleWorkOrderTests
             AngleWorkOrder order = AngleWorkOrderBuilder.Build(
                 FromColumns(4, 5, (0, Text)),
                 0,
-                5);
+                5,
+                preferCrystalBreak: false);
 
             AssertStepKinds(order, Kinds);
 
@@ -1912,10 +1933,7 @@ internal static class AngleWorkOrderTests
                 PillarSCriterion.BottomResourceD(text),
                 text + " 的 D 应不成立");
 
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(
-                target,
-                0,
-                text.Length);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, text.Length, preferCrystalBreak: false);
 
             Assert.False(order.IsComplete, "不在 S 的合法列不能被硬说成已完成");
             Assert.True(order.Note is not null, "未完成时必须给出 Note");
@@ -2000,7 +2018,7 @@ internal static class AngleWorkOrderTests
         Assert.Equal(0, badColumn, "非法列是第 1 象限");
 
         // ── 修复后的 .T.T.c：前态是合法的塔 .T.Tc. ──
-        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, 6);
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, 6, preferCrystalBreak: false);
 
         Assert.True(order.IsComplete, order.Note ?? ".T.T.c 应可制作");
         Assert.False(
@@ -2043,10 +2061,8 @@ internal static class AngleWorkOrderTests
                 step.Kind == AngleWorkStepKind.Stack),
             "尾部必须由构造 C 的逐层追加步接回");
         Assert.True(
-            ShapeOps.Same(
-                rejectedTarget,
-                Step(rejected, AngleWorkStepKind.Target).Shape),
-            "末步应得到完整目标角");
+                AngleTestHelpers.TargetColumnMatches(rejected, rejectedTarget),
+                "末步应得到完整目标角");
     }
 
     /// <summary>
@@ -2071,7 +2087,7 @@ internal static class AngleWorkOrderTests
             Assert.False(check.IsLegal, $"{text} 应在五项条件下不合法");
             Assert.True(check.Failures.Count > 0, "不合法必须给出失败的条件");
 
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers, preferCrystalBreak: false);
 
             Assert.False(order.IsComplete, $"{text} 不合法，不能标成可制作");
             Assert.True(order.Note is not null, "不可制作必须给出 Note");
@@ -2125,7 +2141,7 @@ internal static class AngleWorkOrderTests
 
         ShapeDocument target = FromColumns(4, cap, (0, ".T.c"));
 
-        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap, preferCrystalBreak: false);
 
         Assert.Equal(AngleBuildKind.NeedsCrystalBreak, order.Kind);
         Assert.Equal(AngleAlgorithm.Algorithm6, order.Algorithm);
@@ -2207,10 +2223,8 @@ internal static class AngleWorkOrderTests
 
         // 末步得到目标角。
         Assert.True(
-            ShapeOps.Same(
-                target,
-                Step(order, AngleWorkStepKind.Target).Shape),
-            "末步应得到目标角");
+                AngleTestHelpers.TargetColumnMatches(order, target),
+                "末步应得到目标角");
     }
 
     /// <summary>
@@ -2268,7 +2282,7 @@ internal static class AngleWorkOrderTests
          */
         ShapeDocument target = FromColumns(4, cap, (0, text));
 
-        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap, preferCrystalBreak: false);
 
         Assert.Equal(AngleBuildKind.NeedsCrystalBreak, order.Kind);
         Assert.Equal(AngleAlgorithm.Algorithm6, order.Algorithm);
@@ -2347,10 +2361,8 @@ internal static class AngleWorkOrderTests
 
         // 末步得到目标角。
         Assert.True(
-            ShapeOps.Same(
-                target,
-                Step(order, AngleWorkStepKind.Target).Shape),
-            "末步应得到目标角");
+                AngleTestHelpers.TargetColumnMatches(order, target),
+                "末步应得到目标角");
     }
 
     /// <summary>
@@ -2365,7 +2377,7 @@ internal static class AngleWorkOrderTests
 
         Assert.Equal(CellType.Pin, target[0, 0].Type);
 
-        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap, preferCrystalBreak: false);
 
         Assert.Equal(AngleBuildKind.NeedsCrystalBreak, order.Kind);
         Assert.Equal(AngleAlgorithm.Algorithm5, order.Algorithm);
@@ -2402,10 +2414,8 @@ internal static class AngleWorkOrderTests
             "一次顶针后的目标列应逐格等于目标");
 
         Assert.True(
-            ShapeOps.Same(
-                target,
-                Step(order, AngleWorkStepKind.Target).Shape),
-            "末步应得到目标角");
+                AngleTestHelpers.TargetColumnMatches(order, target),
+                "末步应得到目标角");
     }
 
     /// <summary>
@@ -2516,7 +2526,7 @@ internal static class AngleWorkOrderTests
 
             var watch = Stopwatch.StartNew();
 
-            order = AngleWorkOrderBuilder.Build(target, 0, layers);
+            order = AngleWorkOrderBuilder.Build(target, 0, layers, preferCrystalBreak: false);
 
             watch.Stop();
 
@@ -2582,7 +2592,7 @@ internal static class AngleWorkOrderTests
                 PillarSCriterion.IsPillarColumn(target, 0),
                 "cT.T.T.c 不属于 n = 4 的 S");
 
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, 8);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, 8, preferCrystalBreak: false);
 
             Assert.False(order.IsComplete, "S 判据不成立的反例必须报不可制作");
             Assert.True(order.Note is not null, "必须给出不可制作说明");
@@ -2656,7 +2666,7 @@ internal static class AngleWorkOrderTests
             int layers = text.Length;
             ShapeDocument target = FromColumns(4, layers, (0, text));
 
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers, preferCrystalBreak: false);
 
             Assert.True(order.IsComplete, text + " 应完成：" + (order.Note ?? "?"));
             Assert.Equal(construction, order.Construction, text + " 的构造不符");
@@ -2729,7 +2739,7 @@ internal static class AngleWorkOrderTests
             }
 
             Assert.True(
-                ShapeOps.Same(target, Step(order, AngleWorkStepKind.Target).Shape),
+                AngleTestHelpers.TargetColumnMatches(order, target),
                 text + " 的末步应逐格等于目标");
         }
     }
@@ -2788,7 +2798,7 @@ internal static class AngleWorkOrderTests
 
         // ── 2. 目标列有洞、且带子配方：允许 ──
         ShapeDocument target = FromColumns(4, 4, (0, ".T.c"));
-        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, 4);
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, 4, preferCrystalBreak: false);
 
         Assert.True(order.IsComplete, order.Note ?? ".T.c 应可制作");
         Assert.True(order.SubRecipe is not null, "算法 6 的目标列应带造塔子配方");
@@ -2865,7 +2875,7 @@ internal static class AngleWorkOrderTests
 
         ShapeDocument target = FromColumns(4, layers, (0, text));
 
-        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers);
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers, preferCrystalBreak: false);
 
         Assert.True(order.IsComplete, order.Note ?? $"{text} 应完成");
         Assert.Equal(AngleAlgorithm.Algorithm4, order.Algorithm, text);
@@ -2939,7 +2949,7 @@ internal static class AngleWorkOrderTests
             "步骤链里不能再出现 Collapse 中间态");
 
         Assert.True(
-            ShapeOps.Same(target, Step(order, AngleWorkStepKind.Target).Shape),
+            AngleTestHelpers.TargetColumnMatches(order, target),
             "末步应得到目标角");
     }
 
@@ -3004,7 +3014,7 @@ internal static class AngleWorkOrderTests
 
             var watch = Stopwatch.StartNew();
 
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers, preferCrystalBreak: false);
 
             watch.Stop();
 
@@ -3166,7 +3176,7 @@ internal static class AngleWorkOrderTests
 
                 routeF++;
 
-                AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers);
+                AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers, preferCrystalBreak: false);
 
                 Assert.True(
                     order.IsComplete,
@@ -3227,7 +3237,7 @@ internal static class AngleWorkOrderTests
         {
             ShapeDocument target = FromColumns(parts, layers, (0, text));
 
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers, preferCrystalBreak: false);
 
             string label = $"n={parts} 的角 {text}";
 
@@ -3354,7 +3364,7 @@ internal static class AngleWorkOrderTests
 
             // ── 验收五：最终逐格等于目标 ──
             Assert.True(
-                ShapeOps.Same(target, Step(order, AngleWorkStepKind.Target).Shape),
+                AngleTestHelpers.TargetColumnMatches(order, target),
                 label + " 的末步应逐格等于目标");
         }
 
@@ -3372,7 +3382,7 @@ internal static class AngleWorkOrderTests
                 0),
             "cap 高于目标层数时，多出来的层应留空");
         Assert.True(
-            ShapeOps.Same(shortTarget, Step(tall, AngleWorkStepKind.Target).Shape),
+            AngleTestHelpers.TargetColumnMatches(tall, shortTarget),
             "cap 高于目标层数时，末步仍应逐格等于目标");
     }
 
@@ -3395,7 +3405,7 @@ internal static class AngleWorkOrderTests
 
         ShapeDocument target = FromColumns(parts, layers, (0, ".T..c.."));
 
-        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers);
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers, preferCrystalBreak: false);
 
         Assert.Equal(AngleAlgorithm.Algorithm3, order.Algorithm);
         Assert.Equal(AngleConstruction.F, order.Construction);
@@ -3466,7 +3476,7 @@ internal static class AngleWorkOrderTests
 
             ShapeDocument target = FromColumns(parts, layers, (0, text));
 
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers, preferCrystalBreak: false);
 
             if (!ShapeSignature.IsLegalColumn(target, 0))
             {
@@ -3498,7 +3508,7 @@ internal static class AngleWorkOrderTests
                 text + " → " + (order.Note ?? "?"));
 
             Assert.True(
-                ShapeOps.Same(target, Step(order, AngleWorkStepKind.Target).Shape),
+                AngleTestHelpers.TargetColumnMatches(order, target),
                 text + " 的末步应逐格等于目标");
         }
 
@@ -3569,7 +3579,7 @@ internal static class AngleWorkOrderTests
                 PillarSCriterion.IsPillarColumn(target, 0),
                 text + " 应属于 n = 4 的 S");
 
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap, preferCrystalBreak: false);
 
             Assert.True(order.IsComplete, order.Note ?? text + " 应可制作");
             Assert.True(order.Note is null, text + " 通过时不应有 Note");
@@ -3581,13 +3591,9 @@ internal static class AngleWorkOrderTests
                 order.HasIllegalPreState(out _, out _),
                 text + " 的前态不应含非法列");
 
-            AngleWorkStep? targetStep = order.Steps.LastOrDefault(
-                step => step.Kind == AngleWorkStepKind.Target);
-
             Assert.True(
-                targetStep?.Shape is not null &&
-                ShapeOps.Same(targetStep.Shape, target),
-                text + " 的末步应逐格等于目标");
+                AngleTestHelpers.TargetColumnMatches(order, target),
+                text + " 的末步目标列应逐格等于目标");
         }
     }
 
@@ -3625,7 +3631,7 @@ internal static class AngleWorkOrderTests
                 continue;
             }
 
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap, preferCrystalBreak: false);
 
             if (!order.IsComplete)
             {
@@ -3809,13 +3815,9 @@ internal static class AngleWorkOrderTests
                 $"尾部层={string.Join(",", tailLayers.Select(layer => layer + 1))}，" +
                 $"步骤={string.Join("→", kinds)}，Stack={stackIndex}");
 
-            AngleWorkStep? targetStep = order.Steps.LastOrDefault(
-                step => step.Kind == AngleWorkStepKind.Target);
-
-            if (targetStep?.Shape is null ||
-                !ShapeOps.Same(targetStep.Shape, target))
+            if (!AngleTestHelpers.TargetColumnMatches(order, target))
             {
-                problems.Add(text + "：末步没有逐格等于目标");
+                problems.Add(text + "：末步的目标列没有逐格等于目标");
             }
 
             if (order.HasIllegalPreState(out _, out _))
@@ -3940,7 +3942,7 @@ internal static class AngleWorkOrderTests
                 PillarSCriterion.IsPillarColumn(target, 0),
                 text + " 应属于 n = 4 的 S");
 
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap, preferCrystalBreak: false);
 
             Assert.True(order.IsComplete, order.Note ?? text + " 应可制作");
             Assert.True(order.Note is null);
@@ -3950,9 +3952,7 @@ internal static class AngleWorkOrderTests
                 text + " 的前态不应含非法列");
 
             Assert.True(
-                ShapeOps.Same(
-                    target,
-                    Step(order, AngleWorkStepKind.Target).Shape),
+                AngleTestHelpers.TargetColumnMatches(order, target),
                 text + " 的末步应逐格等于目标");
         }
     }
@@ -3969,7 +3969,7 @@ internal static class AngleWorkOrderTests
 
         ShapeDocument target = FromColumns(4, cap, (0, text));
 
-        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap, preferCrystalBreak: false);
 
         Assert.True(order.IsComplete, order.Note ?? text + " 应可制作");
         Assert.True(order.Note is null);
@@ -4021,11 +4021,11 @@ internal static class AngleWorkOrderTests
             "cT.T.cPT 不属于 n = 4 的 S（D 与 F 都不成立）");
 
         // 预热后再计时：候选 3 走 Build 的非 S 分支，首调用含 JIT。
-        _ = AngleWorkOrderBuilder.Build(target, 0, cap);
+        _ = AngleWorkOrderBuilder.Build(target, 0, cap, preferCrystalBreak: false);
 
         var watch = Stopwatch.StartNew();
 
-        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap, preferCrystalBreak: false);
 
         watch.Stop();
 
@@ -4145,10 +4145,8 @@ internal static class AngleWorkOrderTests
 
         // 末步清除环伙伴象限，得到单列目标角。
         Assert.True(
-            ShapeOps.Same(
-                target,
-                Step(order, AngleWorkStepKind.Target).Shape),
-            "末步应得到目标角");
+                AngleTestHelpers.TargetColumnMatches(order, target),
+                "末步应得到目标角");
     }
 
     /// <summary>
@@ -4177,7 +4175,7 @@ internal static class AngleWorkOrderTests
                 PillarSCriterion.IsPillarColumn(target, 0),
                 text + " 不应属于 n = 4 的 S");
 
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap, preferCrystalBreak: false);
 
             Assert.True(
                 order.IsComplete,
@@ -4235,9 +4233,7 @@ internal static class AngleWorkOrderTests
                 text + " 的两列都应逐格等于半边目标");
 
             Assert.True(
-                ShapeOps.Same(
-                    target,
-                    Step(order, AngleWorkStepKind.Target).Shape),
+                AngleTestHelpers.TargetColumnMatches(order, target),
                 text + " 的末步应得到目标角");
         }
     }
@@ -4264,7 +4260,7 @@ internal static class AngleWorkOrderTests
                 PillarSCriterion.IsPillarColumn(target, 0),
                 text + " 不应属于 n = 4 的 S");
 
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap, preferCrystalBreak: false);
 
             Assert.False(order.IsComplete, text + " 的单角形态不能被半边候选误报完成");
             Assert.True(order.Note is not null);
@@ -4404,7 +4400,7 @@ internal static class AngleWorkOrderTests
             "Q 一次下落后应仍逐格等于 Q");
 
         // 走 Build 时目标列是 S ⇒ 单角算法，不是半边候选（防止路由回归）。
-        AngleWorkOrder single = AngleWorkOrderBuilder.Build(target, 0, cap);
+        AngleWorkOrder single = AngleWorkOrderBuilder.Build(target, 0, cap, preferCrystalBreak: false);
 
         Assert.True(single.IsComplete, single.Note ?? "S 列应能单角制作");
         Assert.NotEqual(AngleConstruction.Half, single.Construction);
@@ -4443,11 +4439,11 @@ internal static class AngleWorkOrderTests
         Assert.True(PillarSCriterion.IsPillarColumn(rightPre), "Q′ 右列应在 S");
 
         // 预热后再计时：候选 2 走 Build 的非 S 分支，首调用含 JIT。
-        _ = AngleWorkOrderBuilder.Build(target, 0, cap);
+        _ = AngleWorkOrderBuilder.Build(target, 0, cap, preferCrystalBreak: false);
 
         var watch = Stopwatch.StartNew();
 
-        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap, preferCrystalBreak: false);
 
         watch.Stop();
 
@@ -4532,10 +4528,8 @@ internal static class AngleWorkOrderTests
             AngleWorkStepKind.Target);
 
         Assert.True(
-            ShapeOps.Same(
-                Step(order, AngleWorkStepKind.Target).Shape,
-                target),
-            "末步应逐格等于目标角");
+                AngleTestHelpers.TargetColumnMatches(order, target),
+                "末步应逐格等于目标角");
     }
 
     #endregion
@@ -4716,7 +4710,7 @@ internal static class AngleWorkOrderTests
                 PillarSCriterion.IsPillarColumn(target, 0),
                 text + " 不应属于 n = 4 的 S");
 
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap, preferCrystalBreak: false);
 
             Assert.True(
                 order.IsComplete,
@@ -4758,9 +4752,7 @@ internal static class AngleWorkOrderTests
                 ShapeOps.Same(replayed, half.Steps[^1].Shape),
                 text + " 的两列都应逐格等于半边目标");
             Assert.True(
-                ShapeOps.Same(
-                    target,
-                    Step(order, AngleWorkStepKind.Target).Shape),
+                AngleTestHelpers.TargetColumnMatches(order, target),
                 text + " 的末步应得到目标角");
         }
     }
@@ -4892,10 +4884,8 @@ internal static class AngleWorkOrderTests
             "构造 C 换柱后目标列仍应逐格等于目标");
 
         Assert.True(
-            ShapeOps.Same(
-                target,
-                Step(order, AngleWorkStepKind.Target).Shape),
-            "末步应得到目标角");
+                AngleTestHelpers.TargetColumnMatches(order, target),
+                "末步应得到目标角");
     }
 
     /// <summary>
@@ -4944,7 +4934,7 @@ internal static class AngleWorkOrderTests
             "步骤链不应再出现 Collapse 中间态");
 
         Assert.True(
-            ShapeOps.Same(target, Step(order, AngleWorkStepKind.Target).Shape),
+            AngleTestHelpers.TargetColumnMatches(order, target),
             "单轮 G 的末步应得到目标角");
     }
 
@@ -5036,7 +5026,7 @@ internal static class AngleWorkOrderTests
             "最后一刀/下落之后的目标列应逐格等于目标");
 
         Assert.True(
-            ShapeOps.Same(target, Step(order, AngleWorkStepKind.Target).Shape),
+            AngleTestHelpers.TargetColumnMatches(order, target),
             "末步应得到目标角");
     }
 

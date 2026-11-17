@@ -180,14 +180,10 @@ internal static class AngleAuditTests
                     }
                 }
 
-                AngleWorkStep? targetStep = order.Steps
-                    .LastOrDefault(step => step.Kind == AngleWorkStepKind.Target);
-
                 if (order.Kind == AngleBuildKind.NeedsCrystalBreak &&
-                    (targetStep?.Shape is null ||
-                     !ShapeOps.Same(targetStep.Shape, target)))
+                    !AngleTestHelpers.TargetColumnMatches(order, target))
                 {
-                    falsePositives.Add(text + "：末步没有逐格等于目标");
+                    falsePositives.Add(text + "：末步的目标列没有逐格等于目标");
                 }
             }
         }
@@ -504,18 +500,10 @@ internal static class AngleAuditTests
                     continue;
                 }
 
-                AngleWorkStep? targetStep = order.Steps
-                    .LastOrDefault(step => step.Kind == AngleWorkStepKind.Target);
-
-                /*
-                 * 只有「碎晶角」才必须给出 Target 步并逐格等于目标；
-                 * 无晶体 / Simple 档只有逐层计划（构造 A/C），没有碎晶步骤。
-                 */
                 if (order.Kind == AngleBuildKind.NeedsCrystalBreak &&
-                    (targetStep?.Shape is null ||
-                     !ShapeOps.Same(targetStep.Shape, target)))
+                    !AngleTestHelpers.TargetColumnMatches(order, target))
                 {
-                    falsePositives.Add(text + "：末步没有逐格等于目标");
+                    falsePositives.Add(text + "：末步的目标列没有逐格等于目标");
                 }
             }
 
@@ -616,7 +604,8 @@ internal static class AngleAuditTests
                 collapseSteps += order.Steps.Count(
                     step => step.Kind == AngleWorkStepKind.Collapse);
 
-                if (order.Construction == AngleConstruction.D)
+                if (order.Construction is AngleConstruction.D or
+                    AngleConstruction.CrystalBreak)
                 {
                     dTotal++;
 
@@ -977,13 +966,9 @@ internal static class AngleAuditTests
                     problems.Add(text + "：半破后第 1 列不等于目标列");
                 }
 
-                AngleWorkStep? targetStep = order.Steps
-                    .LastOrDefault(step => step.Kind == AngleWorkStepKind.Target);
-
-                if (targetStep?.Shape is null ||
-                    !ShapeOps.Same(targetStep.Shape, target))
+                if (!AngleTestHelpers.TargetColumnMatches(order, target))
                 {
-                    problems.Add(text + "：末步没有逐格等于目标");
+                    problems.Add(text + "：末步的目标列没有逐格等于目标");
                 }
             }
         }
@@ -1086,13 +1071,9 @@ internal static class AngleAuditTests
                     problems.Add(label + "：HasIllegalPreState 判前态非法");
                 }
 
-                AngleWorkStep? targetStep = order.Steps
-                    .LastOrDefault(step => step.Kind == AngleWorkStepKind.Target);
-
-                if (targetStep?.Shape is null ||
-                    !ShapeOps.Same(targetStep.Shape, target))
+                if (!AngleTestHelpers.TargetColumnMatches(order, target))
                 {
-                    problems.Add(label + "：末步没有逐格等于目标");
+                    problems.Add(label + "：末步的目标列没有逐格等于目标");
                 }
             }
 

@@ -46,10 +46,7 @@ internal static class PinFamilyRegressionTests
         foreach ((string text, string a, string b, string e, string n) in cases)
         {
             ShapeDocument target = FromColumns(Parts, text.Length, (0, text));
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(
-                target,
-                0,
-                text.Length);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, text.Length, preferCrystalBreak: false);
 
             Assert.True(order.IsComplete, text + " 应可制作：" + (order.Note ?? "?"));
             Assert.True(order.Note is null, text + " 不应有未覆盖说明");
@@ -105,10 +102,8 @@ internal static class PinFamilyRegressionTests
                 text + " 的 Pin 步快照应等于真实顶针结果");
 
             Assert.True(
-                ShapeOps.Same(
-                    target,
-                    Step(order, AngleWorkStepKind.Target).Shape),
-                text + " 的末步应逐格等于目标");
+                AngleTestHelpers.TargetColumnMatches(order, target),
+                text + " 的末步目标列应逐格等于目标");
 
             Console.WriteLine(
                 "  PINFAMILY " + text + " A=" + a + " B=" + b +
@@ -183,7 +178,8 @@ internal static class PinFamilyRegressionTests
                 AngleWorkOrder order = AngleWorkOrderBuilder.Build(
                     FromColumns(Parts, layers, (0, text)),
                     0,
-                    layers);
+                    layers,
+                    preferCrystalBreak: false);
 
                 Assert.True(
                     order.IsComplete,
@@ -229,9 +225,10 @@ internal static class PinFamilyRegressionTests
         foreach ((string text, int cap) in new[] { ("T.T.c", 5), ("T..T.c", 6) })
         {
             AngleWorkOrder order = AngleWorkOrderBuilder.Build(
-                FromColumns(Parts, cap, (0, text)),
-                0,
-                cap);
+                    FromColumns(Parts, cap, (0, text)),
+                    0,
+                    cap,
+                    preferCrystalBreak: false);
 
             Assert.True(order.IsComplete, text + " 应可制作：" + (order.Note ?? "?"));
             Assert.Equal(AngleAlgorithm.Algorithm6, order.Algorithm, text);
@@ -301,9 +298,10 @@ internal static class PinFamilyRegressionTests
             bool f = PillarSCriterion.RecursiveTerminalF(text);
 
             AngleWorkOrder order = AngleWorkOrderBuilder.Build(
-                FromColumns(Parts, text.Length, (0, text)),
-                0,
-                text.Length);
+                    FromColumns(Parts, text.Length, (0, text)),
+                    0,
+                    text.Length,
+                    preferCrystalBreak: false);
 
             Assert.True(order.IsComplete, text + " 应可制作：" + (order.Note ?? "?"));
 

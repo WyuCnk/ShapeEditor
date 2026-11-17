@@ -35,7 +35,7 @@ internal static class AuxiliaryColumnRulesTests
 
         ShapeDocument target = FromColumns(4, cap, (0, text));
 
-        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap);
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap, preferCrystalBreak: false);
 
         Assert.Equal(AngleConstruction.G, order.Construction, text);
         Assert.True(order.IsComplete, order.Note ?? text + " 应可制作");
@@ -131,7 +131,7 @@ internal static class AuxiliaryColumnRulesTests
 
         Assert.Equal(2, WholeShapeHighestCrystal(targetA));
 
-        AngleWorkOrder orderA = AngleWorkOrderBuilder.Build(targetA, 0, cap);
+        AngleWorkOrder orderA = AngleWorkOrderBuilder.Build(targetA, 0, cap, preferCrystalBreak: false);
 
         Assert.True(orderA.IsComplete, orderA.Note ?? "情况 A 应可制作");
         Assert.True(
@@ -151,7 +151,7 @@ internal static class AuxiliaryColumnRulesTests
 
         Assert.Equal(4, WholeShapeHighestCrystal(targetB));
 
-        AngleWorkOrder orderB = AngleWorkOrderBuilder.Build(targetB, 0, cap);
+        AngleWorkOrder orderB = AngleWorkOrderBuilder.Build(targetB, 0, cap, preferCrystalBreak: false);
 
         Assert.True(orderB.IsComplete, orderB.Note ?? "情况 B 应可制作");
         Assert.False(
@@ -181,7 +181,7 @@ internal static class AuxiliaryColumnRulesTests
                 IsolatedColumn.IsIsolatedColumn(target, 0),
                 "TTc 应是孤立列（定理 4 成立）");
 
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, 3);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, 3, preferCrystalBreak: false);
 
             Assert.True(order.IsComplete, order.Note ?? "TTc 应可制作");
             Assert.True(
@@ -201,7 +201,7 @@ internal static class AuxiliaryColumnRulesTests
                 IsolatedColumn.IsIsolatedColumn(target, 0),
                 ".T.c 带洞，不应满足定理 4");
 
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, 4);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, 4, preferCrystalBreak: false);
 
             Assert.True(order.IsComplete, order.Note ?? ".T.c 应可制作");
             Assert.True(
@@ -245,7 +245,7 @@ internal static class AuxiliaryColumnRulesTests
                     continue;
                 }
 
-                AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers);
+                AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers, preferCrystalBreak: false);
 
                 if (!order.IsComplete)
                 {

@@ -229,6 +229,12 @@ internal static class Program
             ("角工序:构造分布与辅助列基线", AngleAuditTests.ConstructionDistributionAudit),
             ("角工序:半边工序 7–9 层审计", AngleAuditTests.HalfSideAudit),
 
+            // 2026-11-17 第五轮：O-v2 碎晶路线（碎晶优先 / 统一收尾 / 五步交换 / M1–M7）。
+            ("角工序:O-v2 四个碎晶基线", AngleRouteOptimalV2Tests.FourCrystalBreakBaselines),
+            ("角工序:O-v2 五步交换支撑柱", AngleRouteOptimalV2Tests.SupportExchangeHasFiveSteps),
+            ("角工序:O-v2 收尾统一形态", AngleRouteOptimalV2Tests.TargetShapeIsUnified),
+            ("角工序:O-v2 指标 M1–M7", AngleRouteOptimalV2Tests.MetricsRecordedAndNotWorse),
+
             // 交接规格 §5 的 9 组验收语料。
             ("语料1:角判据计数 4..12688", ProductionPathAcceptanceTests.AngleCriterionCounts),
             ("语料2:论文举例列与 n=4 的 S 判定", ProductionPathAcceptanceTests.PaperExampleColumns),

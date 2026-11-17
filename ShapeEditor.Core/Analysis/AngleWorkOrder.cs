@@ -98,6 +98,13 @@ public enum AngleConstruction
     FillBreak,
 
     /// <summary>
+    /// O-v2 碎晶路线（docs/angle-route-optimal-v2.md §2）：正规核心 + 托柱 + 保险丝 + 一刀。
+    /// 与 <see cref="D"/> / <see cref="G"/> 的区别是前态规则统一（A 由扫描得出、S 源层放针、
+    /// F 按临时晶体块的锚层放晶体），并且是 n = 4 碎晶角的<b>第一顺位</b>。
+    /// </summary>
+    CrystalBreak,
+
+    /// <summary>
     /// 半边工序：n = 4、五项 ✔ 但 S ✘ 的合法角，与相邻象限一起做。
     /// 半边 = 连续 n/2 列；候选见 <see cref="HalfCandidate"/>，
     /// 两列的逐格回放与目标定义见 <see cref="HalfWorkOrder"/>。
@@ -144,6 +151,57 @@ public enum AngleAlgorithm
 
     /// <summary>分档构造都没覆盖，使用了原有的填充+暴破 / G / F / H 兜底链。</summary>
     Fallback
+}
+
+/// <summary>
+/// 角工序的<b>路线分类</b>（docs/angle-route-optimal-v2.md §6 的选择顺序）。
+/// 用于统计路线占比；<see cref="Unknown"/> 表示旧工序单没有显式标注。
+/// </summary>
+public enum AngleRoute
+{
+    /// <summary>未标注（旧路线或失败工序）。</summary>
+    Unknown,
+
+    /// <summary>① 碎晶路线（O-v2 §2 / 构造 D、G）。</summary>
+    CrystalBreak,
+
+    /// <summary>② 顶针路线（构造 H，一次顶针）。</summary>
+    Pin,
+
+    /// <summary>③ 算法 6 的论文四步（含弱落）。</summary>
+    Algorithm6,
+
+    /// <summary>④ 多刀（K 驱动，含交换支撑柱）。</summary>
+    MultiCut
+}
+
+/// <summary>
+/// 角工序指标 M1–M7（docs/work-order-metrics.md）。
+/// 比较规则：按 M1 → M7 依次比较，先小者优（字典序）。
+/// </summary>
+public sealed record AngleWorkOrderMetrics(
+    int WeakDrops,
+    int Pins,
+    int Cuts,
+    int AuxiliaryColumns,
+    int SupportSwaps,
+    int Steps,
+    int Materials)
+{
+    /// <summary>M1–M7 的向量形式，便于按字典序比较。</summary>
+    public IReadOnlyList<int> ToVector()
+    {
+        return new[]
+        {
+            WeakDrops,
+            Pins,
+            Cuts,
+            AuxiliaryColumns,
+            SupportSwaps,
+            Steps,
+            Materials
+        };
+    }
 }
 
 /// <summary>
@@ -261,6 +319,192 @@ public sealed record AngleWorkOrder(
     /// </para>
     /// </summary>
     public bool TargetColumnHasSubRecipe { get; init; }
+
+    /// <summary>
+    /// 路线分类（docs/angle-route-optimal-v2.md §6）。新路线显式标注；
+    /// 旧路线为 <see cref="AngleRoute.Unknown"/>，由 <see cref="EffectiveRoute"/> 兜底推断。
+    /// </summary>
+    public AngleRoute Route { get; init; } = AngleRoute.Unknown;
+
+    /// <summary>
+    /// 有效路线：<see cref="Route"/> 已标注就用它；否则按步骤与构造推断
+    /// （多刀 &gt; 算法 6 &gt; 顶针 &gt; 碎晶）。
+    /// </summary>
+    public AngleRoute EffectiveRoute
+    {
+        get
+        {
+            if (Route != AngleRoute.Unknown)
+            {
+                return Route;
+            }
+
+            int cuts = Steps.Count(step => step.Kind == AngleWorkStepKind.Cut);
+
+            if (cuts > 1)
+            {
+                return AngleRoute.MultiCut;
+            }
+
+            if (Algorithm == AngleAlgorithm.Algorithm6)
+            {
+                return AngleRoute.Algorithm6;
+            }
+
+            if (Construction == AngleConstruction.H)
+            {
+                return AngleRoute.Pin;
+            }
+
+            if (Construction is AngleConstruction.D or
+                AngleConstruction.G or
+                AngleConstruction.CrystalBreak or
+                AngleConstruction.FillBreak or
+                AngleConstruction.F)
+            {
+                return AngleRoute.CrystalBreak;
+            }
+
+            return AngleRoute.Unknown;
+        }
+    }
+
+    /// <summary>
+    /// 收尾步（<see cref="AngleWorkStepKind.Target"/>）里的<b>目标列</b>，
+    /// 作为只含该列的 <see cref="ShapeDocument"/>。
+    ///
+    /// <para>
+    /// O-v2 §5 / §0.12.1 起 <c>Target</c> 步统一为「左柱 + 目标列 + 右柱」，
+    /// 目标列不一定是第 0 象限；验收统一用这个属性，不要再自己算中间列。
+    /// </para>
+    /// </summary>
+    public ShapeDocument? TargetColumnShape
+    {
+        get
+        {
+            AngleWorkStep? target = Steps.LastOrDefault(
+                step => step.Kind == AngleWorkStepKind.Target);
+
+            if (target?.Shape is null)
+            {
+                return null;
+            }
+
+            ShapeDocument shape = target.Shape;
+            var column = new ShapeDocument(
+                shape.LayerCount,
+                shape.PartCount);
+
+            for (int layer = 0; layer < shape.LayerCount; layer++)
+            {
+                column[layer, Column] = shape[layer, Column].Clone();
+            }
+
+            return column;
+        }
+    }
+
+    /// <summary>收尾步的目标列文本（<c>.</c> / <c>P</c> / <c>T</c> / <c>c</c>）。</summary>
+    public string? TargetColumnText
+    {
+        get
+        {
+            AngleWorkStep? target = Steps.LastOrDefault(
+                step => step.Kind == AngleWorkStepKind.Target);
+
+            return target?.Shape is null
+                ? null
+                : ShapeSignature.ColumnText(target.Shape, Column);
+        }
+    }
+
+    /// <summary>指标 M1–M7（docs/work-order-metrics.md）。</summary>
+    public AngleWorkOrderMetrics Metrics
+    {
+        get
+        {
+            int weakDrops = 0;
+            int pins = 0;
+            int cuts = 0;
+            int supportSwaps = 0;
+            int steps = 0;
+            int materials = 0;
+            int auxiliary = 0;
+
+            foreach (AngleWorkStep step in Steps)
+            {
+                switch (step.Kind)
+                {
+                    case AngleWorkStepKind.WeakDrop:
+                        weakDrops++;
+                        break;
+
+                    case AngleWorkStepKind.Pin:
+                        pins++;
+                        break;
+
+                    case AngleWorkStepKind.Cut:
+                        cuts++;
+                        break;
+
+                    case AngleWorkStepKind.Support:
+                        supportSwaps++;
+                        break;
+                }
+
+                if (step.Kind != AngleWorkStepKind.Note)
+                {
+                    steps++;
+                }
+            }
+
+            AngleWorkStep? preState = Steps.FirstOrDefault(
+                step => step.Kind == AngleWorkStepKind.PreState &&
+                        step.Shape is not null);
+
+            if (preState?.Shape is not null)
+            {
+                ShapeDocument shape = preState.Shape;
+
+                for (int layer = 0; layer < shape.LayerCount; layer++)
+                {
+                    for (int part = 0; part < shape.PartCount; part++)
+                    {
+                        if (shape[layer, part].Type != CellType.Empty)
+                        {
+                            materials++;
+                        }
+                    }
+                }
+
+                for (int part = 0; part < shape.PartCount; part++)
+                {
+                    if (part == Column)
+                    {
+                        continue;
+                    }
+
+                    for (int layer = 0; layer < shape.LayerCount; layer++)
+                    {
+                        if (shape[layer, part].Type != CellType.Empty)
+                        {
+                            auxiliary++;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            return new AngleWorkOrderMetrics(
+                weakDrops,
+                pins,
+                cuts,
+                auxiliary,
+                supportSwaps,
+                steps,
+                materials);
+        }
+    }
 
     /// <summary>
     /// 验收条件一（docs §6 第 1 条 / TODO.md §7.7）：
@@ -585,7 +829,30 @@ public static partial class AngleWorkOrderBuilder
         ShapeDocument target,
         int column,
         int cap,
-        bool enforceFiveConditions = true)
+        bool enforceFiveConditions = true,
+        bool preferCrystalBreak = true)
+    {
+        AngleWorkOrder order = BuildCore(
+            target,
+            column,
+            cap,
+            enforceFiveConditions,
+            preferCrystalBreak);
+
+        return FinalizeTargetShape(order, target, column, cap);
+    }
+
+    /// <summary>
+    /// <see cref="Build"/> 的主体：生成工序单（末步 <c>Target</c> 还是原始目标列）。
+    /// 收尾形态统一由 <see cref="FinalizeTargetShape"/> 在外层完成，
+    /// 这样核心 / 尾部拆分递归时拿到的是未包装的核心目标列。
+    /// </summary>
+    private static AngleWorkOrder BuildCore(
+        ShapeDocument target,
+        int column,
+        int cap,
+        bool enforceFiveConditions = true,
+        bool preferCrystalBreak = true)
     {
         if (target is null)
         {
@@ -701,12 +968,38 @@ public static partial class AngleWorkOrderBuilder
                 column,
                 cap,
                 kind,
-                enforceFiveConditions);
+                enforceFiveConditions,
+                preferCrystalBreak);
 
             if (tailOrder is not null)
             {
                 return ApplyIsolatedColumnRule(
                     tailOrder,
+                    target,
+                    column);
+            }
+        }
+
+        /*
+         * 三·补一、O-v2 碎晶路线（docs/angle-route-optimal-v2.md §2）：
+         * n = 4 的碎晶角<b>第一顺位</b>——正规核心 + 托柱 + 保险丝 + 一刀。
+         * 前态全部由扫描得出；回放失败才继续走顶针 / 算法 6 / 多刀。
+         */
+        if (parts == 4 && enforceFiveConditions && preferCrystalBreak)
+        {
+            AngleWorkOrder? crystalBreak = TryBuildCrystalBreakOrder(
+                target,
+                column,
+                cap,
+                kind);
+
+            if (crystalBreak is not null &&
+                crystalBreak.IsComplete &&
+                !HasCyclicPreState(crystalBreak, target) &&
+                !crystalBreak.HasIllegalPreState(out _, out _))
+            {
+                return ApplyIsolatedColumnRule(
+                    crystalBreak,
                     target,
                     column);
             }
@@ -912,6 +1205,144 @@ public static partial class AngleWorkOrderBuilder
         return AppendFailure(
             Label(legacy, algorithm, attempt: true),
             $"论文分档（{DescribeAlgorithm(algorithm)}）未覆盖：{tierReason}");
+    }
+
+    /// <summary>
+    /// 收尾形态统一（docs/angle-route-optimal-v2.md §5 / general §0.12.1）：
+    /// <c>Target = 左支撑柱 + 目标列 + 右支撑柱</c>。
+    ///
+    /// <para>
+    /// 两侧柱连续接地、覆盖目标现有高度（构造 C）。目标列在 <c>column</c> 象限，
+    /// 左柱取 <c>column−1</c>、右柱取 <c>column+1</c>（环形，所以 column = 0 时
+    /// 两侧是 n−1 与 1）。这样不再有手性，验收只看目标列。
+    /// </para>
+    /// <para>
+    /// 例外：n = 2（两侧是同一列，放不了两根柱）、半边工序（两列一起做，
+    /// 形态由 <see cref="AngleWorkOrder.Half"/> 负责）与孤立列（§14.4：托柱要拆掉，
+    /// 保持原行为）不受影响。
+    /// </para>
+    /// </summary>
+    private static AngleWorkOrder FinalizeTargetShape(
+        AngleWorkOrder order,
+        ShapeDocument target,
+        int column,
+        int cap)
+    {
+        if (!order.IsComplete ||
+            order.Half is not null ||
+            order.Construction == AngleConstruction.Half ||
+            target.PartCount <= 2)
+        {
+            return order;
+        }
+
+        // §14.4 孤立列：目标列自己能站住时，产物的原意就是「只有目标列」，
+        // 不能在这里重新加回两根支撑柱。
+        if (IsolatedColumn.IsIsolatedColumn(target, column) &&
+            !HasOtherColumn(target, column))
+        {
+            return order;
+        }
+
+        var steps = new List<AngleWorkStep>(order.Steps);
+
+        int targetIndex = steps.FindLastIndex(
+            step => step.Kind == AngleWorkStepKind.Target);
+
+        if (targetIndex < 0 || steps[targetIndex].Shape is null)
+        {
+            return order;
+        }
+
+        ShapeDocument? unified = BuildUnifiedTargetShape(
+            steps[targetIndex].Shape!,
+            column,
+            target.PartCount,
+            cap);
+
+        if (unified is null)
+        {
+            return order;
+        }
+
+        steps[targetIndex] = new AngleWorkStep(
+            steps[targetIndex].Title + "（左柱 + 目标列 + 右柱）",
+            unified,
+            AngleWorkStepKind.Target);
+
+        return order with { Steps = steps };
+    }
+
+    /// <summary>
+    /// 把一份「只有目标列」的收尾图包成「左柱 + 目标列 + 右柱」。
+    /// 两侧柱都是连续接地的满高普通格，高度 = 目标列现有高度。
+    /// </summary>
+    private static ShapeDocument? BuildUnifiedTargetShape(
+        ShapeDocument targetShape,
+        int column,
+        int parts,
+        int cap)
+    {
+        int layers = targetShape.LayerCount;
+
+        if (layers <= 0)
+        {
+            return null;
+        }
+
+        var unified = new ShapeDocument(layers, parts);
+
+        int height = 0;
+
+        for (int layer = 0; layer < layers; layer++)
+        {
+            unified[layer, column] = targetShape[layer, column].Clone();
+
+            if (targetShape[layer, column].Type != CellType.Empty)
+            {
+                height = layer + 1;
+            }
+        }
+
+        if (height == 0)
+        {
+            // 目标列全空：没有「覆盖目标高度」可谈，保持空图。
+            return unified;
+        }
+
+        int left = Wrap(column - 1, parts);
+        int right = Wrap(column + 1, parts);
+
+        if (left == column || right == column || left == right)
+        {
+            // n = 2 时两侧是同一列；n = 4 不会发生。
+            return null;
+        }
+
+        for (int layer = 0; layer < height; layer++)
+        {
+            if (unified[layer, left].Type == CellType.Empty)
+            {
+                unified[layer, left] = ShapeCell.Shape('C', 'u');
+            }
+
+            if (unified[layer, right].Type == CellType.Empty)
+            {
+                unified[layer, right] = ShapeCell.Shape('C', 'u');
+            }
+        }
+
+        // 两侧柱必须过五项条件、整体稳定（构造 C 的验收）。
+        if (!ShapeSignature.CheckColumn(
+                ShapeSignature.ColumnText(unified, left)).IsLegal ||
+            !ShapeSignature.CheckColumn(
+                ShapeSignature.ColumnText(unified, right)).IsLegal ||
+            !ShapeOps.IsStable(unified))
+        {
+            return null;
+        }
+
+        return unified;
     }
 
     /// <summary>
@@ -1464,7 +1895,8 @@ public static partial class AngleWorkOrderBuilder
         int column,
         int cap,
         AngleBuildKind kind,
-        bool enforceFiveConditions)
+        bool enforceFiveConditions,
+        bool preferCrystalBreak = true)
     {
         int highest = HighestCrystalLayerOfShape(target);
 
@@ -1496,11 +1928,12 @@ public static partial class AngleWorkOrderBuilder
             core[layer, column] = ShapeCell.Empty();
         }
 
-        AngleWorkOrder coreOrder = Build(
+        AngleWorkOrder coreOrder = BuildCore(
             core,
             column,
             cap,
-            enforceFiveConditions);
+            enforceFiveConditions,
+            preferCrystalBreak);
 
         if (coreOrder.IsComplete is false)
         {

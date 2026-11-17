@@ -68,10 +68,7 @@ internal static class FourStepAlgorithm6Tests
                 };
             }
 
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(
-                target,
-                0,
-                text.Length);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, text.Length, preferCrystalBreak: false);
 
             Assert.True(
                 order.IsComplete,
@@ -110,18 +107,14 @@ internal static class FourStepAlgorithm6Tests
                 }
             }
 
-            AngleWorkStep targetStep = order.Steps.Last(
-                step => step.Kind == AngleWorkStepKind.Target);
-
             Assert.True(
-                targetStep.Shape is not null &&
-                ShapeOps.Same(targetStep.Shape, target),
-                text + " 的末步没有逐格等于目标（文档前态 A = " +
+                AngleTestHelpers.TargetColumnMatches(order, target),
+                text + " 的末步目标列没有逐格等于目标（文档前态 A = " +
                 documentedA + "）");
 
             Assert.Equal(
                 text,
-                ShapeSignature.ColumnText(targetStep.Shape!, 0),
+                order.TargetColumnText,
                 text + " 的目标列短代码应逐格复现");
 
             completed++;

@@ -32,10 +32,7 @@ internal static class MultiCutHalfBreakTests
         foreach (string text in new[] { "cTT.T.ccc" })
         {
             ShapeDocument target = BuildColumn(text);
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(
-                target,
-                0,
-                text.Length);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, text.Length, preferCrystalBreak: false);
 
             Assert.True(order.IsComplete, text + " 应完成：" + (order.Note ?? "?"));
             Assert.Equal(AngleConstruction.D, order.Construction, text);
@@ -148,8 +145,8 @@ internal static class MultiCutHalfBreakTests
 
                     case AngleWorkStepKind.Target:
                         Assert.True(
-                            ShapeOps.Same(step.Shape, target),
-                            text + " 的末步应逐格等于目标");
+                            AngleTestHelpers.TargetColumnMatches(order, target),
+                            text + " 的末步目标列应逐格等于目标");
                         break;
                 }
             }
@@ -174,7 +171,8 @@ internal static class MultiCutHalfBreakTests
             AngleWorkOrder order = AngleWorkOrderBuilder.Build(
                 BuildColumn(text),
                 0,
-                text.Length);
+                text.Length,
+                preferCrystalBreak: false);
 
             Assert.True(order.IsComplete, text + " 应完成：" + (order.Note ?? "?"));
             Assert.Equal(AngleAlgorithm.Algorithm6, order.Algorithm, text);

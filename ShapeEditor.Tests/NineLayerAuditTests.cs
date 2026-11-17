@@ -72,7 +72,8 @@ internal static class NineLayerAuditTests
             AngleWorkOrder order = AngleWorkOrderBuilder.Build(
                 target,
                 0,
-                text.Length);
+                text.Length,
+                preferCrystalBreak: false);
 
             Assert.True(
                 order.IsComplete,
@@ -190,13 +191,9 @@ internal static class NineLayerAuditTests
             }
 
             // ⑥ 末步逐格等于目标。
-            AngleWorkStep? targetStep = order.Steps
-                .LastOrDefault(step => step.Kind == AngleWorkStepKind.Target);
-
             Assert.True(
-                targetStep?.Shape is not null &&
-                ShapeOps.Same(targetStep.Shape, target),
-                text + " 的末步没有逐格等于目标");
+                AngleTestHelpers.TargetColumnMatches(order, target),
+                text + " 的末步目标列没有逐格等于目标");
 
             Console.WriteLine(
                 $"  NINEGAP {text} ok algorithm={order.Algorithm} " +
@@ -303,8 +300,7 @@ internal static class NineLayerAuditTests
                 .LastOrDefault(step => step.Kind == AngleWorkStepKind.Target);
 
             if (order.Kind == AngleBuildKind.NeedsCrystalBreak &&
-                (targetStep?.Shape is null ||
-                 !ShapeOps.Same(targetStep.Shape, target)))
+                !AngleTestHelpers.TargetColumnMatches(order, target))
             {
                 falsePositives.Add(text + "：末步没有逐格等于目标");
             }

@@ -65,7 +65,7 @@ internal static class ConstructedHGeneralTests
                 }
 
                 ShapeDocument target = BuildColumn(text);
-                AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers);
+                AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers, preferCrystalBreak: false);
 
                 // N3：只取第一张图（初始前态），多刀中间态跳过。
                 AngleWorkStep? initial = order.Steps.FirstOrDefault(
@@ -153,7 +153,7 @@ internal static class ConstructedHGeneralTests
         foreach ((string text, string expectedA) in cases)
         {
             ShapeDocument target = BuildColumn(text);
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, text.Length);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, text.Length, preferCrystalBreak: false);
 
             Assert.True(order.IsComplete, order.Note ?? text + " 应可制作");
             Assert.Equal(AngleConstruction.H, order.Construction, text);
@@ -260,10 +260,7 @@ internal static class ConstructedHGeneralTests
                 continue;
             }
 
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(
-                target,
-                0,
-                text.Length);
+            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, text.Length, preferCrystalBreak: false);
 
             if (!order.IsComplete)
             {
@@ -296,13 +293,9 @@ internal static class ConstructedHGeneralTests
                 problems.Add(text + "：没有 Pin 步");
             }
 
-            AngleWorkStep? targetStep = order.Steps
-                .LastOrDefault(step => step.Kind == AngleWorkStepKind.Target);
-
-            if (targetStep?.Shape is null ||
-                !ShapeOps.Same(targetStep.Shape, target))
+            if (!AngleTestHelpers.TargetColumnMatches(order, target))
             {
-                problems.Add(text + "：末步没有逐格等于目标");
+                problems.Add(text + "：末步的目标列没有逐格等于目标");
             }
         }
 
@@ -349,7 +342,7 @@ internal static class ConstructedHGeneralTests
                 }
 
                 ShapeDocument target = BuildColumn(text);
-                AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers);
+                AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers, preferCrystalBreak: false);
 
                 if (!order.IsComplete ||
                     order.Construction != AngleConstruction.H)
@@ -385,14 +378,10 @@ internal static class ConstructedHGeneralTests
                     }
                 }
 
-                AngleWorkStep? targetStep = order.Steps
-                    .LastOrDefault(step => step.Kind == AngleWorkStepKind.Target);
-
-                if (targetStep?.Shape is null ||
-                    !ShapeOps.Same(targetStep.Shape, target))
-                {
-                    problems.Add(text + "：末步没有逐格等于目标");
-                }
+                if (!AngleTestHelpers.TargetColumnMatches(order, target))
+            {
+                problems.Add(text + "：末步的目标列没有逐格等于目标");
+            }
             }
 
             total += h;
@@ -412,7 +401,7 @@ internal static class ConstructedHGeneralTests
     private static void AssertP1Case(string text)
     {
         ShapeDocument target = BuildColumn(text);
-        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, text.Length);
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, text.Length, preferCrystalBreak: false);
 
         ShapeDocument preState = Step(
             order,

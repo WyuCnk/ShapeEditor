@@ -153,6 +153,8 @@ internal static class Probes
 
     private static void RunStats()
     {
+        bool compareOld =
+            Environment.GetEnvironmentVariable("SHAPE_PROBE_COMPARE") == "1";
         var alphabet = new[]
         {
             ShapeSignature.EmptyCode,
@@ -173,6 +175,27 @@ internal static class Probes
         var weakColumns = new List<string>();
         var weakOtherColumns = new List<string>();
         int peak = 0;
+
+        // O-v2：路线占比与 M1–M7 新旧对比。
+        var routes = new Dictionary<AngleRoute, int>();
+        var oldRoutes = new Dictionary<AngleRoute, int>();
+        int routeTotal = 0;
+        int oldRouteTotal = 0;
+        int simpleColumns = 0;
+        var newSums = new long[7];
+        var oldSums = new long[7];
+        int weakColumnsTotal = 0;
+        int oldWeakColumnsTotal = 0;
+        int multiCutTotal = 0;
+        int newWorseM1 = 0;
+        int lexBetter = 0;
+        int lexWorse = 0;
+        int lexEqual = 0;
+        long newTotalMs = 0;
+        long oldTotalMs = 0;
+        double newBuildMs = 0;
+        double oldBuildMs = 0;
+        int compared = 0;
 
         foreach (string column in Residual47)
         {
@@ -218,7 +241,11 @@ internal static class Probes
 
                 total[layers]++;
 
+                var newWatch = Stopwatch.StartNew();
                 AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers);
+                newWatch.Stop();
+                newTotalMs += newWatch.ElapsedMilliseconds;
+                newBuildMs += newWatch.Elapsed.TotalMilliseconds;
 
                 if (!order.IsComplete)
                 {
@@ -227,6 +254,102 @@ internal static class Probes
                 }
 
                 success[layers]++;
+
+                AngleWorkOrderMetrics metrics = order.Metrics;
+
+                if (order.Kind == AngleBuildKind.NeedsCrystalBreak)
+                {
+                    routes[order.EffectiveRoute] =
+                        routes.TryGetValue(order.EffectiveRoute, out int routeCount)
+                            ? routeCount + 1
+                            : 1;
+
+                    routeTotal++;
+                }
+                else
+                {
+                    simpleColumns++;
+                }
+
+                for (int index = 0; index < 7; index++)
+                {
+                    newSums[index] += metrics.ToVector()[index];
+                }
+
+                if (metrics.WeakDrops > 0)
+                {
+                    weakColumnsTotal++;
+                }
+
+                if (metrics.Cuts > 1)
+                {
+                    multiCutTotal++;
+                }
+
+                // 旧路线（preferCrystalBreak = false）只用于 M1–M7 对比；
+                // 设置 SHAPE_PROBE_COMPARE=1 才跑，避免默认统计把耗时翻倍。
+                if (compareOld)
+                {
+                var oldWatch = Stopwatch.StartNew();
+                AngleWorkOrder oldOrder = AngleWorkOrderBuilder.Build(
+                    target,
+                    0,
+                    layers,
+                    enforceFiveConditions: true,
+                    preferCrystalBreak: false);
+                oldWatch.Stop();
+                oldTotalMs += oldWatch.ElapsedMilliseconds;
+                oldBuildMs += oldWatch.Elapsed.TotalMilliseconds;
+
+                if (oldOrder.IsComplete)
+                {
+                    AngleWorkOrderMetrics oldMetrics = oldOrder.Metrics;
+
+                    if (oldOrder.Kind == AngleBuildKind.NeedsCrystalBreak)
+                    {
+                        oldRoutes[oldOrder.EffectiveRoute] =
+                            oldRoutes.TryGetValue(
+                                oldOrder.EffectiveRoute,
+                                out int oldRouteCount)
+                                ? oldRouteCount + 1
+                                : 1;
+
+                        oldRouteTotal++;
+                    }
+
+                    for (int index = 0; index < 7; index++)
+                    {
+                        oldSums[index] += oldMetrics.ToVector()[index];
+                    }
+
+                    if (metrics.WeakDrops > oldMetrics.WeakDrops)
+                    {
+                        newWorseM1++;
+                    }
+
+                    if (oldMetrics.WeakDrops > 0)
+                    {
+                        oldWeakColumnsTotal++;
+                    }
+
+                    int first = FirstDifference(metrics, oldMetrics);
+
+                    if (first < 0)
+                    {
+                        lexEqual++;
+                    }
+                    else if (metrics.ToVector()[first] < oldMetrics.ToVector()[first])
+                    {
+                        lexBetter++;
+                    }
+                    else
+                    {
+                        lexWorse++;
+                    }
+
+                    compared++;
+                }
+                }
 
                 int weakDrops = order.Steps.Count(
                     step => step.Kind == AngleWorkStepKind.WeakDrop);
@@ -285,6 +408,61 @@ internal static class Probes
         Console.WriteLine("STATS failures=" + failures.Count);
         Console.WriteLine("STATS peakWeakPerColumn=" + peak);
 
+        int successTotal = success.Values.Sum();
+
+        Console.WriteLine(
+            "OV2 routes (NeedsCrystalBreak=" + routeTotal +
+            " simple=" + simpleColumns + ") " +
+            string.Join(
+                " ",
+                routes.OrderByDescending(pair => pair.Value)
+                      .Select(pair =>
+                          pair.Key + "=" + pair.Value +
+                          "(" + (100.0 * pair.Value / Math.Max(1, routeTotal))
+                              .ToString("F2") + "%)")));
+
+        Console.WriteLine(
+            "OV2 oldRoutes (NeedsCrystalBreak=" + oldRouteTotal + ") " +
+            string.Join(
+                " ",
+                oldRoutes.OrderByDescending(pair => pair.Value)
+                         .Select(pair =>
+                             pair.Key + "=" + pair.Value +
+                             "(" + (100.0 * pair.Value / Math.Max(1, oldRouteTotal))
+                                 .ToString("F2") + "%)")));
+
+        Console.WriteLine(
+            "OV2 weakColumns=" + weakColumnsTotal +
+            " oldWeakColumns=" + oldWeakColumnsTotal +
+            " multiCutColumns=" + multiCutTotal +
+            " compared=" + compared +
+            " newWorseM1=" + newWorseM1 +
+            " lexBetter=" + lexBetter +
+            " lexEqual=" + lexEqual +
+            " lexWorse=" + lexWorse);
+
+        string[] names = { "M1", "M2", "M3", "M4", "M5", "M6", "M7" };
+
+        Console.WriteLine(
+            "OV2 metrics newAvg=" +
+            string.Join(
+                " ",
+                Enumerable.Range(0, 7).Select(index =>
+                    names[index] + "=" +
+                    (newSums[index] / (double)Math.Max(1, successTotal))
+                        .ToString("F2"))) +
+            " oldAvg=" +
+            string.Join(
+                " ",
+                Enumerable.Range(0, 7).Select(index =>
+                    names[index] + "=" +
+                    (oldSums[index] / (double)Math.Max(1, compared))
+                        .ToString("F2"))));
+
+        Console.WriteLine(
+            $"OV2 timing newMs={newTotalMs} oldMs={oldTotalMs} " +
+            $"newBuildMs={newBuildMs:F1} oldBuildMs={oldBuildMs:F1}");
+
         if (weakOtherColumns.Count > 0)
         {
             Console.WriteLine(
@@ -308,6 +486,25 @@ internal static class Probes
     private static string Env(string name)
     {
         return Environment.GetEnvironmentVariable(name) ?? string.Empty;
+    }
+
+    /// <summary>M1→M7 字典序：返回第一个不同的下标；全相同返回 -1。</summary>
+    private static int FirstDifference(
+        AngleWorkOrderMetrics left,
+        AngleWorkOrderMetrics right)
+    {
+        IReadOnlyList<int> a = left.ToVector();
+        IReadOnlyList<int> b = right.ToVector();
+
+        for (int index = 0; index < a.Count; index++)
+        {
+            if (a[index] != b[index])
+            {
+                return index;
+            }
+        }
+
+        return -1;
     }
 
     private static ShapeDocument BuildCorner(
