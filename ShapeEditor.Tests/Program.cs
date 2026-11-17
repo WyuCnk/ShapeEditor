@@ -20,6 +20,15 @@ internal static class Program
         }
 
         /*
+         * 导出入口（不是测试项）：把 3–9 层的四份列清单写进 docs/handoff/lists/。
+         * 只有设置 SHAPE_EXPORT_LISTS=1 时才会进入，只跑导出、不跑断言。
+         */
+        if (Environment.GetEnvironmentVariable("SHAPE_EXPORT_LISTS") == "1")
+        {
+            return ExportLists.Run();
+        }
+
+        /*
          * 逐格诊断入口（不是测试项）：构造 H 前态回放 / 单列路线 / 弱落统计。
          * 只有设置 SHAPE_PROBE_MODE 时才会进入。
          */
