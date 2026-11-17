@@ -1793,3 +1793,140 @@ T.T.cccTc  A=.TTcccTc.  B=TcTTTTTTT  E=ccccccccc  N=TPPTTTTTT
    三例实测 Exchange 次数 = K−1（1 / 2 / 1）。
 6. §15.5（第 810–818 行）：第 3 条「每一轮 P1」需要改成「初始前态 P1 +
    每轮稳定」；第 5 条「块数就是刀数」已由三例验证（2/3/2）。
+
+### 7.22 路由短路 + 「N 连续针段」族 + 弱落五项写法（2026-11-17，第三轮）
+
+任务书：`docs/prompt-for-main-agent.md`；规格：`docs/angle-work-order-general-algorithm.md`
+§0.3.1 / §0.4 / §0.9 / §0.11；数据：`docs/residual-47-weakdrop.md`。
+
+#### 改动 1：路由短路（`t[1]=='T'` 不试构造 H）
+
+- `BuildLegacy` 的 `TryBuildH` 调用前先判 `target[0, column].Type == Shape`；
+  是普通格 ⇒ 直接构造一份「跳过构造 H」的未完成单，走多轮构造 G，日志改成
+  「目标第 1 层是普通格（d = 1），构造 H 已按改动 1 短路」。
+- `TryBuildAlgorithm6` 的优先级 ① 同样先判；`t[1]=='T'` 直接进 ③ 弱落。
+- 新增 `AngleWorkOrderDiagnostics`：`ConstructHAttempts` /
+  `ConstructHOnSolidFirstLayer` 两个计数器，回归测试断言后者恒为 0
+  （3–6 层 640 个 `t[1]=='T'` 的 S 列，实测 0 次）。
+- 「构造 H（一次顶针）也未通过」的日志不再出现在 `t[1]=='T'` 的列上。
+
+#### 改动 2：「N 连续针段」族的一次顶针（新文件 `AngleWorkOrderPinFamily.cs`）
+
+结构谓词（不打表）：`D ✔`、目标第 1 层为空、晶体距顶 ≤ 3（按目标列最后一个非空层算，
+不是 cap 顶，否则 9 层审计里被补的尾空层会误判）、最低晶体下方空层 ≥ 1。
+
+```
+A = 最低晶体及以上下移一格；最低晶体正下方是材料时边界外扩到连续普通块；
+    再按 P1 把晶体正下方补成普通格（下方最近的普通格抬上去）
+B = 第 1 层放晶体，其余普通格到 BTop；深落差（s−d ≥ 2）在源层下一层 s−1 再补一颗晶体桥
+E = 满高纯晶体柱
+N = 第 2 层起连续放针，到 max(I) 为止（枚数 = max(I) − 1）；其余普通格到 NTop
+```
+
+- `BTop = max(max(I), 最高源层 − 1, 最高晶体层 − 2)`；有深落差时再扩到
+  `max(…, 最高源层, 最高晶体层 − 1)`。这个读法**逐格复现任务书表格**：
+  `.TT.c → .TTc. | cTT.. | ccccc | TPPT.`、
+  `.T.T.c → .T.Tc. | cTTT.. | cccccc | TPPPT.`、
+  `.TTT.c → .TTTc. | cTTT.. | cccccc | TPPPT.`、
+  `.TT.Tc → .TTTc. | cTTT.. | cccccc | TPPTT.`。
+- `NTop = max(最高源层, 最高原生晶体层 − 1)`，与 §0.3 一致。
+- 采用前必须通过：五项条件 / 前态稳定 / P1 / 交换链或 Q1 子配方 / 真实 `Pin` 逐格回放。
+  回放不过返回 null，由 ①-b / ② / ③ / ④ 接手，**不特判**。
+
+#### 改动 3：策略优先级（`TryBuildAlgorithm6`）
+
+```
+① 构造 H 一次顶针：①-a 「N 连续针段」族 → ①-b §0.11 九步通用构造 H
+② 构造 G / 构造 D 碎晶（≤ 2 刀）——本次实测 0 例从 ① 落到 ②
+③ 算法 6 四步（底块提升 + 弱落）
+④ §15 多刀（K 驱动）
+```
+
+`D ✔` 不再直接决定走算法 6；`t[1]=='T'` 时跳过 ①②，直接进 ③。
+
+#### 改动 4：弱落工序五项写法
+
+`AngleWorkOrderAlgorithm6.cs` 新增 `DescribeWeakDropStep` / `DescribeSupportOf` /
+`WeakDropMove`。每个 `WeakDrop` 步的 `Title` 现在写全：
+
+```
+[PreState] A 当前形态；辅助列 S′（连续接地，仅源层为针，其余普通格）
+[Support]  撤掉原托柱（只剩 A 与 S′）
+[Collapse] 第 s 层普通格（该格上方没有连续针段）落到第 s′ 层，
+           落在第 (s′−1) 层的<普通格/晶体/顶针/地面>之上，跨 k 层
+[Support]  装回满高托柱
+[PreState] 拆掉 S′，得到 …
+```
+
+同一块里有多枚普通格时，`[Collapse]` 逐格列出；`S′` 的针层写成「第 s1、s2 层」
+（比 §0.9.2 的单层模板多列几个针位，信息只增不减）。
+
+#### 实测数字（3–9 层全部 S 列，字母表 `. T P c`，4 象限）
+
+| 层数 | S 列 | 成功 | 失败 | 含弱落 | 其中 `t[1]=='T'` | `t[1]≠T` 仍弱落 | 多刀 |
+|---|---|---|---|---|---|---|---|
+| 3 | 47 | 47 | 0 | 0 | 0 | 0 | 0 |
+| 4 | 152 | 152 | 0 | 1 | 1 | 0 | 0 |
+| 5 | 476 | 476 | 0 | 8 | 8 | 0 | 0 |
+| 6 | 1450 | 1450 | 0 | 40 | 40 | 0 | 0 |
+| 7 | 4320 | 4320 | 0 | 161 | 161 | 0 | 1 |
+| 8 | 12646 | 12646 | 0 | 574 | 574 | 0 | 9 |
+| 9 | 36508 | 36508 | 0 | 1901 | 1900 | **1**（`.TT.cTT.c`） | 54 |
+
+- 3–7 层含弱落从 **257 → 210**：减少的 47 列正是 `residual-47-weakdrop.md` 的清单，
+  现在**全部 47 列一次顶针**（`RESIDUAL47 complete=47 onePin=47 weak=0`）。
+- 唯一残留的非 `t[1]=='T'` 弱落是 9 层 `.TT.cTT.c`：它的通道 `I` 是两段互不相连的
+  `{2,3}` 与 `{7}`，「从 L2 起连续」的针段规则不适用；如实保留弱落（不硬删）。
+- 47 列的 D/F 实测：**D 全真（47/47）**；F 真 40、假 7
+  （`.T.T.c`、`.T..T.c`、`.T.T..c`、`.T.T.c.`、`.T.T.cc`、`.T.T.cP`、`.T.T.cT`）。
+  与 `residual-47-weakdrop.md` §3 一致，§2.3 的「47 列 D ✘」是旧说法。
+
+#### 测试与审计
+
+| 项 | 结果 |
+|---|---|
+| 全量测试 | **179/179** 通过（175 项原有 + 4 项新增；2 项 XFAIL claw / 二择不变），88.9 s（基线 89.8 s） |
+| 新增 | `「N 连续针段」四个回归前态`、`构造 H 路由短路（t[1]=T 不试 H）`、`弱落工序五项写法`、`残余 47 列改走一次顶针` |
+| `AUDIT` | `total=5440 legal=2126 s=2125 success=2125 legalNonS=1 failures=0 falsePositives=0 worst=0.88ms` |
+| `LAYERAUDIT` | 7 层 `s=4320 success=4320`；8 层 `s=12646 success=12646`；0 失败 0 假阳性 |
+| `NINEAUDIT` | `s=36508 success=36508 failures=0 falsePositives=0 fillBreak=0` |
+| `TIGHT` / `HOLES` | `onlyAux=0 both=0`；`targetHoleNoSub=0` |
+| `FILLBREAK` / `COLLAPSE` | `n=0`；`steps=0` |
+| `P1AUDIT` / `P1ALL` | `violations=0`；`violations=0` |
+| `Q1AUDIT` | `hOrders=974 r1=10 holed=532 found=532 missing=0 invalid=0` |
+| `HALFAUDIT` | `halfComplete=6 problems=0` |
+| `CONSTR`（≤6） | `A=1087 C=597 D=206 G=6 H=229`（未变） |
+
+**因行为改变更新的断言（原因）**：
+
+1. `Algorithm6BuildsDotDotTcFromTower`：`.T.T.c` 是改动 2 的回归列，
+   步骤链从 `PreState→WeakDrop→Pin→Note→Target` 改为 `PreState→Pin→Note→Target`，
+   `pre = .T.Tc.`、`B=cTTT..`、`N=TPPPT.`；Q1 子配方仍要求存在。
+2. `ConstructedHPaperTests.GeneralSolutionMatchesDocs`：`.T..T..c` 现在由 ①-b 的
+   §0.11 九步构造 H 完成，A 是 §13.6 的 `A=.TcccTc.`、`B=cTTTcT..`、`N=TPTTTPT.`
+   （不再是 §0.4 四步的 `A=..T..Tc.`）。
+
+#### 发现的规则矛盾（不自行取舍，按任务书裁决执行）
+
+1. **「N 枚数 = 要下降的普通格个数 + 1」与四个回归表不符**：
+   `.TT.c` 有 2 枚要下降的普通格，公式给 3 枚针，但文档表 `N=TPPT.` 只有 2 枚。
+   实现取「针段 = 第 2 层到 max(I)」，与四行表逐格一致。
+2. **B 的 BTop 在文档表内部不自洽**：`.TT.c` 的 `BTop=3`、`.TT.Tc` 的 `BTop=4`，
+   而两列的 `max(I)=3`、最高源层 `=4` 完全相同。实现用
+   `max(max(I), 最高源层−1, 最高晶体层−2)`（深落差再扩一格），四行表全部复现。
+3. **§0.11.5 的撤回声明与实测相反**：用文档自己给的前态
+   `A=.TTc. / B=cTT.. / E=ccccc / N=TPPT.` 真实 `Pin` 得到 `.TT.c`（逐格相等），
+   所以「`.TT.c` 的一次顶针说法已被反证」不成立；本次四个回归全部实测通过。
+4. **`residual-47-weakdrop.md` §2.3 的 `D ✘` 与 §3 的 `D` 全真冲突**：
+   以 `PillarSCriterion.BottomResourceD` 实测为准，47/47 为真。
+
+#### docs 待更新（不要改 `docs/`；行号按当前 `angle-work-order-general-algorithm.md`）
+
+1. §0.3.1：`N` 的枚数改为「第 2 层到 max(I)」，`BTop` 改为
+   `max(max(I), 最高源层−1, 最高晶体层−2)`（深落差再扩到最高晶体层−1）。
+2. §0.11.5：撤回「`.TT.c` 一次顶针被反证」的说法；四个回归前态已逐格回放通过。
+3. §0.11.6：累计表里 `t[1]='.'` 的 47 列弱落已归零（3–7 层含弱落 257 → 210）。
+4. §0.9.2：补「多枚普通格同一块弱落时，`[Collapse]` 逐格列出、`S′` 可有多枚针」。
+5. `residual-47-weakdrop.md` §2.3 / §3.1：47 列已全部找到一次顶针前态
+   （`.TT...c` 族需要「源层下一层的晶体桥」），§7.2 的「N 连续针段长度怎么定」
+   已有规则：到 max(I)。

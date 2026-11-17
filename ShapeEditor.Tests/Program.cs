@@ -20,6 +20,15 @@ internal static class Program
         }
 
         /*
+         * 逐格诊断入口（不是测试项）：构造 H 前态回放 / 单列路线 / 弱落统计。
+         * 只有设置 SHAPE_PROBE_MODE 时才会进入。
+         */
+        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("SHAPE_PROBE_MODE")))
+        {
+            return Probes.Run();
+        }
+
+        /*
          * 诊断入口（不是测试项）：两段开关的失败清单与 7 步中间值。
          * 不设置 SHAPE_TWO_STAGE_AUDIT 时行为与以前完全一致。
          */
@@ -206,6 +215,12 @@ internal static class Program
             ("角工序:构造 G 的 G5/G8/G8a", AuxiliaryColumnRulesTests.ConstructGFollowsG5G8AndG8a),
             ("角工序:整图 Hc 取法（§5.3）", AuxiliaryColumnRulesTests.TailBoundaryUsesWholeShapeHc),
             ("角工序:孤立列产物规则（§14.4）", AuxiliaryColumnRulesTests.IsolatedColumnDowngradeRule),
+
+            // 2026-11-17 第三轮：路由短路、N 连续针段族、弱落五项写法。
+            ("角工序:「N 连续针段」四个回归前态", PinFamilyRegressionTests.FourRegressionsReplay),
+            ("角工序:构造 H 路由短路（t[1]=T 不试 H）", PinFamilyRegressionTests.RouteShortCircuitSkipsConstructH),
+            ("角工序:弱落工序五项写法", PinFamilyRegressionTests.WeakDropStepsWriteFiveParts),
+            ("角工序:残余 47 列改走一次顶针", PinFamilyRegressionTests.Residual47ColumnsUseOnePin),
             ("角工序:n=4 ≤6 层穷举审计", AngleAuditTests.ExhaustiveFourQuadrantAudit),
             ("角工序:7–8 层穷举审计", AngleAuditTests.ExhaustiveSevenEightLayerAudit),
             ("角工序:9 层两个缺口（底块提升 H）", NineLayerAuditTests.TwoNineLayerGapsUseLiftedConstructedH),

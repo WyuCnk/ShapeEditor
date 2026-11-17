@@ -2261,9 +2261,10 @@ internal static class AngleWorkOrderTests
             "顶针(X) 第 1 列应逐格等于 .T.T.c");
 
         /*
-         * 生成器一侧（§0.4 论文四步）：`.T.T.c` 现在走
-         * 底块提升 → 正规化 + M → 低一层 → 提前弱落 → 构造 H 顶针 → 逐块弱落。
-         * 它的最后一块最低格由 e 放回第 2 层，所以没有额外的整块弱落步。
+         * 生成器一侧（2026-11-17 第三轮改动 2 / 改动 3）：`.T.T.c` 是
+         * 「N 连续针段」族的四个回归之一，现在由 ① 构造 H 一次顶针完成：
+         * A = .T.Tc.、B = cTTT..、E = 满高纯晶体柱、N = TPPPT.，
+         * 一次 Pin 直接回到目标，不再有弱落步。
          */
         ShapeDocument target = FromColumns(4, cap, (0, text));
 
@@ -2278,7 +2279,6 @@ internal static class AngleWorkOrderTests
         AssertStepKinds(
             order,
             AngleWorkStepKind.PreState,
-            AngleWorkStepKind.WeakDrop,
             AngleWorkStepKind.Pin,
             AngleWorkStepKind.Note,
             AngleWorkStepKind.Target);
@@ -2287,9 +2287,11 @@ internal static class AngleWorkOrderTests
         Assert.Equal(
             1,
             order.Steps.Count(step => step.Kind == AngleWorkStepKind.Pin));
+        Assert.Equal(
+            0,
+            order.Steps.Count(step => step.Kind == AngleWorkStepKind.WeakDrop));
 
         ShapeDocument pre = order.Steps[0].Shape!;
-        ShapeDocument pinInput = order.Steps[1].Shape!;
         ShapeDocument pinned = Step(order, AngleWorkStepKind.Pin).Shape!;
 
         // 前态每列合法、稳定；四列布局 A | B | E | N。
@@ -2303,6 +2305,9 @@ internal static class AngleWorkOrderTests
         Assert.Equal(3, order.AuxiliaryColumns[0]);
         Assert.Equal(1, order.AuxiliaryColumns[1]);
         Assert.Equal(2, order.AuxiliaryColumns[2]);
+        Assert.Equal(".T.Tc.", ShapeSignature.ColumnText(pre, 0));
+        Assert.Equal("cTTT..", ShapeSignature.ColumnText(pre, 1));
+        Assert.Equal("TPPPT.", ShapeSignature.ColumnText(pre, 3));
         Assert.True(
             ShapeSignature.ColumnText(pre, 2)
                 .All(code => code == ShapeSignature.CrystalCode),
@@ -2332,7 +2337,7 @@ internal static class AngleWorkOrderTests
 
         // Pin 步等于真实顶针；顶针后目标列逐格等于目标。
         Assert.True(
-            ShapeOps.Same(ShapePhysics.Pin(pinInput).Document, pinned),
+            ShapeOps.Same(ShapePhysics.Pin(pre).Document, pinned),
             "Pin 步快照应等于真实顶针结果");
         AssertColumnCells(pinned, 0, text);
         Assert.Equal(

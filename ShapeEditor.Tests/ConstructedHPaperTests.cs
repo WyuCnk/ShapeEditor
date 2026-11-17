@@ -19,13 +19,16 @@ internal static class ConstructedHPaperTests
     };
 
     /// <summary>
-    /// docs §0.4：目标 <c>.T..T..c</c>（8 层）的论文四步输出逐列等于
-    /// <c>A=..T..Tc.</c>、<c>B=ccT.....</c>、<c>E=cccccccc</c>、<c>N=TTPTTTT.</c>，
-    /// 先执行提前弱落，再顶针一次得到目标列。
+    /// docs §0.8 的 <c>.T..T..c</c>（8 层）：走「构造 H 一次顶针」，
+    /// 前态逐列等于 <c>A=.TcccTc.</c>、<c>B=cTTTcT..</c>、<c>E=cccccccc</c>、
+    /// <c>N=TPTTTPT.</c>，一次 Pin 后目标列逐格等于目标。
     ///
     /// <para>
-    /// <b>期望更新的原因</b>：算法 6 已从 §13.6 七步改成 §0.4 论文四步，
-    /// A 是正规列 v 整体低一层，B/E/N 只按本次下降表 M−提前+e 生成。
+    /// <b>期望更新的原因（2026-11-17 第三轮改动 3）</b>：策略优先级改成
+    /// ① 构造 H 一次顶针 → ② 构造 G/D 碎晶 → ③ 算法 6 四步 → ④ 多刀 之后，
+    /// <c>.T..T..c</c> 由 ① 的 §0.11 九步构造 H 直接完成（A 是 §13.6 七步的
+    /// 深间隙抬升形态 <c>.TcccTc.</c>），不再落到 ③ 的 §0.4 论文四步。
+    /// 于是不必先执行「提前弱落」再顶针：一次 Pin 就得到目标。
     /// </para>
     /// </summary>
     public static void GeneralSolutionMatchesDocs()
@@ -48,11 +51,11 @@ internal static class ConstructedHPaperTests
 
         ShapeDocument preState = preStateStep.Shape!;
 
-        // §0.4 四步：四列逐列一致（A | B | E | N）。
-        Assert.Equal("..T..Tc.", ShapeSignature.ColumnText(preState, 0));
-        Assert.Equal("ccT.....", ShapeSignature.ColumnText(preState, 1));
+        // 一次顶针前态：四列逐列一致（A | B | E | N）。
+        Assert.Equal(".TcccTc.", ShapeSignature.ColumnText(preState, 0));
+        Assert.Equal("cTTTcT..", ShapeSignature.ColumnText(preState, 1));
         Assert.Equal("cccccccc", ShapeSignature.ColumnText(preState, 2));
-        Assert.Equal("TTPTTTT.", ShapeSignature.ColumnText(preState, 3));
+        Assert.Equal("TPTTTPT.", ShapeSignature.ColumnText(preState, 3));
 
         // 稳定、四列合法、前态目标列 ≠ 目标。
         Assert.True(ShapeOps.IsStable(preState), "§0.4 的前态应稳定");
@@ -61,12 +64,12 @@ internal static class ConstructedHPaperTests
             "前态第 " + (badColumn + 1) + " 象限不过五项条件");
         Assert.NotEqual(text, ShapeSignature.ColumnText(preState, 0));
 
-        // §0.4：四步的中间值仍要在 Limitations 里如实写出（可回查）。
+        // 一次顶针的中间值仍要在 Limitations 里如实写出（可回查）。
         string limitations = string.Join("\n", order.Limitations);
 
         Assert.True(
-            limitations.Contains("算法 6（§0.4 论文四步）", StringComparison.Ordinal),
-            "Limitations 应写明 §0.4 论文四步：" + limitations);
+            limitations.Contains("构造 H（§13.6 七步", StringComparison.Ordinal),
+            "Limitations 应写明 §0.11 九步 / §13.6 七步的构造 H：" + limitations);
 
         // 提前弱落 → 一次真实顶针，目标列逐格等于目标。
         AngleWorkStep pinStep = order.Steps.First(
@@ -98,7 +101,7 @@ internal static class ConstructedHPaperTests
             AllColumnsTight(q1Start),
             "Q1 子配方的起点必须全是紧列（§5.1 / §6 第 7 条）");
         Assert.Equal(
-            "..T..Tc.",
+            ".TcccTc.",
             ShapeSignature.ColumnText(order.Q1SubRecipe.Shape, 0),
             "半破后的 Q1 应等于前态 A");
         Assert.True(

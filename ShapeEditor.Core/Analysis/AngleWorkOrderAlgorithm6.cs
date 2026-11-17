@@ -122,6 +122,107 @@ public static partial class AngleWorkOrderBuilder
             : "{" + string.Join("、", descents.Select(FormatDescent)) + "}";
     }
 
+    /// <summary>一次弱落里的一格：从 <see cref="From"/> 层落到 <see cref="To"/> 层。</summary>
+    private sealed record WeakDropMove(int From, int To, string Support);
+
+    /// <summary>
+    /// 弱落落点下方的支撑材料（施工后的形态里最近的一枚非空格）：
+    /// 例如「第 2 层的普通格」；落到地面时写「地面」。
+    /// </summary>
+    private static string DescribeSupportOf(
+        ShapeDocument document,
+        int column,
+        int landing)
+    {
+        for (int layer = landing - 1; layer >= 1; layer--)
+        {
+            ShapeCell cell = document[layer - 1, column];
+
+            if (cell.Type == CellType.Empty)
+            {
+                continue;
+            }
+
+            string material = cell.Type switch
+            {
+                CellType.Shape => "普通格",
+                CellType.Crystal => "晶体",
+                CellType.Pin => "顶针",
+                _ => "材料"
+            };
+
+            return "第 " + layer + " 层的" + material;
+        }
+
+        return "地面";
+    }
+
+    /// <summary>
+    /// §0.9.2 的弱落工序写法：五项必须写全（PreState / Support / Collapse / Support / PreState），
+    /// 并写明「哪一格、落在哪一层的什么材料之上、跨了几层」。
+    ///
+    /// <para>
+    /// 辅助列 <c>S′</c> 按 §0.9.1 给出：连续接地、仅在源层为针、其余普通格
+    /// （本列 A 无针，所以源格上方没有随落的连续针段，标题里如实写明）。
+    /// </para>
+    /// </summary>
+    private static string DescribeWeakDropStep(
+        string phase,
+        string beforeText,
+        IReadOnlyList<WeakDropMove> moves,
+        int layers,
+        string afterText)
+    {
+        var pinLayers = moves
+            .Select(move => move.From)
+            .Distinct()
+            .Order()
+            .ToList();
+
+        var supportColumn = new char[layers];
+
+        Array.Fill(supportColumn, ShapeSignature.SolidCode);
+
+        foreach (int layer in pinLayers)
+        {
+            if (layer >= 1 && layer <= layers)
+            {
+                supportColumn[layer - 1] = ShapeSignature.PinCode;
+            }
+        }
+
+        var builder = new System.Text.StringBuilder();
+
+        builder.Append("弱落（构造 E）：").Append(phase).Append("。");
+        builder.Append("[PreState] A 列当前形态 = ").Append(beforeText);
+        builder.Append("；辅助列 S′ = ").Append(new string(supportColumn));
+        builder.Append("（连续接地，仅第 ").Append(string.Join("、", pinLayers));
+        builder.Append(" 层为针，其余普通格）；");
+        builder.Append("[Support] 撤掉原托柱（此时只剩 A 与 S′）；");
+        builder.Append("[Collapse] ");
+
+        for (int index = 0; index < moves.Count; index++)
+        {
+            WeakDropMove move = moves[index];
+
+            if (index > 0)
+            {
+                builder.Append("；");
+            }
+
+            builder.Append("第 ").Append(move.From).Append(" 层的普通格");
+            builder.Append("（该格上方没有连续针段）落到第 ").Append(move.To);
+            builder.Append(" 层，落在").Append(move.Support).Append("之上，跨 ");
+            builder.Append(move.From - move.To).Append(" 层");
+        }
+
+        builder.Append("；");
+        builder.Append("[Support] 装回满高托柱；");
+        builder.Append("[PreState] 拆掉 S′，得到 ").Append(afterText).Append("。");
+
+        return builder.ToString();
+    }
+
     /// <summary>
     /// 算法 6 的论文四步入口。返回 null 表示四步做不出来（由调用方决定
     /// 是否降级到 §15 多刀）；<paramref name="trace"/> 始终给出中间值。
@@ -736,7 +837,8 @@ public static partial class AngleWorkOrderBuilder
             var ordered = lift.CellIds
                 .OrderBy(id => liftedPositions[id])
                 .ToList();
-            var moved = new List<string>();
+            var moves = new List<WeakDropMove>();
+            string beforeText = ShapeSignature.ColumnText(current, column);
 
             foreach (int id in ordered)
             {
@@ -816,14 +918,18 @@ public static partial class AngleWorkOrderBuilder
                 current[from - 1, column] = ShapeCell.Empty();
                 current[to - 1, column] = cell;
                 liftedPositions[id] = to;
-                moved.Add($"{from}→{to}");
+                moves.Add(new WeakDropMove(from, to, DescribeSupportOf(current, column, to)));
             }
 
-            if (moved.Count > 0)
+            if (moves.Count > 0)
             {
                 weakSteps.Add(new AngleWorkStep(
-                    "弱落（构造 E）：恢复第 " + (index + 1) + " 次底块提升，" +
-                    "第 " + string.Join("、", moved) + " 层",
+                    DescribeWeakDropStep(
+                        "恢复第 " + (index + 1) + " 次底块提升",
+                        beforeText,
+                        moves,
+                        layers,
+                        ShapeSignature.ColumnText(current, column)),
                     current.Clone(),
                     AngleWorkStepKind.WeakDrop));
             }
@@ -866,10 +972,22 @@ public static partial class AngleWorkOrderBuilder
 
         if (early is not null)
         {
+            int earlyFrom = early.S - 1;
+            int earlyTo = early.D - 1;
+
             steps.Add(new AngleWorkStep(
-                "提前弱落（构造 E）：把第 " + (early.S - 1) + " 层的普通格先落到第 " +
-                (early.D - 1) + " 层，由第 b=" + b + " 层的普通格托住，" +
-                "再由顶针把它送回第 " + early.D + " 层",
+                DescribeWeakDropStep(
+                    "顶针前的提前弱落（§0.4 第三步：源层 / 落点各减一）",
+                    assembledA,
+                    new List<WeakDropMove>
+                    {
+                        new(
+                            earlyFrom,
+                            earlyTo,
+                            DescribeSupportOf(pinInput, column, earlyTo))
+                    },
+                    layers,
+                    ShapeSignature.ColumnText(pinInput, column)),
                 pinInput.Clone(),
                 AngleWorkStepKind.WeakDrop));
         }

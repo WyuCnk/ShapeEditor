@@ -1922,9 +1922,104 @@ public static partial class AngleWorkOrderBuilder
         AngleBuildKind kind)
     {
         /*
-         * §0.4：算法 6 先走论文四步（底块提升 → 正规化 + M/e/提前弱落 →
-         * 低一层制作 + 构造 H 顶针 → 逐块弱落恢复）。
-         * 四步做不出来时才降级到 §15 多刀；不退回旧七步 / 塔式枚举 / FillBreak。
+         * 策略优先级（任务书改动 3 / §0.11，写进分档）：
+         *   ① 构造 H 一次顶针（「N 连续针段」族 → §0.11 九步通用构造）；
+         *   ② 构造 G / 构造 D 碎晶（≤ 2 刀）；
+         *   ③ 算法 6 的论文四步（底块提升 + 弱落）；
+         *   ④ §15 多刀（K 驱动）。
+         *
+         * 改动 1 的短路：目标第 1 层是普通格 ⇒ 那枚格必须落到第 1 层 ⇒ d = 1，
+         * 违反构造 H 的前提 2 ≤ d。所以 t[1]=='T' 的列<b>不尝试</b>构造 H，
+         * 直接进 ③ 的弱落（切割仍在兜底链里），也不打「构造 H 失败后回退」的日志。
+         *
+         * `D ✔` 只说明「可以用算法 6」，不代表必须用：①② 先试，失败才用 ③。
+         */
+        bool firstLayerIsSolid =
+            target[0, column].Type == CellType.Shape;
+
+        var priorityNotes = new List<string>();
+
+        if (!firstLayerIsSolid)
+        {
+            // ①-a：「N 连续针段」族（任务书改动 2 的结构规则）。
+            AngleWorkOrder? family = TryBuildPinFamilyOrder(
+                target,
+                column,
+                layers,
+                parts,
+                kind,
+                out bool familyApplicable,
+                out string? familyFailure);
+
+            if (family is not null)
+            {
+                return family;
+            }
+
+            priorityNotes.Add("「N 连续针段」族：" + familyFailure);
+
+            /*
+             * ①-b：§0.11 九步的通用构造 H（含 §13.6 七步 / §17.1 R1 的固定读法）。
+             * 它和 ①-a 覆盖同一族「晶体贴近顶端」的形态；结构谓词不成立时
+             * 直接交给 ③ 的四步（四步内部同样按 I/J 生成构造 H），
+             * 不再为每条列多跑一遍昂贵的固定读法。
+             */
+            if (familyApplicable)
+            {
+                AngleWorkOrder? constructedH = TryBuildConstructedH(
+                    target,
+                    column,
+                    layers,
+                    parts,
+                    kind,
+                    AngleAlgorithm.Algorithm6,
+                    out string? constructedHFailure);
+
+                if (constructedH is not null)
+                {
+                    return constructedH;
+                }
+
+                priorityNotes.Add("§0.11 九步构造 H：" + constructedHFailure);
+            }
+            else
+            {
+                priorityNotes.Add("§0.11 九步构造 H：结构谓词不成立，跳过。");
+            }
+
+            // ② 构造 G / 构造 D 的碎晶（≤ 2 刀）。
+            AngleWorkOrder? constructG = TryBuildConstructGOrder(
+                target,
+                column,
+                layers,
+                kind);
+
+            if (constructG is not null &&
+                constructG.IsComplete &&
+                !HasCyclicPreState(constructG, target) &&
+                !constructG.HasIllegalPreState(out _, out _))
+            {
+                return Label(
+                    constructG,
+                    AngleAlgorithm.Algorithm6,
+                    attempt: false);
+            }
+
+            priorityNotes.Add(
+                constructG is null
+                    ? "构造 G：形态谓词不成立。"
+                    : "构造 G：回放未通过。");
+        }
+        else
+        {
+            priorityNotes.Add(
+                "目标第 1 层是普通格（d = 1，违反 2 ≤ d）⇒ 按改动 1 短路，" +
+                "不尝试构造 H，直接进 ③ 弱落。");
+        }
+
+        /*
+         * ③ 算法 6 的论文四步：底块提升 → 正规化 + M/e/提前弱落 →
+         * 低一层制作 + 构造 H 顶针 → 逐块弱落恢复。
          */
         AngleWorkOrder? fourStep = TryBuildFourStepAlgorithm6(
             target,
@@ -1939,6 +2034,7 @@ public static partial class AngleWorkOrderBuilder
             return fourStep;
         }
 
+        // ④ §15 多刀是结构性兜底：刀数 == 临时晶体连通块数 K，K 空即停。
         AngleWorkOrder? multiCut = TryBuildMultiCutHalfBreak(
             target,
             column,
@@ -1956,7 +2052,10 @@ public static partial class AngleWorkOrderBuilder
                 "算法 6 四步未通过，按 §0.7 降级到 §15 多刀：" + trace.Describe());
         }
 
-        return ConstructHUncovered(column, kind, trace.Describe());
+        return ConstructHUncovered(
+            column,
+            kind,
+            string.Join("；", priorityNotes) + "；④ §15 多刀未通过；" + trace.Describe());
     }
 
     /// <summary>
@@ -3987,16 +4086,30 @@ public static partial class AngleWorkOrderBuilder
 
             // === n = 4、多层缺口：优先一次顶针（构造 H），否则多轮 G ===
 
-            AngleWorkOrder hOrder = TryBuildH(
-                target,
-                column,
-                layers,
-                parts,
-                s,
-                d,
-                kind);
+            /*
+             * 改动 1 的短路：目标第 1 层是普通格 ⇒ 那枚格必须落到第 1 层 ⇒ d = 1，
+             * 违反构造 H 的前提 2 ≤ d。这里直接<b>不尝试</b>构造 H，
+             * 免得再走「构造 H 失败后回退」的日志，也省掉这次注定失败的构造。
+             */
+            bool firstLayerIsSolid =
+                target[0, column].Type == CellType.Shape;
 
-            if (hOrder.IsComplete)
+            AngleWorkOrder hOrder = firstLayerIsSolid
+                ? Incomplete(
+                    column,
+                    kind,
+                    "目标第 1 层是普通格（那枚格必须落到第 1 层，d = 1）：" +
+                    "按改动 1 跳过构造 H，直接走多轮构造 G。")
+                : TryBuildH(
+                    target,
+                    column,
+                    layers,
+                    parts,
+                    s,
+                    d,
+                    kind);
+
+            if (!firstLayerIsSolid && hOrder.IsComplete)
             {
                 return hOrder;
             }
@@ -4021,7 +4134,9 @@ public static partial class AngleWorkOrderBuilder
 
                 return AppendFailure(
                     gOrder,
-                    "构造 H（一次顶针）也未通过：" +
+                    (firstLayerIsSolid
+                        ? "目标第 1 层是普通格（d = 1），构造 H 已按改动 1 短路："
+                        : "构造 H（一次顶针）也未通过：") +
                     StripUncoveredPrefix(hOrder.Note ?? "不适用"));
             }
 
@@ -6456,6 +6571,9 @@ public static partial class AngleWorkOrderBuilder
         int d,
         AngleBuildKind kind)
     {
+        AngleWorkOrderDiagnostics.RecordConstructHAttempt(
+            target[0, column].Type == CellType.Shape);
+
         var limitations = BaseLimitations(
             "构造 H 的验证直接使用 ShapePhysics.Pin：" +
             "顶针把整体上移一层，超限晶体整簇破碎后下落一次。");
@@ -7103,6 +7221,9 @@ public static partial class AngleWorkOrderBuilder
         AngleAlgorithm algorithm,
         out string? failureReason)
     {
+        AngleWorkOrderDiagnostics.RecordConstructHAttempt(
+            target[0, column].Type == CellType.Shape);
+
         failureReason = null;
 
         if (parts != 4)
