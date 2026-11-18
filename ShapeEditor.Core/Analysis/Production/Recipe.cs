@@ -268,9 +268,16 @@ public sealed record ExchangeDetails(
 ///
 /// <para>
 /// <see cref="LeftInput"/> / <see cref="RightInput"/> 是真正送进交换机的两个图形：
-/// 它们各自是「半球工序的前态」，旋转 <c>−Axis</c> 后半边落在固定刀口的一侧。
-/// 真实物理回放：<c>Cut(LeftInput).West</c> / <c>Cut(RightInput).East</c> 分别等于
-/// 目标的左 / 右半边，<c>Exchange(LeftInput, RightInput)</c> 的所需输出转回后等于目标。
+/// 它们各自是「半边工序的产物（已落定的半边）」按 <see cref="Direction"/> 旋转后的样子。
+/// 真实物理回放：方向 A 取 <c>Cut(LeftInput).West</c> / <c>Cut(RightInput).East</c>，
+/// 方向 B 取 <c>Cut(LeftInput).East</c> / <c>Cut(RightInput).West</c>；
+/// 交换的所需输出转回（方向 B 再按 <see cref="FinalRotation"/> 对齐）后等于目标。
+/// </para>
+///
+/// <para>
+/// <see cref="Direction"/>：0 = 左半边 → 西侧、右半边 → 东侧（当前方向）；
+/// 1 = 左半边 → 东侧、右半边 → 西侧（交换两侧，含半圈旋转）。
+/// 两次尝试有界：方向 A 失败才试方向 B，不是枚举。
 /// </para>
 /// </summary>
 public sealed record HalfAssemblyDetails(
@@ -285,4 +292,6 @@ public sealed record HalfAssemblyDetails(
     ShapeDocument LeftHalf,
     ShapeDocument RightHalf,
     ShapeDocument Product,
-    ShapeDocument? Waste);
+    ShapeDocument? Waste,
+    int Direction = 0,
+    int FinalRotation = 0);

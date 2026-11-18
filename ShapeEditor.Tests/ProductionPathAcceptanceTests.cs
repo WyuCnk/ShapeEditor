@@ -1324,6 +1324,258 @@ internal static class ProductionPathAcceptanceTests
     }
 
     /// <summary>
+    /// 用户给出的 8 层示例：两个半边完全相同（<c>cT.T.cPT</c> + <c>TTTT.ccc</c>），
+    /// 两侧都由半边工序（候选 2：联合逆提升）做出来，整图必须可制作。
+    ///
+    /// <para>
+    /// 同时验证「交换方向」确实有两种，且都走真实回放：
+    /// </para>
+    /// <list type="number">
+    /// <item>方向 A：左半边 → 西侧、右半边 → 东侧（默认先试）；</item>
+    /// <item>方向 B：左半边 → 东侧、右半边 → 西侧（真的把两半换边，含半圈旋转）。</item>
+    /// </list>
+    /// <para>
+    /// 断言方向 B 的输入就是半边产物按 <c>half − axis</c> 旋转后的结果，
+    /// 不是只换标签；两条输入的真实 <see cref="ShapePhysics.Cut"/> 保留侧、
+    /// 真实 <see cref="ShapeExchange.Exchange"/> 的所需输出都逐格核对。
+    /// </para>
+    /// <para>
+    /// <b>关于「方向 A 失败、方向 B 成功」的用例</b>：没找到。两个方向互为整体旋转
+    /// （Cut / Collapse 按列置换等变），A 能过则 B 必能过。方向 B 在这里用
+    /// <c>preferSwapped: true</c> 强制先试，模拟「方向 A 失败后的第二次尝试」，
+    /// 自动路径仍然是有界两次：先 A，失败才 B。详见 TODO.md §7.26。
+    /// </para>
+    /// </summary>
+    public static void HalfAssemblyBuildsGivenExampleBothDirections()
+    {
+        ShapeDocument target = FromColumns(
+            4,
+            "cT.T.cPT",
+            "TTTT.ccc",
+            "cT.T.cPT",
+            "TTTT.ccc");
+
+        Assert.Equal(8, target.LayerCount, "示例应为 8 层");
+        Assert.True(
+            ShapeSignature.AllColumnsLegal(target, out _),
+            "示例图形的每一列都应合法");
+
+        // 两个半边完全相同 ⇒ 两边都走半边工序（候选 2）。
+        HalfWorkOrder? left = AngleWorkOrderBuilder.BuildHalf(target, 0, 8);
+        HalfWorkOrder? right = AngleWorkOrderBuilder.BuildHalf(target, 2, 8);
+
+        Assert.True(left is not null, "示例左半边应可得");
+        Assert.True(right is not null, "示例右半边应可得");
+        Assert.Equal(HalfCandidate.Algo8Uplift, left!.Candidate);
+        Assert.Equal(HalfCandidate.Algo8Uplift, right!.Candidate);
+
+        // 整图管线：示例本身可制作（当前由交换链先命中，行为不变）。
+        PipelineResult solved = ProductionPipeline.Solve(target, 8);
+
+        Assert.Equal(PipelineOutcome.Producible, solved.Outcome);
+        Assert.True(solved.Recipe is not null);
+
+        foreach (bool preferSwapped in new[] { false, true })
+        {
+            string label = preferSwapped ? "方向 B" : "方向 A";
+
+            bool assembled = HalfAssembly.TryBuild(
+                target,
+                8,
+                preferSwapped,
+                out Recipe? recipe,
+                out string note);
+
+            Assert.True(assembled, label + "的半边装配应成功：" + note);
+            Assert.True(recipe is not null);
+            Assert.Equal(RecipeKind.HalfAssembly, recipe!.Kind);
+            Assert.Equal(0, recipe.Rank);
+
+            HalfAssemblyDetails details = recipe.HalfAssembly!;
+
+            // 方向 A 先试；方向 B 是强制先试（模拟方向 A 失败后的第二次尝试）。
+            Assert.Equal(preferSwapped ? 1 : 0, details.Direction);
+            Assert.Equal(0, details.FinalRotation);
+            Assert.Equal(0, details.Axis);
+            Assert.Equal(2, details.HalfWidth);
+            Assert.True(
+                ShapeOps.Same(details.Product, target),
+                label + "的产物应逐格等于目标");
+
+            /*
+             * 方向交换必须真的把两半摆到另一侧（含半圈旋转）：
+             * 方向 A 的旋转量是 −axis = 0，方向 B 是 half − axis = 2。
+             */
+            int rotation = preferSwapped ? 2 : 0;
+
+            Assert.True(
+                ShapeOps.Same(
+                    details.LeftInput,
+                    ShapeOps.Rotate(details.LeftHalf, rotation)),
+                label + "的左半边输入必须是半边产物按本方向旋转后的结果");
+            Assert.True(
+                ShapeOps.Same(
+                    details.RightInput,
+                    ShapeOps.Rotate(details.RightHalf, rotation)),
+                label + "的右半边输入必须是半边产物按本方向旋转后的结果");
+
+            // 真实 Cut：方向 A 保留 West/East，方向 B 保留 East/West。
+            CutResult leftCut = ShapePhysics.Cut(details.LeftInput);
+
+            Assert.True(leftCut.Success, leftCut.Error ?? "左半边输入切割失败");
+
+            ShapeDocument? keptLeft = preferSwapped
+                ? leftCut.East
+                : leftCut.West;
+
+            Assert.True(keptLeft is not null, label + "的真实 Cut 缺少保留侧");
+            Assert.True(
+                ShapeOps.Same(
+                    ShapeOps.Rotate(keptLeft!, -rotation),
+                    details.LeftHalf),
+                label + "的真实半破左半边应与半边工序产物一致");
+
+            CutResult rightCut = ShapePhysics.Cut(details.RightInput);
+
+            Assert.True(rightCut.Success, rightCut.Error ?? "右半边输入切割失败");
+
+            ShapeDocument? keptRight = preferSwapped
+                ? rightCut.West
+                : rightCut.East;
+
+            Assert.True(keptRight is not null, label + "的真实 Cut 缺少保留侧");
+            Assert.True(
+                ShapeOps.Same(
+                    ShapeOps.Rotate(keptRight!, -rotation),
+                    details.RightHalf),
+                label + "的真实半破右半边应与半边工序产物一致");
+
+            // 真实 Exchange：方向 A 取 second，方向 B 取 first。
+            (ShapeDocument? first, ShapeDocument? second, string? exchangeError) =
+                ShapeExchange.Exchange(details.LeftInput, details.RightInput);
+
+            Assert.True(first is not null && second is not null, exchangeError ?? "交换失败");
+
+            ShapeDocument raw = preferSwapped ? first! : second!;
+
+            Assert.True(
+                ShapeOps.Same(ShapeOps.Rotate(raw, -rotation), target),
+                label + "的真实交换所需输出应逐格等于目标");
+
+            Assert.True(
+                HalfAssembly.Verify(details, target, new List<string>()),
+                label + "的半边装配自检应通过");
+            Assert.True(
+                Replay.Verify(recipe, target, out IReadOnlyList<string> replayErrors),
+                label + "的配方回放应通过：" + string.Join("；", replayErrors));
+
+            // 节点链：两个半边输入 + 交换 + 目标。
+            ProductionPathResult parsed = ProductionPathParser.FromRecipe(recipe);
+
+            Assert.True(parsed.IsProducible, parsed.Error ?? "节点链应可展示");
+            Assert.True(parsed.Path is not null);
+            Assert.True(
+                parsed.Path!.Steps.Any(step =>
+                    step.Kind == ProductionStepKind.PillarPiece &&
+                    step.Title.Contains("半边工序")),
+                label + "的节点链应包含两个半边输入");
+            Assert.True(
+                parsed.Path.Steps.Any(step =>
+                    step.Kind == ProductionStepKind.Target),
+                label + "的节点链应包含目标步");
+        }
+    }
+
+    /// <summary>
+    /// 交换方向 B（左↔右、含半圈旋转）的第二个用例：两个半边<b>不同</b>。
+    ///
+    /// <para>
+    /// 左半边是候选 2 的 <c>cT.T.cPT | TTTT.ccc</c>，右半边是候选 1 的
+    /// <c>cTcccccc | cTcccccc</c>。方向 B 先按 <c>half − axis</c> 把两半真的换边，
+    /// 交换输出是「目标整体旋转半圈」；装配层再按 <c>−rotation</c> 把坐标系转回来。
+    /// 这条用例覆盖「产物不是直接等于目标、而是半圈旋转后再回转」的分支。
+    /// </para>
+    /// </summary>
+    public static void HalfAssemblySwappedDirectionRotatesBackDistinctHalves()
+    {
+        ShapeDocument target = FromColumns(
+            4,
+            "cT.T.cPT",
+            "TTTT.ccc",
+            "cTcccccc",
+            "cTcccccc");
+
+        Assert.True(
+            ShapeSignature.AllColumnsLegal(target, out _),
+            "两个不同半边的目标每列都应合法");
+
+        bool assembled = HalfAssembly.TryBuild(
+            target,
+            8,
+            preferSwapped: true,
+            out Recipe? recipe,
+            out string note);
+
+        Assert.True(assembled, "方向 B 的半边装配应成功：" + note);
+        Assert.True(recipe is not null);
+
+        HalfAssemblyDetails details = recipe!.HalfAssembly!;
+
+        Assert.Equal(1, details.Direction);
+
+        /*
+         * 方向 B 的交换输出确实是「目标整体旋转半圈」；装配层再按 −rotation
+         * 把坐标系转回来，所以最终产物直接就是目标，不需要额外的 FinalRotation。
+         * （FinalRotation 仍是旋转等价时的安全网，本用例断言它没有被触发。）
+         */
+        Assert.Equal(0, details.FinalRotation);
+        Assert.True(
+            ShapeOps.Same(details.Product, target),
+            "方向 B 的产物应回转后逐格等于目标");
+
+        // 左半边真的被摆到东侧（旋转 half − axis = 2）。
+        Assert.True(
+            ShapeOps.Same(
+                details.LeftInput,
+                ShapeOps.Rotate(details.LeftHalf, 2)),
+            "方向 B 必须把左半边整体转到东侧，而不是只换标签");
+        Assert.True(
+            ShapeOps.Same(
+                details.RightInput,
+                ShapeOps.Rotate(details.RightHalf, 2)),
+            "方向 B 必须把右半边整体转到西侧，而不是只换标签");
+
+        // 方向 B 的交换输出在回转前就是目标的半圈旋转，确实不是目标本身。
+        (ShapeDocument? first, ShapeDocument? second, _) =
+            ShapeExchange.Exchange(details.LeftInput, details.RightInput);
+
+        Assert.True(first is not null && second is not null);
+
+        Assert.False(
+            ShapeOps.Same(first, target),
+            "方向 B 的交换输出在回转前不应直接等于目标");
+
+        Assert.True(
+            ShapeOps.Same(
+                ShapeOps.Rotate(first!, 2),
+                target),
+            "方向 B 的交换输出应再转半圈后等于目标");
+
+        Assert.True(
+            HalfAssembly.Verify(details, target, new List<string>()),
+            "方向 B 的半边装配自检应通过");
+        Assert.True(
+            Replay.Verify(recipe, target, out IReadOnlyList<string> replayErrors),
+            "方向 B 的配方回放应通过：" + string.Join("；", replayErrors));
+
+        // 默认方向 A 也能装配同一个目标（两个方向互为整体旋转，见测试注释）。
+        Assert.True(
+            HalfAssembly.TryBuild(target, 8, out Recipe? direct, out string directNote),
+            "方向 A 的半边装配应成功：" + directNote);
+        Assert.Equal(0, direct!.HalfAssembly!.Direction);
+    }
+
+    /// <summary>
     /// 半边装配的<b>围栏</b>：不能让「交换链失败」的图形被新路径抢答成可制作。
     ///
     /// <para>

@@ -3,6 +3,7 @@ using ShapeEditor.Core.Analysis;
 using ShapeEditor.Core.Analysis.Production;
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Physics;
+using ShapeEditor.Core.Services;
 
 namespace ShapeEditor.Tests;
 
@@ -16,7 +17,10 @@ namespace ShapeEditor.Tests;
 /// <item><c>pin</c>：读取 <c>SHAPE_PROBE_A/B/E/N</c> 四列，回放一次
 /// <see cref="ShapePhysics.Pin"/>，打印顶针后 col0（可选 <c>SHAPE_PROBE_TARGET</c> 做逐格比较）；</item>
 /// <item><c>route</c>：读取 <c>SHAPE_PROBE_TARGET</c>，打印该列的构造 / 算法 / 步骤链；</item>
-/// <item><c>stats</c>：3–9 层全部 S 列的弱落 / 多刀统计，并打印残余 47 列的 D/F。</item>
+/// <item><c>stats</c>：3–9 层全部 S 列的弱落 / 多刀统计，并打印残余 47 列的 D/F；</item>
+/// <item><c>figure</c>：读取 <c>SHAPE_PROBE_CODE</c>（完整短代码），打印整图求解、
+/// 半边装配（两个方向，<c>SHAPE_PROBE_SWAPPED=1</c> 先试方向 B）与
+/// 每条轴的 <c>BuildHalf</c> 诊断。</item>
 /// </list>
 /// <para>
 /// 只有设置环境变量时才会进入，正常运行测试时行为不变。
@@ -50,9 +54,189 @@ internal static class Probes
                 OneCutTightStats.Print(OneCutTightStats.Measure());
                 return 0;
 
+            case "figure":
+                RunFigure();
+                return 0;
+
             default:
                 Console.WriteLine("未知 SHAPE_PROBE_MODE：" + mode);
                 return 1;
+        }
+    }
+
+    /// <summary>
+    /// 复现用户给出的图形：整图求解 + 半边装配 + 每条轴的 BuildHalf 诊断。
+    /// 读 <c>SHAPE_PROBE_CODE</c>（完整短代码）与可选 <c>SHAPE_PROBE_CAP</c>。
+    /// </summary>
+    private static void RunFigure()
+    {
+        string code = Env("SHAPE_PROBE_CODE");
+
+        if (code.Length == 0)
+        {
+            Console.WriteLine("需要 SHAPE_PROBE_CODE");
+            return;
+        }
+
+        if (!ShortCodeParser.TryInferDimensions(
+                code,
+                out int layers,
+                out int parts,
+                out string? inferError))
+        {
+            Console.WriteLine("短代码尺寸推断失败：" + inferError);
+            return;
+        }
+
+        ParseResult parsed = new ShortCodeParser().Parse(code, layers, parts);
+
+        if (!parsed.Success || parsed.Document is null)
+        {
+            Console.WriteLine("短代码解析失败：" + parsed.Error);
+            return;
+        }
+
+        ShapeDocument target = parsed.Document;
+        int cap = int.TryParse(
+            Environment.GetEnvironmentVariable("SHAPE_PROBE_CAP"),
+            out int explicitCap)
+            ? explicitCap
+            : layers;
+
+        Console.WriteLine("code = " + code);
+        Console.WriteLine(
+            "n = " + parts + "，层数 = " + layers + "，cap = " + cap);
+
+        for (int part = 0; part < parts; part++)
+        {
+            string text = ShapeSignature.ColumnText(target, part);
+
+            Console.WriteLine(
+                "  q" + (part + 1) + " = " + text +
+                "  合法=" + ShapeSignature.CheckColumn(text).IsLegal +
+                "  S=" + PillarSCriterion.IsPillarColumn(target, part));
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("== HalfAssembly.TryBuild ==");
+
+        bool halfOk = HalfAssembly.TryBuild(
+            target,
+            cap,
+            preferSwapped:
+                Environment.GetEnvironmentVariable("SHAPE_PROBE_SWAPPED") == "1",
+            out Recipe? halfRecipe,
+            out string halfNote);
+
+        Console.WriteLine("ok = " + halfOk);
+        Console.WriteLine("note = " + halfNote);
+
+        if (halfOk && halfRecipe is not null)
+        {
+            PrintRecipe(halfRecipe);
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("== ProductionPipeline.Solve ==");
+
+        PipelineResult solved = ProductionPipeline.Solve(target, cap);
+
+        Console.WriteLine("outcome = " + solved.Outcome);
+
+        foreach (string note in solved.Notes)
+        {
+            Console.WriteLine("  note: " + note);
+        }
+
+        if (solved.Recipe is not null)
+        {
+            PrintRecipe(solved.Recipe);
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("== BuildHalf 逐轴 ==");
+
+        for (int column = 0; column < parts; column++)
+        {
+            HalfWorkOrder? order = AngleWorkOrderBuilder.BuildHalf(
+                target,
+                column,
+                cap);
+
+            Console.WriteLine(
+                "  column " + column + " (" + ShapeSignature.ColumnText(target, column) + ")：" +
+                (order is null
+                    ? "null"
+                    : order.Candidate + "，Rotation=" + order.Rotation +
+                      "，隔离=" + order.IsComplete));
+
+            if (order is not null)
+            {
+                ShapeDocument halfShape = order.Steps[^1].Shape!;
+
+                Console.WriteLine(
+                    "      half = " + Describe(halfShape) +
+                    "  stable=" + ShapeOps.IsStable(halfShape) +
+                    "  chain=" + ExchangeChain.TryBuild(halfShape, out _));
+
+                if (order.Steps.Count > 0 && order.Steps[0].Shape is not null)
+                {
+                    ShapeDocument pre = order.Steps[0].Shape!;
+
+                    Console.WriteLine(
+                        "      pre  = " + Describe(pre) +
+                        "  stable=" + ShapeOps.IsStable(pre) +
+                        "  chain=" + ExchangeChain.TryBuild(pre, out _) +
+                        "  collapse(half)=" + ShapeOps.Same(
+                            ShapePhysics.Collapse(pre).Document,
+                            halfShape));
+                }
+            }
+        }
+    }
+
+    private static void PrintRecipe(Recipe recipe)
+    {
+        Console.WriteLine(
+            "recipe = " + recipe.Kind + "，Rank = " + recipe.Rank +
+            "，节点数 = " + recipe.CountNodes());
+
+        for (int index = 0; index < recipe.Steps.Count; index++)
+        {
+            RecipeStep step = recipe.Steps[index];
+
+            Console.WriteLine(
+                "  [" + index + "]" + (step.IsWaste ? "[废料] " : " ") + step.Title);
+
+            for (int part = 0; part < step.Shape.PartCount; part++)
+            {
+                Console.WriteLine(
+                    "        q" + (part + 1) + " = " +
+                    ShapeSignature.ColumnText(step.Shape, part));
+            }
+        }
+
+        HalfAssemblyDetails? details = recipe.HalfAssembly;
+
+        if (details is not null)
+        {
+            Console.WriteLine(
+                "  HalfAssembly：axis=" + details.Axis +
+                "，half=" + details.HalfWidth +
+                "，direction=" + details.Direction +
+                "，finalRotation=" + details.FinalRotation +
+                "，left=" + details.Left.Candidate +
+                "，right=" + details.Right.Candidate);
+            Console.WriteLine(
+                "    LeftInput  : " + Describe(details.LeftInput));
+            Console.WriteLine(
+                "    RightInput : " + Describe(details.RightInput));
+            Console.WriteLine(
+                "    LeftHalf   : " + Describe(details.LeftHalf));
+            Console.WriteLine(
+                "    RightHalf  : " + Describe(details.RightHalf));
+            Console.WriteLine(
+                "    Product    : " + Describe(details.Product));
         }
     }
 

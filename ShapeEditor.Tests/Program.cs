@@ -273,6 +273,8 @@ internal static class Program
 
             // 语料 12：k 列半边装配（P3 落地清单第 5 条）。
             ("语料12:n=6/8 半边装配整图", ProductionPathAcceptanceTests.HalfAssemblyBuildsSixAndEightQuadrantGraphs),
+            ("语料12:示例图形半边装配（两个方向）", ProductionPathAcceptanceTests.HalfAssemblyBuildsGivenExampleBothDirections),
+            ("语料12:方向 B 半圈回转（不同半边）", ProductionPathAcceptanceTests.HalfAssemblySwappedDirectionRotatesBackDistinctHalves),
             ("语料12:半边装配不越权", ProductionPathAcceptanceTests.HalfAssemblyFenceOnChainFailures),
             ("语料12:管线半边装配诊断", ProductionPathAcceptanceTests.HalfAssemblyPipelineReportsDiagnosisOnChainFailure)
         };

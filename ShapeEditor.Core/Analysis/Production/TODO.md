@@ -2213,3 +2213,103 @@ N = 第 2 层起连续放针，到 max(I) 为止（枚数 = max(I) − 1）；�
 5. **`T.cT.T.ccc` 是 10 层**，不在 3–9 层统计口径内；它的前态由构造 G 产出，
    与模板 B 的构造逐格相同（同一套双格环下落），所以回归只看四列 + 一刀 + 末列。
 
+### 7.26 半边装配的交换方向重试（2026-11-18）
+
+**用户示例（8 层，两个半边完全相同）**
+
+```
+crCucrCu:CuCuCuCu:--Cu--Cu:CuCuCuCu:--------:crcrcrcr:P-crP-cr:CucrCucr
+q1 = cT.T.cPT   q2 = TTTT.ccc   q3 = cT.T.cPT   q4 = TTTT.ccc
+```
+
+q1 / q3 都是非 S（五项 ✔、D ✘、F ✘），两个半边都只能由半边工序做出来。
+
+**复现结果（修复前）**
+
+| 入口 | 结果 | 说明 |
+|---|---|---|
+| `ProductionPipeline.Solve(target, 8)` | **Producible** | 交换链先命中（`RecipeKind.Exchange`，rank 0）；n = 4 的交换链内部用 `HalfObtainability` 取到候选 2 的 Q′，所以示例本来就能做 |
+| `HalfAssembly.TryBuild(target, 8)` | **False** | 两条轴都报「左半边输入不稳定（候选 2 的 Q′ 是下落前状态）」。原因是旧实现把候选 2 的**下落前 Q′** 直接当成装配输入，又要求它稳定；而 Q′ 只在半边工序内部成立 |
+
+**修复后（本文件改动）**
+
+| 文件 | 改动 |
+|---|---|
+| `Analysis/Production/HalfAssembly.cs` | 装配输入改为「半边工序最后一步产物」——已落定的稳定半边；候选 2 的 Q′ 只用于 `ReplayHalf` 证明「前态一次下落 = 半边」，不再当机器输入。新增有界两次的方向尝试与逐次诊断 |
+| `Analysis/Production/Recipe.cs` | `HalfAssemblyDetails` 增加 `Direction`（0 = A，1 = B）与 `FinalRotation`（旋转等价时的安全网，正常为 0） |
+| `Analysis/Production/HalfAssembly.Verify` | 按方向检查真实 `Cut` 的保留侧（A：West/East；B：East/West）与真实 `Exchange` 的所需输出（A：second；B：first）；两条输入必须等于「半边产物按本方向旋转后的结果」 |
+
+**方向规则（有界两次，不是枚举）**
+
+```
+for 轴 a:
+    L = BuildHalf(target, a, cap)        R = BuildHalf(target, a+half, cap)
+    两半都可得且逐格等于目标分段 ⇒
+      方向 A（当前方向）：转 −a，左→西、右→东，Cut 取 West/East，Exchange 取 second
+      方向 B（交换两侧）：转 half−a，左→东、右→西（真的换边 + 半圈旋转），
+                         Cut 取 East/West，Exchange 取 first
+      A 失败才试 B；两次都失败 ⇒ 记录两次的「哪一侧、哪一步失败」⇒ 下一条轴
+```
+
+- 每次尝试都跑真实 `ShapePhysics.Cut` + `ShapeExchange.Exchange`，并把保留侧转回后逐格核对；
+- 方向 B 的交换输出是「目标整体旋转 half 个象限」，装配层再按 `−rotation` 转回；
+- 诊断写进 `Note`：成功时写方向与两侧候选、以及先试方向失败的原因；全失败时写每条轴 / 每个方向的失败原因。
+
+**实测（修复后）**
+
+```
+HalfAssembly.TryBuild(示例, 8) = True
+note：第 0 条轴的两个 2 列半边都可得（左 候选 2 / 右 候选 2）；
+      方向 A ... 真实 Cut + Exchange 回放后逐格等于目标。
+节点链：制作左半边（候选 2，第 1–2 象限）→ 制作右半边（候选 2，第 3–4 象限）
+        → 交换得到目标图形 → 废料
+```
+
+强制先试方向 B（`TryBuild(..., preferSwapped: true)`）同样成功，`details.Direction = 1`，
+两条输入分别是两个半边按 `half−a = 2` 旋转后的结果（真实换边，不是换标签）。
+
+**是否找到「方向 A 失败、方向 B 成功」的真实用例：没有。**
+
+原因不是没搜，而是这条规则下两个方向互为**整体旋转**：
+
+```
+方向 A：A_west = Rotate(L, −a)，B_east  = Rotate(R, −a)
+方向 B：A_east = Rotate(L, h−a)，B_west = Rotate(R, h−a)   （h = n/2）
+Cut / Collapse 按列置换等变，Exchange 的输出也只是同样的置换，
+所以方向 B 的中间态 / 输出 = 方向 A 的整体旋转；A 能过则 B 必能过，A 不过则 B 也不过。
+```
+
+仍然保留方向 B 的尝试：① 它按任务书要求把「换边」显式做成整体旋转，避免只换标签；
+② 若将来半边输入不再是「已落定半边」（例如引入别的 rank 0 原语），两个方向才可能真正分叉；
+③ 方向 B 的回转分支已由「两个半边不同」的用例覆盖（见测试）。
+
+**新增测试（2 条）**
+
+| 测试 | 内容 |
+|---|---|
+| `语料12:示例图形半边装配（两个方向）` | 示例图形两侧 BuildHalf = 候选 2；方向 A / B 都成功；真实 Cut 保留侧、真实 Exchange 所需输出、`Verify` / `Replay.Verify` / 节点链全部逐格核对；方向 B 的输入必须等于半边产物按 `half−a` 旋转后的结果 |
+| `语料12:方向 B 半圈回转（不同半边）` | 左半边 `cT.T.cPT\\|TTTT.ccc`（候选 2）+ 右半边 `cTcccccc\\|cTcccccc`（候选 1）；方向 B 的交换输出是目标的半圈旋转（不直接等于目标），回转后等于目标；方向 A 也成功 |
+
+**验收数字**
+
+| 项 | 结果 |
+|---|---|
+| 全量测试 | **190/190** 通过（188 项原有 + 2 项新增；claw / 二择 2 项 XFAIL 保持不变） |
+| `AUDIT`（≤6 层 S） | `total=5440 legal=2126 s=2125 success=2125 legalNonS=1 failures=0 falsePositives=0` |
+| `LAYERAUDIT` | 7 层 `s=4320 success=4320 failures=0 falsePositives=0`；8 层 `s=12646 success=12646 failures=0 falsePositives=0` |
+| `NINEAUDIT` | `s=36508 success=36508 failures=0 falsePositives=0 fillBreak=0` |
+| `HALFAUDIT` | `legalNonS=229 halfTargets=2 halfComplete=6 notProducible=225 uncovered=0 problems=0`（未下降） |
+| `HALFFENCE` | 四行语料 `claimed=0`（未退化） |
+| `TIGHT` / `HOLES` | `tight=410 onlyTarget=31 onlyAux=0 both=0`；`targetHoleNoSub=0` |
+
+**边界 / 未改项**
+
+- 装配输入仍要求「稳定 + 能被交换链造出来（rank 0 子配方）」，所以新路径**不接住交换链失败的整图**
+  （`HALFFENCE claimed=0` 保持）；本次只修「半边工序产物已经可得，但方向 / 前态朝向挡住装配」。
+- 只用半边工序的最后一步产物做装配输入；候选 2 的 Q′ 仍只出现在 `HalfWorkOrder.Steps` 里，
+  不再被当成机器输入。
+- `docs/` 未改。建议 docs 更新点：`docs/half-side-work-order.md` §6 第 5 条补一句
+  「`HalfAssembly` 已按两个方向装配，输入取半边工序产物」；§4.2 候选 2 的 Q′ 注明
+  「Q′ 是工序内部的下落前状态，不是装配输入」。
+
+
