@@ -40,67 +40,42 @@ namespace ShapeEditor.Core.Analysis;
 /// </summary>
 public static partial class AngleWorkOrderBuilder
 {
-    /// <summary>O-v2 碎晶路线的入口；返回 null 表示这条路线不适用或回放失败。</summary>
+    /// <summary>
+    /// 模板 B 的「不要盲切」比较闸门：为 true 时正在用现有管线算「原路线」，
+    /// 这次比较里不得再触发模板 B（否则会无限递归）。
+    /// </summary>
+    [ThreadStatic]
+    private static bool comparingOneCutTight;
+
+    /// <summary>
+    /// O-v2 碎晶路线的入口；返回 null 表示这条路线不适用或回放失败。
+    ///
+    /// <para>
+    /// <paramref name="allowOneCutTight"/> 为 <c>false</c> 时只跑模板 A：
+    /// 算法 4 的论文首选是构造 G（也是单刀碎晶），模板 B 只在 G / 通用实现都失败后补位，
+    /// 以免把 G 已经做得更好（M5 换柱更少）的列换成模板 B。
+    /// </para>
+    /// </summary>
     private static AngleWorkOrder? TryBuildCrystalBreakOrder(
         ShapeDocument target,
         int column,
         int cap,
-        AngleBuildKind kind)
+        AngleBuildKind kind,
+        bool allowOneCutTight = true)
     {
-        if (target.PartCount != 4 ||
-            cap < target.LayerCount ||
-            kind != AngleBuildKind.NeedsCrystalBreak)
+        if (!TryBuildCrystalBreakCore(
+                target,
+                column,
+                cap,
+                kind,
+                out string coreText,
+                out string targetColumn,
+                out List<(int Bottom, int Top)> blocks))
         {
             return null;
         }
 
-        string tight = ColumnTextPadded(target, column, target.LayerCount);
-        string targetColumn = ColumnTextPadded(target, column, cap);
-
-        if (!ShapeSignature.CheckColumn(tight).IsLegal ||
-            !targetColumn.Contains(ShapeSignature.CrystalCode) ||
-            targetColumn.Contains(ShapeSignature.PinCode))
-        {
-            return null;
-        }
-
-        int highest = targetColumn.LastIndexOf(ShapeSignature.CrystalCode);
-
-        if (highest <= 0)
-        {
-            return null;
-        }
-
-        // ── ① 正规核心：提升 + 填临时晶体（全部由扫描得出）──
-        int[] destinations = ResolveRecursiveLiftPlan(targetColumn, highest);
-        char[]? core = BuildCoreColumn(targetColumn, destinations, highest);
-
-        if (core is null)
-        {
-            return null;
-        }
-
-        string coreText = new(core);
-
-        if (!ShapeSignature.IsTightColumn(coreText) ||
-            !ShapeSignature.CheckColumn(coreText).IsLegal)
-        {
-            return null;
-        }
-
-        List<(int Bottom, int Top)> blocks = FindTemporaryBlocks(targetColumn, core);
-
-        /*
-         * 没有提升记录也可以走：晶体直接坐在普通格上、洞在普通格下方时
-         * （例如 T..Tc），核心只是把洞填成临时晶体，一刀碎掉、普通格原位不动。
-         * 这时托柱没有针（满高普通格）也能通过回放。
-         */
-        if (blocks.Count == 0)
-        {
-            return null;
-        }
-
-        // 先试「一刀碎全部块」（O-v2 §2 的规范形态）。
+        // 先试「一刀碎全部块」（O-v2 §2 的规范形态，模板 A）。
         AngleWorkOrder? single = ReplayCrystalBreak(
             target,
             column,
@@ -115,6 +90,32 @@ public static partial class AngleWorkOrderBuilder
             return single;
         }
 
+        /*
+         * 模板 A 失败：先按模板 B（OneCutTight，docs §8.2）再判一次、再试一次。
+         *
+         * 模板 B 与模板 A 的区别只在辅助列 S：模板 A 一律「满高普通格 + 源层放针」，
+         * 它假设被提升的普通格都能在本列找到刹车；模板 B 显式判「悬空落点」，
+         * 命中时把落体做成【主列普通格 + 辅助列普通格】的双格，由辅助列自己的挡块停住。
+         * 双格下落比单格多降一层，才可能落进悬空落点。
+         */
+        if (allowOneCutTight &&
+            AngleWorkOrderDiagnostics.EnableOneCutTight)
+        {
+            AngleWorkOrder? tightOrder = TryBuildOneCutTightOrder(
+                target,
+                column,
+                cap,
+                kind,
+                coreText,
+                targetColumn,
+                blocks);
+
+            if (tightOrder is not null)
+            {
+                return tightOrder;
+            }
+        }
+
         // 一刀不够：切最上面的块，再一刀切剩下的块（轮间走五步交换支撑柱）。
         return ReplayCrystalBreak(
             target,
@@ -125,6 +126,614 @@ public static partial class AngleWorkOrderBuilder
             targetColumn,
             singleCut: false);
     }
+
+    /// <summary>
+    /// 模板 B 的独立入口：算法 4 的构造 G / 通用实现都失败后，再试一次模板 B。
+    /// 正规核心与临时块与模板 A 完全相同（同一份 A）。
+    /// </summary>
+    private static AngleWorkOrder? TryBuildOneCutTightCandidate(
+        ShapeDocument target,
+        int column,
+        int cap,
+        AngleBuildKind kind)
+    {
+        if (!AngleWorkOrderDiagnostics.EnableOneCutTight ||
+            !TryBuildCrystalBreakCore(
+                target,
+                column,
+                cap,
+                kind,
+                out string coreText,
+                out string targetColumn,
+                out List<(int Bottom, int Top)> blocks))
+        {
+            return null;
+        }
+
+        return TryBuildOneCutTightOrder(
+            target,
+            column,
+            cap,
+            kind,
+            coreText,
+            targetColumn,
+            blocks);
+    }
+
+    /// <summary>
+    /// 碎晶路线的公共前置扫描：判定形态、建正规核心、找临时晶体块。
+    /// 模板 A / B 用的是同一份核心，所以抽在这里。
+    /// </summary>
+    private static bool TryBuildCrystalBreakCore(
+        ShapeDocument target,
+        int column,
+        int cap,
+        AngleBuildKind kind,
+        out string coreText,
+        out string targetColumn,
+        out List<(int Bottom, int Top)> blocks)
+    {
+        coreText = string.Empty;
+        targetColumn = string.Empty;
+        blocks = new List<(int Bottom, int Top)>();
+
+        if (target.PartCount != 4 ||
+            cap < target.LayerCount ||
+            kind != AngleBuildKind.NeedsCrystalBreak)
+        {
+            return false;
+        }
+
+        string tight = ColumnTextPadded(target, column, target.LayerCount);
+        targetColumn = ColumnTextPadded(target, column, cap);
+
+        if (!ShapeSignature.CheckColumn(tight).IsLegal ||
+            !targetColumn.Contains(ShapeSignature.CrystalCode) ||
+            targetColumn.Contains(ShapeSignature.PinCode))
+        {
+            return false;
+        }
+
+        int highest = targetColumn.LastIndexOf(ShapeSignature.CrystalCode);
+
+        if (highest <= 0)
+        {
+            return false;
+        }
+
+        // ── ① 正规核心：提升 + 填临时晶体（全部由扫描得出）──
+        int[] destinations = ResolveRecursiveLiftPlan(targetColumn, highest);
+        char[]? core = BuildCoreColumn(targetColumn, destinations, highest);
+
+        if (core is null)
+        {
+            return false;
+        }
+
+        coreText = new string(core);
+
+        if (!ShapeSignature.IsTightColumn(coreText) ||
+            !ShapeSignature.CheckColumn(coreText).IsLegal)
+        {
+            return false;
+        }
+
+        blocks = FindTemporaryBlocks(targetColumn, core);
+
+        /*
+         * 没有提升记录也可以走：晶体直接坐在普通格上、洞在普通格下方时
+         * （例如 T..Tc），核心只是把洞填成临时晶体，一刀碎掉、普通格原位不动。
+         * 这时托柱没有针（满高普通格）也能通过回放。
+         */
+        return blocks.Count != 0;
+    }
+
+    #region 模板 B：OneCutTight（docs/angle-route-optimal-v2.md §8.2）
+
+    /*
+     * ── 引理（docs/angle-route-optimal-v2.md §7.2，推理方 2026-11-18）──
+     *
+     * 在一次「不重新分组」的下落中，活动块经过固定格时，新出现的侧面接触不会使它停住；
+     * 挡停只能发生在活动块所占某一列的正下方，或地面。
+     * ⇒ 单格只能在本列受挡；跨两列的双格可以在邻列受挡。
+     *
+     * 这条引理解释了模板 A 为什么会漏列：它没有区分「单格自停」与「双格借邻列挡停」。
+     * 在【悬空落点】（落点下面一格是空）上，单格只能一路落到地面或同列材料上，
+     * 于是模板 A 的「源层放针」托柱救不了它；模板 B 把落体扩成
+     * 【主列普通格 + 辅助列普通格】的双格，由辅助列自己的挡块停住。
+     * 双格要成立，上方必须至少 3 连晶当支撑环（§8.2 的判定条件）。
+     */
+
+    /// <summary>目标列里一个「正下方为空」的晶体段记录（模板 B 的 O(H) 扫描产物）。</summary>
+    private readonly record struct OneCutTightSegment(
+        int Bottom,
+        int Top,
+        int Landing,
+        bool Hung);
+
+    /// <summary>
+    /// 模板 B（<c>OneCutTight</c>）的判定谓词（docs §8.2）：
+    /// 该目标列是否存在「一刀 + 双格环下落」的前态。
+    ///
+    /// <para>
+    /// 复杂度 <b>O(H)</b>、额外空间 <b>O(1)</b>，不打表、不枚举；
+    /// 只依赖目标列本身（不需要生成前态）。
+    /// </para>
+    /// </summary>
+    public static bool MatchesOneCutTight(string targetColumn)
+    {
+        return MatchesOneCutTightPredicate(targetColumn, out _);
+    }
+
+    /// <summary>
+    /// 模板 B（<c>OneCutTight</c>）的判定（docs §8.2），并给出悬空落点记录。
+    ///
+    /// <para>自底向上扫「正下方为空」的晶体段，<c>d = 该段下方最近普通格的目标层</c>；</para>
+    /// <list type="bullet">
+    /// <item><c>d &gt; 0</c> 且 <c>t[d−1]</c> 为空 ⇒ 该段是【悬空落点】；</item>
+    /// <item>没有悬空落点 ⇒ 通过（被提升格都能在本列自停，直接释放）；</item>
+    /// <item>恰有一个 ⇒ 需该段 ≥3 连晶，且它是第一条记录，或第二条记录且
+    /// 「地面到第一条记录的 d 层」连续非空；</item>
+    /// <item>两个及以上 ⇒ 不通过。</item>
+    /// </list>
+    /// <para>
+    /// 复杂度 <b>O(H)</b>、额外空间 <b>O(1)</b>：一趟自底向上的扫描，
+    /// 只记「最近普通格层」与几个计数；晶体段一次跳到段顶，不打表、不枚举。
+    /// </para>
+    /// </summary>
+    private static bool MatchesOneCutTightPredicate(
+        string targetColumn,
+        out OneCutTightSegment hung)
+    {
+        hung = default;
+
+        int highest = targetColumn.LastIndexOf(ShapeSignature.CrystalCode);
+
+        if (highest < 0)
+        {
+            return false;
+        }
+
+        int records = 0;
+        int firstLanding = -1;
+        int hungRecords = 0;
+        int hungRecordIndex = -1;
+        int lastSolid = -1;
+
+        for (int layer = 0; layer <= highest; layer++)
+        {
+            char code = targetColumn[layer];
+
+            if (code == ShapeSignature.SolidCode)
+            {
+                lastSolid = layer;
+                continue;
+            }
+
+            if (code != ShapeSignature.CrystalCode ||
+                layer == 0 ||
+                targetColumn[layer - 1] != ShapeSignature.EmptyCode)
+            {
+                continue;
+            }
+
+            // 段底：向上量到段的最高层。段内没有普通格，所以可以直接跳到段顶。
+            int top = layer;
+
+            while (top + 1 <= highest &&
+                   targetColumn[top + 1] == ShapeSignature.CrystalCode)
+            {
+                top++;
+            }
+
+            int landing = lastSolid;
+            bool isHung = landing > 0 &&
+                          targetColumn[landing - 1] == ShapeSignature.EmptyCode;
+
+            if (records == 0)
+            {
+                firstLanding = landing;
+            }
+
+            if (isHung)
+            {
+                hungRecords++;
+                hungRecordIndex = records;
+                hung = new OneCutTightSegment(layer, top, landing, true);
+            }
+
+            records++;
+            layer = top;
+        }
+
+        if (hungRecords == 0)
+        {
+            return true;
+        }
+
+        if (hungRecords > 1)
+        {
+            return false;
+        }
+
+        if (hung.Top - hung.Bottom + 1 < 3)
+        {
+            return false;
+        }
+
+        if (hungRecordIndex == 0)
+        {
+            return true;
+        }
+
+        if (hungRecordIndex != 1 || firstLanding < 0)
+        {
+            return false;
+        }
+
+        for (int layer = 0; layer <= firstLanding; layer++)
+        {
+            if (targetColumn[layer] == ShapeSignature.EmptyCode)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// 模板 B（<c>OneCutTight</c>）的候选：模板 A 的一刀回放失败后再判一次。
+    ///
+    /// <para><b>前态构造</b>（docs §8.2 / 任务书任务 1）：</para>
+    /// <code>
+    /// A = 正规核心（空位填临时晶体，c/T 交替）
+    /// S = 双格托柱：悬空落点的落体做成「主列普通格 + 辅助列普通格」，
+    ///     落点下一层放普通格当刹车，落点到伙伴层之间放临时晶体（切开后成洞）；
+    ///     其余被提升格一律在整段下落路径放针，保持单格、不粘连
+    /// 第 3 象限 = 空
+    /// F = 保险丝：紧列到最高锚层，每个临时段锚层放一颗晶体
+    /// 一刀
+    /// </code>
+    /// <para>
+    /// 前态完全由扫描得出（提升记录 + 悬空落点记录），没有打表、没有枚举；
+    /// 一刀用真实 <see cref="ShapePhysics.Cut"/> 回放，末端目标列逐格核对。
+    /// </para>
+    /// </summary>
+    private static AngleWorkOrder? TryBuildOneCutTightOrder(
+        ShapeDocument target,
+        int column,
+        int cap,
+        AngleBuildKind kind,
+        string coreText,
+        string targetColumn,
+        IReadOnlyList<(int Bottom, int Top)> blocks)
+    {
+        // 正在用现有管线算「原路线」：这次比较里不得再产出模板 B。
+        if (comparingOneCutTight)
+        {
+            return null;
+        }
+
+        if (!MatchesOneCutTightPredicate(targetColumn, out OneCutTightSegment hung))
+        {
+            return null;
+        }
+
+        List<(int Core, int Target)> lifts = FindLifts(
+                targetColumn,
+                coreText.ToCharArray())
+            .Where(lift => lift.Core > lift.Target)
+            .ToList();
+
+        int hungCore = hung.Hung ? hung.Bottom - 1 : -1;
+
+        if (hung.Hung &&
+            (hungCore < 0 ||
+             hungCore >= coreText.Length ||
+             coreText[hungCore] != ShapeSignature.SolidCode))
+        {
+            return null;
+        }
+
+        if (!BuildOneCutTightSupport(
+                cap,
+                lifts,
+                hungCore,
+                targetColumn,
+                out string support))
+        {
+            return null;
+        }
+
+        const int parts = 4;
+
+        int holderColumn = Wrap(column + 1, parts);
+        int bridgeColumn = Wrap(column - 1, parts);
+        int rotation = Wrap(-column, parts);
+        char color = CrystalColor(target, column);
+
+        string fuse = BuildCrystalBreakFuse(cap, blocks);
+
+        var state = new ShapeDocument(cap, parts);
+
+        WriteColumn(state, column, coreText, color);
+        WriteColumn(state, holderColumn, support, color);
+        WriteColumn(state, bridgeColumn, fuse, color);
+
+        if (!ShapeSignature.AllColumnsLegal(state, out _) ||
+            !ShapeOps.IsStable(state))
+        {
+            return null;
+        }
+
+        if (FuseTouchesPreservedCrystal(
+                state,
+                column,
+                bridgeColumn,
+                blocks.Select(block => block.Top).ToList(),
+                targetColumn))
+        {
+            return null;
+        }
+
+        ShapeDocument? afterCut = CutAndRotateBack(state, rotation, out _);
+
+        if (afterCut is null ||
+            !ShapeOps.IsStable(afterCut) ||
+            !ShapeSignature.AllColumnsLegal(afterCut, out _) ||
+            !NativeCrystalsPreserved(afterCut, target, column) ||
+            !AuxiliaryCrystalsCleared(afterCut, holderColumn, bridgeColumn) ||
+            ColumnTextPadded(afterCut, column, cap) != targetColumn)
+        {
+            return null;
+        }
+
+        var steps = new List<AngleWorkStep>
+        {
+            new(
+                "模板 B（OneCutTight）前态：A = 正规核心；S = 双格托柱" +
+                (hung.Hung
+                    ? $"（悬空落点：第 {hung.Bottom + 1}–{hung.Top + 1} 层晶体段，落点第 " +
+                      $"{hung.Landing + 1} 层，双格由第 {hung.Landing} 层的辅助列挡块停住）"
+                    : "（没有悬空落点，被提升格都在本列自停、直接释放）") +
+                "；第 3 象限空；F = 保险丝（每个临时段锚层一颗晶体）" +
+                $"；四列短代码 = {ExportCodes(state)}",
+                state,
+                AngleWorkStepKind.PreState),
+            new(
+                "一刀（真实 Cut 后落定）：跨刀口的晶体整簇碎掉，被提升的普通格落回目标层" +
+                (hung.Hung ? "（悬空落点处由双格借辅助列挡停）" : string.Empty) +
+                $"；目标列 = {ColumnTextPadded(afterCut, column, cap)}",
+                afterCut,
+                AngleWorkStepKind.Cut)
+        };
+
+        AngleWorkOrder? candidate = BuildCrystalBreakOrder(
+            target,
+            column,
+            cap,
+            kind,
+            steps,
+            afterCut,
+            holderColumn,
+            bridgeColumn,
+            rotation,
+            blocks,
+            multiCut: false,
+            oneCutTight: true);
+
+        if (candidate is null)
+        {
+            return null;
+        }
+
+        return IsBetterThanAlternativeRoute(candidate, target, column, cap)
+            ? candidate
+            : null;
+    }
+
+    /// <summary>
+    /// 「不要盲切」闸门（docs/work-order-metrics.md §1 / docs §7.1 的完整口径）：
+    /// 模板 B 的 S 里可能预制了针（M2 &gt; 0），也可能比同样单刀的构造 G 多一次换柱。
+    /// 所以只有按 M1 → M7 字典序<b>不差于原路线</b>时才切到模板 B。
+    ///
+    /// <para>
+    /// 「原路线」= 把模板 B 关掉、用现有管线跑出来的第一条可行工序。
+    /// 比较时两个指标都用修正后的 M2（含辅助列里预制的针）。
+    /// </para>
+    /// </summary>
+    private static bool IsBetterThanAlternativeRoute(
+        AngleWorkOrder candidate,
+        ShapeDocument target,
+        int column,
+        int cap)
+    {
+        // 比较用的「原路线」本身不得再触发模板 B（否则无限递归）。
+        if (comparingOneCutTight)
+        {
+            return true;
+        }
+
+        AngleWorkOrder alternative;
+
+        comparingOneCutTight = true;
+
+        try
+        {
+            alternative = BuildCore(target, column, cap, true, true);
+        }
+        finally
+        {
+            comparingOneCutTight = false;
+        }
+
+        if (!alternative.IsComplete)
+        {
+            return true;
+        }
+
+        return CompareLexicographic(candidate.Metrics, alternative.Metrics) <= 0;
+    }
+
+    /// <summary>M1 → M7 字典序：负数表示 left 更优，0 表示打平，正数表示 left 更差。</summary>
+    private static int CompareLexicographic(
+        AngleWorkOrderMetrics left,
+        AngleWorkOrderMetrics right)
+    {
+        IReadOnlyList<int> a = left.ToVector();
+        IReadOnlyList<int> b = right.ToVector();
+
+        for (int index = 0; index < a.Count; index++)
+        {
+            if (a[index] != b[index])
+            {
+                return a[index] < b[index] ? -1 : 1;
+            }
+        }
+
+        return 0;
+    }
+
+    /// <summary>
+    /// 模板 B 的托柱：
+    /// <list type="bullet">
+    /// <item><b>悬空落点</b>（<paramref name="hungCore"/> ≥ 0）：伙伴层 = 核心层放普通格，
+    /// 刹车层 = 落点下一层放普通格，中间 <c>[落点 .. 核心层−1]</c> 放临时晶体
+    /// （与主列临时段一齐被这一刀碎掉，腾出双格的下落通道）；</item>
+    /// <item><b>自停落点</b>：<c>[落点 .. 核心层]</c> 整段放针，被提升格保持单格、
+    /// 与辅助列不粘连，落点由本列材料停住；</item>
+    /// <item>双格掉走以后，最高原生晶体段的中层放一枚针，造「环」把它挂住
+    /// （§7.2：针不参与水平粘连，但上下都是同一组的普通格 ⇒ 成环 ⇒ 不下落）。</item>
+    /// </list>
+    /// </summary>
+    private static bool BuildOneCutTightSupport(
+        int cap,
+        IReadOnlyList<(int Core, int Target)> lifts,
+        int hungCore,
+        string targetColumn,
+        out string support)
+    {
+        support = string.Empty;
+
+        if (cap <= 0)
+        {
+            return false;
+        }
+
+        char[] codes = new char[cap];
+        Array.Fill(codes, ShapeSignature.SolidCode);
+
+        foreach ((int core, int targetLayer) in lifts)
+        {
+            if (core == hungCore)
+            {
+                if (targetLayer <= 0 ||
+                    targetLayer >= core ||
+                    core >= cap)
+                {
+                    return false;
+                }
+
+                // 伙伴层（普通格）与刹车层（普通格）本身就是 T，这里写明是为了可读性。
+                codes[core] = ShapeSignature.SolidCode;
+                codes[targetLayer - 1] = ShapeSignature.SolidCode;
+
+                for (int layer = targetLayer; layer < core; layer++)
+                {
+                    codes[layer] = ShapeSignature.CrystalCode;
+                }
+
+                continue;
+            }
+
+            if (core >= cap || targetLayer < 0)
+            {
+                return false;
+            }
+
+            for (int layer = targetLayer; layer <= core; layer++)
+            {
+                codes[layer] = ShapeSignature.PinCode;
+            }
+        }
+
+        if (hungCore >= 0)
+        {
+            if (!TryFindOneCutTightAnchor(
+                    targetColumn,
+                    hungCore,
+                    out int anchorMiddle))
+            {
+                return false;
+            }
+
+            codes[anchorMiddle] = ShapeSignature.PinCode;
+        }
+
+        support = new string(codes);
+        return true;
+    }
+
+    /// <summary>
+    /// 双格掉走以后，上方（原生晶体段 + 辅助列上半段）失去同列支撑；
+    /// 取「<paramref name="aboveLayer"/> 以上、最高的原生晶体段」，要求 ≥3 连晶，
+    /// 返回它的中层 —— 在那里放针就能让辅助列上下两格与晶体段成环。
+    /// </summary>
+    private static bool TryFindOneCutTightAnchor(
+        string targetColumn,
+        int aboveLayer,
+        out int anchorMiddle)
+    {
+        anchorMiddle = -1;
+
+        int highest = targetColumn.LastIndexOf(ShapeSignature.CrystalCode);
+        int bestBottom = -1;
+        int bestTop = -1;
+
+        for (int layer = 0; layer <= highest; layer++)
+        {
+            if (targetColumn[layer] != ShapeSignature.CrystalCode ||
+                (layer > 0 &&
+                 targetColumn[layer - 1] == ShapeSignature.CrystalCode))
+            {
+                continue;
+            }
+
+            int top = layer;
+
+            while (top + 1 <= highest &&
+                   targetColumn[top + 1] == ShapeSignature.CrystalCode)
+            {
+                top++;
+            }
+
+            if (layer > aboveLayer && layer > bestBottom)
+            {
+                bestBottom = layer;
+                bestTop = top;
+            }
+
+            layer = top;
+        }
+
+        if (bestBottom < 0 || bestTop - bestBottom + 1 < 3)
+        {
+            return false;
+        }
+
+        int middle = bestBottom + ((bestTop - bestBottom + 1) / 2);
+
+        if (middle - 1 < bestBottom || middle + 1 > bestTop)
+        {
+            return false;
+        }
+
+        anchorMiddle = middle;
+        return true;
+    }
+
+    #endregion
 
     /// <summary>
     /// 用真实物理回放一份碎晶计划。切割排程只有两种固定形态（不是候选搜索）：
@@ -728,7 +1337,8 @@ public static partial class AngleWorkOrderBuilder
         int bridgeColumn,
         int rotation,
         IReadOnlyList<(int Bottom, int Top)> blocks,
-        bool multiCut)
+        bool multiCut,
+        bool oneCutTight = false)
     {
         var handover = new ShapeDocument(cap, 4);
 
@@ -756,9 +1366,14 @@ public static partial class AngleWorkOrderBuilder
             AngleWorkStepKind.Target));
 
         var limitations = BaseLimitations(
-            "O-v2 碎晶路线（docs/angle-route-optimal-v2.md §2）：A = 正规核心、" +
-            "S = 托柱（源层放针）、F = 保险丝（块锚层放晶体），" +
-            "全部由沿列扫描得出，没有打表；切割用真实 ShapePhysics.Cut 回放。");
+            oneCutTight
+                ? "O-v2 碎晶路线·模板 B（OneCutTight，docs/angle-route-optimal-v2.md §8.2）：" +
+                  "A = 正规核心、S = 双格托柱、F = 保险丝（块锚层放晶体），" +
+                  "全部由沿列扫描得出（O(H)，不打表、不枚举）；" +
+                  "一刀用真实 ShapePhysics.Cut 回放，末列逐格核对。"
+                : "O-v2 碎晶路线（docs/angle-route-optimal-v2.md §2）：A = 正规核心、" +
+                  "S = 托柱（源层放针）、F = 保险丝（块锚层放晶体），" +
+                  "全部由沿列扫描得出，没有打表；切割用真实 ShapePhysics.Cut 回放。");
 
         limitations.Add(
             "临时晶体块：" +
@@ -769,8 +1384,13 @@ public static partial class AngleWorkOrderBuilder
             "；保险丝在锚层（块最高层）放晶体。");
 
         limitations.Add(
-            "S 的针位 = 被提升格的源层（落点层放针的等价写法）：" +
-            "针不参与横向粘连，普通格才会落到目标层。");
+            oneCutTight
+                ? "模板 B 的 S：悬空落点处的落体是【主列普通格 + 辅助列普通格】的双格，" +
+                  "落点下一层放普通格当刹车；落点到伙伴层之间放临时晶体，切开后成洞。" +
+                  "其余提升格在整段路径放针，保持单格。双格掉走后，由最高原生晶体段中层的针" +
+                  "与辅助列上下两格成环，把上方材料挂住。"
+                : "S 的针位 = 被提升格的源层（落点层放针的等价写法）：" +
+                  "针不参与横向粘连，普通格才会落到目标层。");
 
         if (multiCut)
         {

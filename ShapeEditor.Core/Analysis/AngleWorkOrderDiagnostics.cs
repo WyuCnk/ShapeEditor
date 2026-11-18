@@ -20,6 +20,16 @@ public static class AngleWorkOrderDiagnostics
     private static long constructHAttempts;
     private static long constructHOnSolidFirstLayer;
 
+    /// <summary>
+    /// 模板 B（<c>OneCutTight</c>，docs/angle-route-optimal-v2.md §8.2）的开关。
+    ///
+    /// <para>
+    /// 只给测试 / 统计用：关掉它就能复现「接入模板 B 之前」的一刀列数与路线分布，
+    /// 从而算出新增列原本走的是哪条路线。生产路径恒为 <c>true</c>。
+    /// </para>
+    /// </summary>
+    public static bool EnableOneCutTight { get; set; } = true;
+
     /// <summary>构造 H 生成器的进入次数（含各档、含失败尝试）。</summary>
     public static long ConstructHAttempts =>
         Interlocked.Read(ref constructHAttempts);
@@ -28,11 +38,12 @@ public static class AngleWorkOrderDiagnostics
     public static long ConstructHOnSolidFirstLayer =>
         Interlocked.Read(ref constructHOnSolidFirstLayer);
 
-    /// <summary>清零全部计数器（测试用）。</summary>
+    /// <summary>清零全部计数器并恢复模板 B 开关（测试用）。</summary>
     public static void Reset()
     {
         Interlocked.Exchange(ref constructHAttempts, 0);
         Interlocked.Exchange(ref constructHOnSolidFirstLayer, 0);
+        EnableOneCutTight = true;
     }
 
     internal static void RecordConstructHAttempt(bool solidFirstLayer)

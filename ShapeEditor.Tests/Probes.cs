@@ -46,6 +46,10 @@ internal static class Probes
                 RunCut();
                 return 0;
 
+            case "tight":
+                OneCutTightStats.Print(OneCutTightStats.Measure());
+                return 0;
+
             default:
                 Console.WriteLine("未知 SHAPE_PROBE_MODE：" + mode);
                 return 1;
@@ -147,11 +151,17 @@ internal static class Probes
 
         bool old = Environment.GetEnvironmentVariable("SHAPE_PROBE_OLD") == "1";
 
+        // SHAPE_PROBE_TIGHT=0：关掉模板 B，用来对比「接入前后」的路线与指标。
+        AngleWorkOrderDiagnostics.EnableOneCutTight =
+            Environment.GetEnvironmentVariable("SHAPE_PROBE_TIGHT") != "0";
+
         AngleWorkOrder order = AngleWorkOrderBuilder.Build(
             document,
             0,
             Math.Max(target.Length, 1),
             preferCrystalBreak: !old);
+
+        AngleWorkOrderDiagnostics.EnableOneCutTight = true;
 
         Console.WriteLine("目标 = " + target);
         Console.WriteLine(
@@ -164,7 +174,8 @@ internal static class Probes
             "SubRecipe=" + (order.SubRecipe is null ? "null" : order.SubRecipe.Kind.ToString()) +
             " Q1=" + (order.Q1SubRecipe is null ? "null" : order.Q1SubRecipe.Kind.ToString()) +
             " aux=" + string.Join(",", order.AuxiliaryColumns) +
-            " weak=" + order.Steps.Count(step => step.Kind == AngleWorkStepKind.WeakDrop));
+            " weak=" + order.Steps.Count(step => step.Kind == AngleWorkStepKind.WeakDrop) +
+            " metrics=" + string.Join("/", order.Metrics.ToVector()));
 
         foreach (AngleWorkStep step in order.Steps)
         {

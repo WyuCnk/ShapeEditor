@@ -245,6 +245,12 @@ internal static class Program
             ("角工序:O-v2 指标 M1–M7", AngleRouteOptimalV2Tests.MetricsRecordedAndNotWorse),
             ("角工序:O-v2 碎晶前态 P1 与抬升上界", AngleRouteOptimalV2Tests.CrystalBreakPreStateSatisfiesP1AndMaximalLift),
 
+            // 2026-11-18 第六轮：碎晶·一刀的第二类模板 OneCutTight（docs §8.2）。
+            ("角工序:模板 B 两个样例逐格", OneCutTightTests.RegressionSamplesReplay),
+            ("角工序:模板 B 判定谓词", OneCutTightTests.PredicateAcceptsHungLandingFamily),
+            ("角工序:预制底针计入 M2", OneCutTightTests.PrePlacedPinsCountTowardM2),
+            ("角工序:模板 B 扩大一刀覆盖（3–9 层）", OneCutTightTests.CoversMoreOneCutColumns),
+
             // 交接规格 §5 的 9 组验收语料。
             ("语料1:角判据计数 4..12688", ProductionPathAcceptanceTests.AngleCriterionCounts),
             ("语料2:论文举例列与 n=4 的 S 判定", ProductionPathAcceptanceTests.PaperExampleColumns),

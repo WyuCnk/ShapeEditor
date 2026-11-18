@@ -462,6 +462,17 @@ public sealed record AngleWorkOrder(
                 step => step.Kind == AngleWorkStepKind.PreState &&
                         step.Shape is not null);
 
+            int prePlacedPins = 0;
+
+            /*
+             * M2 口径修正（docs/angle-route-optimal-v2.md §7.1 / §8）：
+             * 辅助列里【预制的针】也是准备成本，必须计入 M2。
+             *
+             * 例：`T.cT.T.ccc` 的 S = `PPTTTcTTPT` 预制了针，
+             * 核心恢复时不顶针，但 M2 不能宣称「0 针」——
+             * 该列按「辅助列里的每个针」逐个数是 3（2 枚底针 + 第 9 层的环锚针）。
+             * 目标列里的针是目标本身要求的，不在这里重复计数。
+             */
             if (preState?.Shape is not null)
             {
                 ShapeDocument shape = preState.Shape;
@@ -484,20 +495,31 @@ public sealed record AngleWorkOrder(
                         continue;
                     }
 
+                    bool auxiliaryThisPart = false;
+
                     for (int layer = 0; layer < shape.LayerCount; layer++)
                     {
+                        if (shape[layer, part].Type == CellType.Pin)
+                        {
+                            prePlacedPins++;
+                        }
+
                         if (shape[layer, part].Type != CellType.Empty)
                         {
-                            auxiliary++;
-                            break;
+                            auxiliaryThisPart = true;
                         }
+                    }
+
+                    if (auxiliaryThisPart)
+                    {
+                        auxiliary++;
                     }
                 }
             }
 
             return new AngleWorkOrderMetrics(
                 weakDrops,
-                pins,
+                pins + prePlacedPins,
                 cuts,
                 auxiliary,
                 supportSwaps,
@@ -981,9 +1003,21 @@ public static partial class AngleWorkOrderBuilder
         }
 
         /*
+         * 四、分档（§6）：先按论文选分支，不要先试「填充+暴破」。
+         *
+         * 分档只由目标列的结构谓词决定，所以提前算出来：模板 B（OneCutTight）
+         * 要用它决定「现在补位」还是「等算法 4 的构造 G 失败后再补位」。
+         */
+        AngleAlgorithm algorithm = SelectAlgorithm(target, column, kind);
+
+        /*
          * 三·补一、O-v2 碎晶路线（docs/angle-route-optimal-v2.md §2）：
          * n = 4 的碎晶角<b>第一顺位</b>——正规核心 + 托柱 + 保险丝 + 一刀。
          * 前态全部由扫描得出；回放失败才继续走顶针 / 算法 6 / 多刀。
+         *
+         * 模板 B（OneCutTight，§8.2）接在模板 A 后面。算法 4 例外：
+         * 它的论文首选构造 G（同样是单刀碎晶，实测换柱更少），
+         * 所以模板 B 延后到 G / 通用实现都失败后再补位（见下面的算法 4 分支）。
          */
         if (parts == 4 && enforceFiveConditions && preferCrystalBreak)
         {
@@ -991,7 +1025,8 @@ public static partial class AngleWorkOrderBuilder
                 target,
                 column,
                 cap,
-                kind);
+                kind,
+                allowOneCutTight: algorithm != AngleAlgorithm.Algorithm4);
 
             if (crystalBreak is not null &&
                 crystalBreak.IsComplete &&
@@ -1013,9 +1048,8 @@ public static partial class AngleWorkOrderBuilder
 
         /*
          * 四、分档（§6）：先按论文选分支，不要先试「填充+暴破」。
+         * 分档结果在上面的模板 B 位置已经算过（同一个纯谓词），这里直接复用。
          */
-        AngleAlgorithm algorithm = SelectAlgorithm(target, column, kind);
-
         AngleWorkOrder? tierOrder = TryTierOrder(
             algorithm,
             target,
@@ -1120,7 +1154,31 @@ public static partial class AngleWorkOrderBuilder
             }
 
             /*
-             * 单刀路线（构造 G / §11 通用计划）都没通过，才降级到 §15 多刀半破。
+             * 单刀路线（构造 G / §11 通用计划）都没通过，先补一次模板 B
+             * （OneCutTight，docs §8.2）：它也是单刀碎晶，命中悬空落点时比多刀省。
+             * 模板 B 不适用或回放失败，才降级到 §15 多刀半破。
+             */
+            if (preferCrystalBreak)
+            {
+                AngleWorkOrder? oneCutTight = TryBuildOneCutTightCandidate(
+                    target,
+                    column,
+                    cap,
+                    kind);
+
+                if (oneCutTight is not null &&
+                    oneCutTight.IsComplete &&
+                    !HasCyclicPreState(oneCutTight, target) &&
+                    !oneCutTight.HasIllegalPreState(out _, out _))
+                {
+                    return ApplyIsolatedColumnRule(
+                        oneCutTight,
+                        target,
+                        column);
+                }
+            }
+
+            /*
              * 多刀是结构性兜底：刀数 == 临时晶体连通块数 K，K 空即停。
              */
             AngleWorkOrder? multiCut = TryBuildMultiCutHalfBreak(
