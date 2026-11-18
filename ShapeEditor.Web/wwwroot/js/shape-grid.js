@@ -3277,6 +3277,42 @@ function drawAnalysisPathGraph(ctx, graph, left, top) {
         ctx.fill();
 
         ctx.restore();
+
+        /*
+         * 箭头标签（半边工序的「半破」）：画在箭头中点上方，
+         * 白底小圆角矩形保证在箭头与卡片背景上都可读。
+         */
+        if (edge.label) {
+            const labelText = String(edge.label);
+            const midX = (a1.x + tipX) / 2;
+            const midY = (a1.y + tipY) / 2 - 12;
+
+            ctx.save();
+            ctx.font = '700 10px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+
+            const labelWidth = Math.max(20, ctx.measureText(labelText).width + 10);
+            const labelHeight = 16;
+
+            ctx.fillStyle = "#FFF1F1";
+            ctx.strokeStyle = "#E7B6B6";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.roundRect(
+                midX - labelWidth / 2,
+                midY - labelHeight / 2,
+                labelWidth,
+                labelHeight,
+                7);
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.fillStyle = "#C62828";
+            ctx.fillText(labelText, midX, midY);
+
+            ctx.restore();
+        }
     }
 }
 
@@ -3938,6 +3974,10 @@ function normalizeAnalysisAngleColumns(rawColumns) {
                 ? ""
                 : String(raw.rankText),
             subRecipeLines: subRecipeLines,
+            isHalfMerged: !!raw.isHalfMerged,
+            halfTargetLine: raw.halfTargetLine === null || raw.halfTargetLine === undefined
+                ? ""
+                : String(raw.halfTargetLine),
             halfTitle: halfTitle,
             halfCandidateText: raw.halfCandidateText === null || raw.halfCandidateText === undefined
                 ? ""
@@ -4026,41 +4066,43 @@ function layoutAnalysisAngleColumns(measure, rawColumns, maxWidth) {
         // 与页面一致：无晶体 / Simple 隐藏分类芯片，避免「简单角 · 简单角」。
         const headerParts = [column.title];
 
-        if (column.showKindChip) {
-            headerParts.push(column.kindText);
-        }
-
-        /*
-         * 半边工序：与页面标题行一致，「半边工序」标签跟在分类后面，
-         * 再跟候选名与配对列提示（例如「候选3·临时晶体+保险丝」「与列 2 一起做」）。
-         */
-        if (column.halfTitle !== "") {
-            headerParts.push(column.halfTitle);
-
-            if (column.halfCandidateText !== "") {
-                headerParts.push(column.halfCandidateText);
+        if (!column.isHalfMerged) {
+            if (column.showKindChip) {
+                headerParts.push(column.kindText);
             }
 
-            if (column.halfColumnsText !== "") {
-                headerParts.push(column.halfColumnsText);
+            /*
+             * 半边工序：与页面标题行一致，「半边工序」标签跟在分类后面，
+             * 再跟候选名与配对列提示（例如「候选3·临时晶体+保险丝」「与列 2 一起做」）。
+             */
+            if (column.halfTitle !== "") {
+                headerParts.push(column.halfTitle);
+
+                if (column.halfCandidateText !== "") {
+                    headerParts.push(column.halfCandidateText);
+                }
+
+                if (column.halfColumnsText !== "") {
+                    headerParts.push(column.halfColumnsText);
+                }
             }
-        }
 
-        if (column.algorithmText !== "") {
-            headerParts.push(column.algorithmText);
-        }
+            if (column.algorithmText !== "") {
+                headerParts.push(column.algorithmText);
+            }
 
-        if (column.constructionText !== "") {
-            headerParts.push(column.constructionText);
-        }
+            if (column.constructionText !== "") {
+                headerParts.push(column.constructionText);
+            }
 
-        if (column.rankText !== "") {
-            headerParts.push(column.rankText);
-        }
+            if (column.rankText !== "") {
+                headerParts.push(column.rankText);
+            }
 
-        // 与页面标题行的「尚未完全验证」状态标签保持一致。
-        if (!column.isComplete) {
-            headerParts.push("尚未完全验证");
+            // 与页面标题行的「尚未完全验证」状态标签保持一致。
+            if (!column.isComplete) {
+                headerParts.push("尚未完全验证");
+            }
         }
 
         const headerText = headerParts
@@ -4118,6 +4160,8 @@ function layoutAnalysisAngleColumns(measure, rawColumns, maxWidth) {
          * + 未完成时的小字。候选名与配对列提示已经写进卡片标题行，这里不重复。
          */
         const halfTitleLines = [];
+        const halfSubtitleLines = [];
+        const halfTargetLines = [];
         const halfStatusLines = [];
         const halfNoteLines = [];
         const halfStepNoteLines = [];
@@ -4128,24 +4172,49 @@ function layoutAnalysisAngleColumns(measure, rawColumns, maxWidth) {
         let halfHeight = 0;
 
         if (column.halfTitle !== "") {
-            const halfHeading = column.halfPairColumnsText === ""
-                ? column.halfTitle
-                : column.halfTitle + " · 配对列 " + column.halfPairColumnsText;
+            if (column.isHalfMerged) {
+                /*
+                 * 合并卡片：标题已经单独占一行（角 1 + 角 2），副标题只写
+                 * 「半边工序 · 候选X」，不再重复配对列。
+                 */
+                const halfSubtitle = column.halfCandidateText === ""
+                    ? column.halfTitle
+                    : column.halfTitle + " · " + column.halfCandidateText;
 
-            const halfWrapped = wrapAnalysisText(
-                measure,
-                halfHeading,
-                ANALYSIS_ANGLE_HALF_FONT,
-                innerWidth,
-                false);
+                const halfSubtitleWrapped = wrapAnalysisText(
+                    measure,
+                    halfSubtitle,
+                    ANALYSIS_ANGLE_HALF_FONT,
+                    innerWidth,
+                    false);
 
-            for (let k = 0; k < halfWrapped.length; k++) {
-                halfTitleLines.push(halfWrapped[k]);
+                for (let k = 0; k < halfSubtitleWrapped.length; k++) {
+                    halfSubtitleLines.push(halfSubtitleWrapped[k]);
+                }
+
+                halfHeight =
+                    halfSubtitleLines.length * ANALYSIS_ANGLE_HALF_LINE_HEIGHT;
             }
+            else {
+                const halfHeading = column.halfPairColumnsText === ""
+                    ? column.halfTitle
+                    : column.halfTitle + " · 配对列 " + column.halfPairColumnsText;
 
-            halfHeight =
-                ANALYSIS_ANGLE_HALF_GAP +
-                halfTitleLines.length * ANALYSIS_ANGLE_HALF_LINE_HEIGHT;
+                const halfWrapped = wrapAnalysisText(
+                    measure,
+                    halfHeading,
+                    ANALYSIS_ANGLE_HALF_FONT,
+                    innerWidth,
+                    false);
+
+                for (let k = 0; k < halfWrapped.length; k++) {
+                    halfTitleLines.push(halfWrapped[k]);
+                }
+
+                halfHeight =
+                    ANALYSIS_ANGLE_HALF_GAP +
+                    halfTitleLines.length * ANALYSIS_ANGLE_HALF_LINE_HEIGHT;
+            }
 
             if (column.halfGraph) {
                 halfGraph = column.halfGraph;
@@ -4164,6 +4233,22 @@ function layoutAnalysisAngleColumns(measure, rawColumns, maxWidth) {
             }
 
             halfHeight += halfStepNoteLines.length * ANALYSIS_ANGLE_NOTE_LINE_HEIGHT;
+
+            // 合并卡片：半边链下方画一行「目标半边 = 角 1 + 角 2」小字。
+            if (column.isHalfMerged && column.halfTargetLine !== "") {
+                const halfTargetWrapped = wrapAnalysisText(
+                    measure,
+                    column.halfTargetLine,
+                    ANALYSIS_ANGLE_NOTE_FONT,
+                    innerWidth,
+                    false);
+
+                for (let k = 0; k < halfTargetWrapped.length; k++) {
+                    halfTargetLines.push(halfTargetWrapped[k]);
+                }
+
+                halfHeight += halfTargetLines.length * ANALYSIS_ANGLE_NOTE_LINE_HEIGHT;
+            }
 
             if (!column.halfIsComplete) {
                 const halfStatusText = column.halfStatusText || "该半边工序尚未完全验证";
@@ -4230,7 +4315,14 @@ function layoutAnalysisAngleColumns(measure, rawColumns, maxWidth) {
             }
         }
 
-        if (column.isSimple) {
+        if (column.isHalfMerged) {
+            /*
+             * 半边合并卡片：主体只有 Half.Steps 的节点链 + 目标半边小字，
+             * 没有单列主链、Note 步骤与造塔子配方。
+             */
+            bodyHeight = halfHeight;
+        }
+        else if (column.isSimple) {
             const simpleText = column.simpleText || "最高晶体连续触地，无需工序";
 
             const wrapped = wrapAnalysisText(
@@ -4334,6 +4426,7 @@ function layoutAnalysisAngleColumns(measure, rawColumns, maxWidth) {
 
         cards.push({
             headerLines: headerLines,
+            isHalfMerged: column.isHalfMerged,
             isSimple: column.isSimple,
             isComplete: column.isComplete,
             simpleLines: simpleLines,
@@ -4346,6 +4439,8 @@ function layoutAnalysisAngleColumns(measure, rawColumns, maxWidth) {
             graph: graph,
             graphHeight: graphHeight,
             halfTitleLines: halfTitleLines,
+            halfSubtitleLines: halfSubtitleLines,
+            halfTargetLines: halfTargetLines,
             halfStatusLines: halfStatusLines,
             halfNoteLines: halfNoteLines,
             halfStepNoteLines: halfStepNoteLines,
@@ -4388,8 +4483,8 @@ function drawAnalysisAngleColumns(ctx, layout, left, top, cardWidth) {
         const card = layout.cards[i];
 
         ctx.save();
-        ctx.fillStyle = "#FBFAFE";
-        ctx.strokeStyle = "#E6E2F2";
+        ctx.fillStyle = card.isHalfMerged ? "#FAF7FF" : "#FBFAFE";
+        ctx.strokeStyle = card.isHalfMerged ? "#B9A9EE" : "#E6E2F2";
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.roundRect(left, cardTop, cardWidth, card.height, 10);
@@ -4411,7 +4506,11 @@ function drawAnalysisAngleColumns(ctx, layout, left, top, cardWidth) {
             cursorY += ANALYSIS_ANGLE_TITLE_LINE_HEIGHT;
         }
 
-        if (card.isSimple) {
+        if (card.isHalfMerged) {
+            // 半边合并卡片：标题 + 副标题 + Half.Steps 节点链 + 目标半边小字。
+            cursorY = drawAnalysisAngleHalf(ctx, card, innerLeft, cursorY);
+        }
+        else if (card.isSimple) {
             ctx.font = ANALYSIS_ANGLE_BODY_FONT;
             ctx.fillStyle = ANALYSIS_ANGLE_SIMPLE_COLOR;
 
@@ -4517,22 +4616,39 @@ function drawAnalysisAngleColumns(ctx, layout, left, top, cardWidth) {
  * 返回画完后的纵坐标；这一列没有半边工序时原样返回。
  */
 function drawAnalysisAngleHalf(ctx, card, left, top) {
-    if (!card ||
-        !Array.isArray(card.halfTitleLines) ||
-        card.halfTitleLines.length === 0) {
+    if (!card) {
         return top;
     }
 
-    let cursorY = top + ANALYSIS_ANGLE_HALF_GAP;
+    const hasHeading =
+        (Array.isArray(card.halfTitleLines) && card.halfTitleLines.length > 0) ||
+        (Array.isArray(card.halfSubtitleLines) && card.halfSubtitleLines.length > 0);
+
+    if (!hasHeading) {
+        return top;
+    }
+
+    // 合并卡片的标题已经单独占一行，副标题紧贴其下；旧版半边区块保留顶部间距。
+    let cursorY = card.isHalfMerged
+        ? top
+        : top + ANALYSIS_ANGLE_HALF_GAP;
 
     ctx.textAlign = "left";
     ctx.textBaseline = "top";
     ctx.font = ANALYSIS_ANGLE_HALF_FONT;
     ctx.fillStyle = ANALYSIS_ANGLE_HALF_COLOR;
 
-    for (let j = 0; j < card.halfTitleLines.length; j++) {
-        ctx.fillText(card.halfTitleLines[j], left, cursorY);
-        cursorY += ANALYSIS_ANGLE_HALF_LINE_HEIGHT;
+    if (card.isHalfMerged) {
+        for (let j = 0; j < card.halfSubtitleLines.length; j++) {
+            ctx.fillText(card.halfSubtitleLines[j], left, cursorY);
+            cursorY += ANALYSIS_ANGLE_HALF_LINE_HEIGHT;
+        }
+    }
+    else {
+        for (let j = 0; j < card.halfTitleLines.length; j++) {
+            ctx.fillText(card.halfTitleLines[j], left, cursorY);
+            cursorY += ANALYSIS_ANGLE_HALF_LINE_HEIGHT;
+        }
     }
 
     if (card.halfGraph) {
@@ -4549,6 +4665,21 @@ function drawAnalysisAngleHalf(ctx, card, left, top) {
 
         for (let j = 0; j < card.halfStepNoteLines.length; j++) {
             ctx.fillText(card.halfStepNoteLines[j], left, cursorY);
+            cursorY += ANALYSIS_ANGLE_NOTE_LINE_HEIGHT;
+        }
+    }
+
+    // 合并卡片：目标半边 = 角 1 + 角 2。
+    if (card.isHalfMerged &&
+        Array.isArray(card.halfTargetLines) &&
+        card.halfTargetLines.length > 0) {
+        ctx.font = ANALYSIS_ANGLE_NOTE_FONT;
+        ctx.fillStyle = ANALYSIS_ANGLE_NOTE_COLOR;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+
+        for (let j = 0; j < card.halfTargetLines.length; j++) {
+            ctx.fillText(card.halfTargetLines[j], left, cursorY);
             cursorY += ANALYSIS_ANGLE_NOTE_LINE_HEIGHT;
         }
     }
@@ -4737,6 +4868,16 @@ function layoutGraphCanvas(canvas, layeredGraph) {
                 tipX + "," + tipY + " " +
                 (bx - vy * half) + "," + (by + vx * half) + " " +
                 (bx + vy * half) + "," + (by - vx * half));
+        }
+
+        // 箭头标签（半边工序的「半破」）：跟随真实箭头中点重定位。
+        const label = canvas.querySelector(
+            '.angle-edge-label[data-edge-from="' + path.getAttribute("data-edge-from") +
+            '"][data-edge-to="' + path.getAttribute("data-edge-to") + '"]');
+
+        if (label) {
+            label.style.left = ((startX + tipX) / 2) + "px";
+            label.style.top = (((startY + tipY) / 2) - 12) + "px";
         }
     });
 }

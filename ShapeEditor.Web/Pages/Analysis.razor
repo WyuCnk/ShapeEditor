@@ -269,7 +269,7 @@
                                             <div class="half-direction-list">
                                                 @foreach (ExchangeDirection direction in visibleDirections)
                                                 {
-                                                    <span class="half-direction @(direction.IsLegal ? "ok" : "bad")">@direction.Display</span>
+                                                    <span class="half-direction @(direction.IsLegal ? "ok" : "bad")">@FormatExchangeDirection(direction.Display)</span>
                                                 }
                                             </div>
                                         }
@@ -357,8 +357,8 @@
                                                                     <span class="path-node-kind">@node.KindTag</span>
                                                                 }
 
-                                                                <div class="path-node-head" title="@node.Title">
-                                                                    @node.Title
+                                                                <div class="path-node-head" title="@DisplayPathNodeTitle(node)">
+                                                                    @DisplayPathNodeTitle(node)
                                                                 </div>
 
                                                                 <div class="graph-node-body path-node-body">
@@ -432,13 +432,21 @@
                                         没有图形快照的说明步骤（Note）只在节点链下方以一行小字列出，不画节点。
                                         工序前态按目标图形层数作为画布高度，需要更高脚手架才能成立的构造会标为尚未完全验证。
                                         造塔子配方（交换链，rank 0）可折叠展开，展开状态由标题栏的开关统一控制。
-                                        单列做不出来的角会带「半边工序」标签：候选名与配对列写在标题行，
-                                        卡片下方再单列一行 n/2 列一起做的步骤链（两列逐格核对），同样固定 30px 单元格预览。
+                                        单列做不出来的角会合并成一张「角 1 + 角 2」卡片：标题行写「半边工序 · 候选X」，
+                                        卡片主体直接是 Core 的合并前态 → 半破 → 目标半边（同样固定 30px 单元格预览）；
+                                        这一列不再显示单列步骤链与造塔子配方。
                                     </p>
 
                                     <div class="angle-work-list">
-                                        @foreach (AngleWorkColumn work in AngleWorks)
+                                        @foreach (AngleWorkColumn work in VisibleAngleWorks)
                                         {
+                                            @if (work.Half is not null)
+                                            {
+                                                @* 半边工序：只画一张「角1+角2」合并卡片，不再画单列链 / 子配方。 *@
+                                                <AngleHalfCard Half="work.Half" Column="work.Column" />
+                                            }
+                                            else
+                                            {
                                             <section class="angle-work-card" data-angle-column="@work.Column">
                                                 <div class="angle-work-head">
                                                     <h4>角 @(work.Column + 1)</h4>
@@ -447,14 +455,6 @@
                                                     @if (work.ShowKindChip)
                                                     {
                                                         <span class="angle-kind @(work.IsSimple ? "simple" : "break")">@work.KindText</span>
-                                                    }
-
-                                                    @* 半边工序：紫色标签 + 候选名 + 配对列，与「碎晶角 / 简单角」并列。 *@
-                                                    @if (work.Half is not null)
-                                                    {
-                                                        <span class="angle-kind half">@work.Half.Title</span>
-                                                        <span class="angle-half-candidate">@work.Half.CandidateText</span>
-                                                        <span class="angle-half-columns">@work.Half.ColumnsText</span>
                                                     }
 
                                                     @if (!string.IsNullOrEmpty(work.AlgorithmText))
@@ -529,64 +529,6 @@
                                                     }
                                                 }
 
-                                                @if (work.Half is not null)
-                                                {
-                                                    @*
-                                                        半边工序：n/2 列一起做的那一刀，单独成一行。
-                                                        主步骤链是目标角的单列视角，这里才是 k 列逐格核对用的步骤链；
-                                                        节点样式与主链完全一致（30px 单元格 1:1 竖式图）。
-                                                    *@
-                                                    <section class="angle-half" data-angle-half="@work.Column">
-                                                        <div class="angle-half-head">
-                                                            <h5>@(work.Half.Title)节点链</h5>
-                                                            <span class="angle-half-pair">配对列 @work.Half.PairColumnsText</span>
-                                                        </div>
-
-                                                        @if (work.Half.Nodes.Count > 0)
-                                                        {
-                                                            <AngleWorkNodeChain Nodes="work.Half.Nodes"
-                                                                                Edges="work.Half.Edges"
-                                                                                Width="work.Half.GraphWidth"
-                                                                                Height="work.Half.GraphHeight" />
-                                                        }
-
-                                                        @* 半边链的 Note 步骤同样只在链下方以一行小字列出。 *@
-                                                        @if (work.Half.StepNotes.Count > 0)
-                                                        {
-                                                            <div class="angle-work-step-notes">
-                                                                @foreach (string stepNote in work.Half.StepNotes)
-                                                                {
-                                                                    <p class="angle-work-step-note">@stepNote</p>
-                                                                }
-                                                            </div>
-                                                        }
-
-                                                        @if (!work.Half.IsComplete)
-                                                        {
-                                                            @* 半边工序没验证完时同样如实标注，并给出 Note 与限制小字。 *@
-                                                            <div class="angle-work-warning angle-half-warning">
-                                                                <p class="angle-work-status">@work.Half.StatusText</p>
-
-                                                                @if (!string.IsNullOrWhiteSpace(work.Half.Note))
-                                                                {
-                                                                    <p class="angle-work-note">@work.Half.Note</p>
-                                                                }
-
-                                                                @if (work.Half.Limitations.Count > 0)
-                                                                {
-                                                                    <p class="angle-work-limitation-title">限制与前提</p>
-                                                                    <ul class="angle-work-limitations">
-                                                                        @foreach (string limitation in work.Half.Limitations)
-                                                                        {
-                                                                            <li>@limitation</li>
-                                                                        }
-                                                                    </ul>
-                                                                }
-                                                            </div>
-                                                        }
-                                                    </section>
-                                                }
-
                                                 @if (work.SubRecipe is not null)
                                                 {
                                                     @* 造塔子配方：标题常显，内容由「展开全部子配方」开关控制。 *@
@@ -621,6 +563,7 @@
                                                     </section>
                                                 }
                                             </section>
+                                            }
                                         }
                                     </div>
                                     }
@@ -692,6 +635,12 @@
     /// </summary>
     private IReadOnlyList<AngleWorkColumn>? _angleWorks;
 
+    /// <summary>当前图形里确实走了半边工序的目标列（0 起），用于交换文案判定。</summary>
+    private IReadOnlyList<IReadOnlyList<int>>? _halfTargetColumns;
+
+    /// <summary>_halfTargetColumns 对应的图形；切换图形后失效。</summary>
+    private ShapeDocument? _halfTargetColumnsDocument;
+
     /// <summary>_angleWorks 对应的图形，用于切换图形后失效重算。</summary>
     private ShapeDocument? _angleWorksDocument;
 
@@ -714,9 +663,163 @@
     private IReadOnlyList<AngleWorkColumn> AngleWorks =>
         _angleWorks ?? Array.Empty<AngleWorkColumn>();
 
+    /// <summary>
+    /// 页面与导出实际展示的角卡片。
+    ///
+    /// 半边工序是「n/2 列一起做」的合并卡片：
+    /// <list type="bullet">
+    /// <item>同一个 <c>Target.Columns</c> 只保留第一张，避免重复画同一张合并卡片；</item>
+    /// <item>已经被某张半边卡片覆盖的角不再单独显示（用户要求：需要半边工序时，
+    /// 就不再显示单独制作某个角）；未被覆盖的角照常显示普通卡片。</item>
+    /// </list>
+    /// 正常的 Core 输出只会在主列上带 Half，这里只是防御性去重。
+    /// </summary>
+    private IReadOnlyList<AngleWorkColumn> VisibleAngleWorks
+    {
+        get
+        {
+            IReadOnlyList<AngleWorkColumn> works = AngleWorks;
+
+            if (!works.Any(work => work.Half is not null))
+            {
+                return works;
+            }
+
+            var halfColumnSets = works
+                .Where(work => work.Half is not null)
+                .Select(work => new HashSet<int>(work.Half!.TargetColumns))
+                .ToList();
+
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var visible = new List<AngleWorkColumn>(works.Count);
+
+            foreach (AngleWorkColumn work in works)
+            {
+                if (work.Half is not null)
+                {
+                    string key = string.Join(
+                        "-",
+                        work.Half.TargetColumns);
+
+                    if (seen.Add(key))
+                    {
+                        visible.Add(work);
+                    }
+
+                    continue;
+                }
+
+                // 这一列已被某张半边卡片覆盖 ⇒ 不再单独显示。
+                if (halfColumnSets.Any(columns => columns.Contains(work.Column)))
+                {
+                    continue;
+                }
+
+                visible.Add(work);
+            }
+
+            return visible;
+        }
+    }
+
+    /// <summary>
+    /// 当前图形里确实走了半边工序的 <c>Half.Target.Columns</c>（0 起）。
+    ///
+    /// 优先复用已构建的角工序（展开过「角的工序」时零额外计算）；
+    /// 没展开时只为 n = 4 的 4 列各调一次 <see cref="AngleWorkOrderBuilder.Build"/>，
+    /// 用来判定交换文案该写「半边」还是普通列号。n ≠ 4 没有半边工序，直接空。
+    /// </summary>
+    private IReadOnlyList<IReadOnlyList<int>> HalfTargetColumns
+    {
+        get
+        {
+            ShapeDocument? document = _document;
+
+            if (document is null || document.PartCount != 4)
+            {
+                return Array.Empty<IReadOnlyList<int>>();
+            }
+
+            if (_halfTargetColumns is not null &&
+                ReferenceEquals(_halfTargetColumnsDocument, document))
+            {
+                return _halfTargetColumns;
+            }
+
+            var targets = new List<IReadOnlyList<int>>();
+
+            if (_angleWorks is not null)
+            {
+                foreach (AngleWorkColumn work in _angleWorks)
+                {
+                    if (work.Half is not null)
+                    {
+                        targets.Add(work.Half.TargetColumns);
+                    }
+                }
+            }
+            else
+            {
+                int cap = document.LayerCount;
+
+                for (int column = 0;
+                     column < document.PartCount;
+                     column++)
+                {
+                    AngleWorkOrder order = AngleWorkOrderBuilder.Build(
+                        document,
+                        column,
+                        cap);
+
+                    if (order.Half is not null)
+                    {
+                        targets.Add(order.Half.Target.Columns?.ToArray() ??
+                                    Array.Empty<int>());
+                    }
+                }
+            }
+
+            _halfTargetColumns = targets;
+            _halfTargetColumnsDocument = document;
+
+            return targets;
+        }
+    }
+
+    /// <summary>
+    /// 交换方向的显示文本：只有当前图形确实有半边工序时才改写，
+    /// 否则保持 Core 的 <c>(1+2)+(3+4)</c>。
+    /// </summary>
+    private string FormatExchangeDirection(
+        string direction) =>
+        ExchangeDisplay.FormatDirection(
+            direction,
+            _document?.PartCount ?? 0,
+            HalfTargetColumns);
+
+    /// <summary>交换节点「交换得到左/右半边」的显示标题（规则同方向文本）。</summary>
+    private string FormatExchangeNodeTitle(
+        string title,
+        string direction) =>
+        ExchangeDisplay.FormatSideNodeTitle(
+            title,
+            direction,
+            _document?.PartCount ?? 0,
+            HalfTargetColumns);
+
+    /// <summary>
+    /// 制作路径节点标题：只改写交换得到左/右半边这两个节点，
+    /// 「制作带柱子的半半边 P1..P4」等 Core 语义标题保持原样。
+    /// </summary>
+    private string DisplayPathNodeTitle(
+        ProductionPathGraphNode node) =>
+        _path?.Path is null
+            ? node.Title
+            : FormatExchangeNodeTitle(node.Title, _path.Path.Direction);
+
     /// <summary>当前已构建的列里是否有造塔子配方；没有时不显示展开开关。</summary>
     private bool HasSubRecipes =>
-        AngleWorks.Any(work => work.SubRecipe is not null);
+        VisibleAngleWorks.Any(work => work.SubRecipe is not null);
 
     /// <summary>角工序区域的汇总：简单角数量与碎晶角验证进度。</summary>
     private string AngleWorkSummary
@@ -732,6 +835,7 @@
 
             int simple = works.Count(work => work.IsSimple);
             int breaks = works.Count - simple;
+            int halfCards = VisibleAngleWorks.Count(work => work.Half is not null);
 
             if (breaks == 0)
             {
@@ -742,6 +846,9 @@
 
             string summary =
                 $"共 {works.Count} 个角：{simple} 个简单角、{breaks} 个碎晶角；" +
+                (halfCards > 0
+                    ? $"{halfCards} 张半边工序合并卡片；"
+                    : "") +
                 $"{complete}/{breaks} 列碎晶角工序已验证通过";
 
             return complete == breaks
@@ -767,7 +874,7 @@
 
             if (_path.IsProducible && _path.Path is not null)
             {
-                return $"可制作：方向 {_path.Path.Direction}" +
+                return $"可制作：方向 {FormatExchangeDirection(_path.Path.Direction)}" +
                        $"（{(_path.Path.DirectionLegal ? "合法方向" : "不合法方向")}）。";
             }
 
@@ -809,7 +916,7 @@
             return lines;
         }
 
-        lines.Add($"可制作：方向 {_path.Path.Direction}（{(_path.Path.DirectionLegal ? "合法方向" : "不合法方向")}）");
+        lines.Add($"可制作：方向 {FormatExchangeDirection(_path.Path.Direction)}（{(_path.Path.DirectionLegal ? "合法方向" : "不合法方向")}）");
 
         foreach (ProductionStep step in _path.Path.Steps)
         {
@@ -817,7 +924,8 @@
                 ? ""
                 : " " + Exporter.Export(step.Shape, omitTopEmptyLayers: true);
 
-            lines.Add(step.Title + code);
+            lines.Add(
+                FormatExchangeNodeTitle(step.Title, _path.Path.Direction) + code);
         }
 
         return lines;
@@ -855,7 +963,7 @@
             _analysis is not null &&
             _half is not null &&
             // 半边工序的节点链也是图，同样要按真实矩形校正箭头。
-            AngleWorks.Any(work =>
+            VisibleAngleWorks.Any(work =>
                 work.Nodes.Count > 0 ||
                 (work.Half?.Nodes.Count ?? 0) > 0);
 
@@ -1094,7 +1202,7 @@
         ProductionPath path = _path.Path;
 
         section.Lines.Add(
-            $"可制作：方向 {path.Direction}（{(path.DirectionLegal ? "合法方向" : "不合法方向")}）。");
+            $"可制作：方向 {FormatExchangeDirection(path.Direction)}（{(path.DirectionLegal ? "合法方向" : "不合法方向")}）。");
 
         var graph = new AnalysisExportGraph
         {
@@ -1107,7 +1215,7 @@
             graph.Nodes.Add(new AnalysisExportGraphNode
             {
                 Id = node.Id,
-                Title = node.Title,
+                Title = DisplayPathNodeTitle(node),
                 X = node.X,
                 Y = node.Y,
                 Width = node.Width,
@@ -1154,7 +1262,7 @@
             Title = "角的工序"
         };
 
-        IReadOnlyList<AngleWorkColumn> works = AngleWorks;
+        IReadOnlyList<AngleWorkColumn> works = VisibleAngleWorks;
 
         section.Lines.Add(AngleWorkSummary);
         section.Lines.Add(
@@ -1180,42 +1288,53 @@
         if (works.Any(work => work.Half is not null))
         {
             section.Lines.Add(
-                "带「半边工序」标签的角要 n/2 列一起做：标题行写候选名与配对列，" +
-                "卡片下方单独一行是那几列逐格核对的步骤链（同样 30px 单元格 1:1）。");
+                "单列做不出来的角合并成一张「角 1 + 角 2」卡片：标题行写半边工序与候选名，" +
+                "主体直接画合并前态 → 半破 → 目标半边（30px 单元格 1:1）；" +
+                "不再导出单列步骤链与造塔子配方。");
         }
 
         foreach (AngleWorkColumn work in works)
         {
+            bool isHalf = work.Half is not null;
+
             var column = new AnalysisExportAngleColumn
             {
-                Title = $"角 {work.Column + 1}",
-                KindText = work.KindText,
-                ShowKindChip = work.ShowKindChip,
-                AlgorithmText = work.AlgorithmText ?? "",
-                // 半边工序的构造由「半边工序」标签承载，与页面标题行保持一致。
-                ConstructionText = work.ShowConstructionChip
+                // 半边工序：标题就是合并卡片标题「角 1 + 角 2」，
+                // 单列链 / 子配方 / 分类芯片都不再导出。
+                Title = isHalf
+                    ? work.Half!.CardTitle
+                    : $"角 {work.Column + 1}",
+                KindText = isHalf ? "" : work.KindText,
+                ShowKindChip = !isHalf && work.ShowKindChip,
+                AlgorithmText = isHalf ? "" : work.AlgorithmText ?? "",
+                ConstructionText = !isHalf && work.ShowConstructionChip
                     ? work.ConstructionText ?? ""
                     : "",
-                RankText = work.RankText ?? "",
-                IsSimple = work.IsSimple,
-                IsComplete = work.IsComplete,
-                StatusText = work.StatusText ?? "",
-                SimpleText = work.IsSimple ? work.SimpleText : "",
-                Note = work.Note,
-                StepNotes = work.StepNotes.ToList(),
-                Limitations = work.Limitations.ToList(),
-                SubRecipeLines = work.SubRecipe is null
+                RankText = isHalf ? "" : work.RankText ?? "",
+                IsSimple = !isHalf && work.IsSimple,
+                // 合并卡片的主状态由 HalfIsComplete 承载，避免再画一遍「该列工序未验证」。
+                IsComplete = isHalf ? true : work.IsComplete,
+                StatusText = isHalf ? "" : work.StatusText ?? "",
+                SimpleText = !isHalf && work.IsSimple ? work.SimpleText : "",
+                Note = isHalf ? null : work.Note,
+                StepNotes = isHalf
                     ? new List<string>()
-                    : new List<string>
+                    : work.StepNotes.ToList(),
+                Limitations = isHalf
+                    ? new List<string>()
+                    : work.Limitations.ToList(),
+                SubRecipeLines = !isHalf && work.SubRecipe is not null
+                    ? new List<string>
                     {
                         work.SubRecipe.Title + "：" +
                         string.Join(
                             " → ",
                             work.SubRecipe.Items.Select(item => item.Title))
                     }
+                    : new List<string>()
             };
 
-            if (work.Nodes.Count > 0)
+            if (!isHalf && work.Nodes.Count > 0)
             {
                 column.Graph = CreateExportGraph(
                     work.Nodes,
@@ -1225,15 +1344,17 @@
             }
 
             /*
-             * 半边工序：标题、候选名、配对列与步骤节点链一起导出，
-             * 未验证完时再带上 Note 与限制小字，与页面卡片一一对应。
+             * 半边工序：只导出合并卡片（标题 + 候选副标题 + Half.Steps 节点链
+             * + 目标半边小字 + 未完成提示），与页面卡片一一对应。
              */
-            if (work.Half is not null)
+            if (isHalf)
             {
-                column.HalfTitle = work.Half.Title;
+                column.IsHalfMerged = true;
+                column.HalfTitle = work.Half!.Title;
                 column.HalfCandidateText = work.Half.CandidateText;
-                column.HalfColumnsText = work.Half.ColumnsText;
-                column.HalfPairColumnsText = work.Half.PairColumnsText;
+                column.HalfColumnsText = "";
+                column.HalfPairColumnsText = "";
+                column.HalfTargetLine = work.Half.TargetLine;
                 column.HalfIsComplete = work.Half.IsComplete;
                 column.HalfStatusText = work.Half.StatusText ?? "";
                 column.HalfNote = work.Half.Note;
@@ -1294,7 +1415,8 @@
             graph.Edges.Add(new AnalysisExportGraphEdge
             {
                 FromId = edge.FromId,
-                ToId = edge.ToId
+                ToId = edge.ToId,
+                Label = edge.Label ?? ""
             });
         }
 
@@ -1424,7 +1546,7 @@
             {
                 axisBlock.Items.Add(new AnalysisExportAxisDirection
                 {
-                    Text = direction.Display,
+                    Text = FormatExchangeDirection(direction.Display),
                     IsLegal = direction.IsLegal
                 });
             }
@@ -1490,6 +1612,8 @@
         _angleWorkBusy = false;
         _angleWorks = null;
         _angleWorksDocument = null;
+        _halfTargetColumns = null;
+        _halfTargetColumnsDocument = null;
 
         _analysis = null;
         _half = null;
@@ -1668,6 +1792,8 @@
         _properties = ShapeProperty.None;
         _angleWorks = null;
         _angleWorksDocument = null;
+        _halfTargetColumns = null;
+        _halfTargetColumnsDocument = null;
 
         if (!_disposed)
         {
@@ -1723,6 +1849,8 @@
         _angleWorkPercent = 0;
         _angleWorks = null;
         _angleWorksDocument = null;
+        _halfTargetColumns = null;
+        _halfTargetColumnsDocument = null;
 
         await InvokeAsync(StateHasChanged);
         await Task.Delay(1);

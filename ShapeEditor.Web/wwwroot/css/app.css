@@ -2591,6 +2591,46 @@ button {
     background: #fbfaff;
 }
 
+/* 半边工序合并卡片：标题「角 1 + 角 2」+ 副标题「半边工序 · 候选X」 */
+.angle-half-card {
+    border-color: #b9a9ee;
+    background: #faf7ff;
+}
+
+.angle-half-subtitle {
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: #efe6fb;
+    color: #4527a0;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 18px;
+}
+
+/* 合并卡片底部小字：目标半边 = 角 1 + 角 2 */
+.angle-half-target-line {
+    margin: 8px 0 0;
+    font-size: 12px;
+    line-height: 17px;
+    color: #6b6b76;
+}
+
+/* 箭头标签（半边工序的「半破」）：绝对定位，JS 按真实箭头中点校正 */
+.angle-edge-label {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    padding: 1px 6px;
+    border: 1px solid #e7b6b6;
+    border-radius: 7px;
+    background: #fff1f1;
+    color: #c62828;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 14px;
+    white-space: nowrap;
+    pointer-events: none;
+}
+
 .angle-work-head {
     display: flex;
     align-items: center;

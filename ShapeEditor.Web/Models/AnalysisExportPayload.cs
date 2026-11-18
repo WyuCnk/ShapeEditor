@@ -113,6 +113,16 @@ public sealed class AnalysisExportAngleColumn
     public List<string> SubRecipeLines { get; set; } = new();
 
     /// <summary>
+    /// 半边工序合并卡片（用户要求）：为 true 时不再画单列节点链与造塔子配方，
+    /// 只画 <see cref="Title"/>（角 1 + 角 2）+ 半边副标题 + <see cref="HalfGraph"/>
+    /// + <see cref="HalfTargetLine"/> 与未完成提示。
+    /// </summary>
+    public bool IsHalfMerged { get; set; }
+
+    /// <summary>合并卡片底部小字：「目标半边 = 角 1 + 角 2」。</summary>
+    public string HalfTargetLine { get; set; } = "";
+
+    /// <summary>
     /// 半边工序的标题（固定「半边工序」）。为空表示这一列没有半边工序，
     /// 导出时不画半边区块。
     /// </summary>
@@ -245,6 +255,12 @@ public sealed class AnalysisExportGraphEdge
 
     /// <summary>指向废料节点的箭头，导出时画成灰色虚线。</summary>
     public bool IsWaste { get; set; }
+
+    /// <summary>
+    /// 箭头标签（半边工序的「半破」）；为空表示不画。
+    /// 只标在进入 Cut / 目标步的那根箭头上，与页面一致。
+    /// </summary>
+    public string Label { get; set; } = "";
 }
 
 /// <summary>

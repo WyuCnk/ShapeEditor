@@ -126,15 +126,28 @@ public sealed record AngleWorkEdge(
     string FromId,
     string ToId,
     string Path,
-    string Arrow);
+    string Arrow)
+{
+    /// <summary>
+    /// 箭头标签；null 表示不画。半边工序的「半破」标签由
+    /// <see cref="AngleWorkColumnBuilder"/> 只在进入 Cut / 目标步的那根箭头上设置。
+    /// </summary>
+    public string? Label { get; init; }
+
+    /// <summary>标签首帧中心 X（节点链坐标），页面渲染后由 JS 按真实矩形重算。</summary>
+    public double LabelX { get; init; }
+
+    /// <summary>标签首帧中心 Y（节点链坐标），页面渲染后由 JS 按真实矩形重算。</summary>
+    public double LabelY { get; init; }
+}
 
 /// <summary>
 /// 半边工序视图（Core 的 <see cref="HalfWorkOrder"/> 转成页面/导出用的字段）。
 ///
 /// <para>
-/// 半边工序是「n/2 列一起做」的那一刀：<see cref="AngleWorkColumn.Nodes"/> 是目标角的
-/// 单列视角，<see cref="Nodes"/> 才是 k 列（n = 4 时两列）逐格核对用的步骤链，
-/// 所以它单独成一行、单独一套节点编号，画在角卡片内的主步骤链下方。
+/// 半边工序是「n/2 列一起做」的<b>合并卡片</b>：<see cref="CardTitle"/> 是
+/// 「角 1 + 角 2」，<see cref="Nodes"/> 直接是 Core 的 <c>Half.Steps</c>
+/// （前态 → 半破 → 目标半边），不再单独显示目标角的单列步骤链。
 /// </para>
 /// </summary>
 public sealed class AngleHalfWork
@@ -147,6 +160,24 @@ public sealed class AngleHalfWork
 
     /// <summary>候选名，例如「候选3·临时晶体+保险丝」；未知枚举值也有可读文案。</summary>
     public string CandidateText { get; init; } = "";
+
+    /// <summary>
+    /// 合并卡片标题，例如「角 1 + 角 2」。
+    /// 列号取自 <see cref="HalfWorkOrder.Target.Columns"/>（1 起，按环顺序）。
+    /// </summary>
+    public string CardTitle { get; init; } = "";
+
+    /// <summary>
+    /// 该半边覆盖的列（0 起，按环顺序）。导出与「交换文案」判定都用它，
+    /// 与 <see cref="CardTitle"/> 的列号一一对应。
+    /// </summary>
+    public IReadOnlyList<int> TargetColumns { get; init; } = Array.Empty<int>();
+
+    /// <summary>副标题，固定为「半边工序 · 候选X」。</summary>
+    public string SubtitleText => $"{TitleText} · {CandidateText}";
+
+    /// <summary>卡片底部小字：「目标半边 = 角 1 + 角 2」。</summary>
+    public string TargetLine => $"目标半边 = {CardTitle}";
 
     /// <summary>配对列提示，例如「与列 2 一起做」（只列目标列之外的列）。</summary>
     public string ColumnsText { get; init; } = "";
@@ -477,18 +508,21 @@ public static class AngleWorkColumnBuilder
     private static AngleWorkColumn Create(
         AngleWorkOrder order)
     {
-        // 子配方与节点链互不影响：简单角也一并带上（当前只有造塔档才有）。
-        AngleSubRecipe? subRecipe = CreateSubRecipe(order);
-
         /*
-         * 半边工序（docs/half-side-work-order.md）与主步骤链互相独立：
-         * 即便简单角不画主链，半边链也要在卡片里单独显示一行。
-         * 数据全部来自同一次 Build 的 order.Half，不增加任何计算。
+         * 半边工序是「n/2 列一起做」的合并卡片：
+         * 不再保留单列步骤链与造塔子配方，只把 Core 的 Half.Steps 原样渲染成
+         * 「前态 → 半破 → 目标半边」，避免同一张卡片里出现两套工序。
          */
+        bool isHalf = order.Half is not null;
+
+        AngleSubRecipe? subRecipe = isHalf
+            ? null
+            : CreateSubRecipe(order);
+
         AngleHalfWork? half = CreateHalf(order);
 
-        // 简单角只显示一行说明，不生成节点预览。
-        if (order.Kind == AngleBuildKind.Simple)
+        // 简单角只显示一行说明，不生成节点预览；半边工序优先走合并卡片。
+        if (!isHalf && order.Kind == AngleBuildKind.Simple)
         {
             return new AngleWorkColumn
             {
@@ -498,6 +532,23 @@ public static class AngleWorkColumnBuilder
                 Algorithm = order.Algorithm,
                 Rank = order.Rank,
                 SubRecipe = subRecipe,
+                Half = half,
+                IsComplete = order.IsComplete,
+                Note = order.Note,
+                Limitations = order.Limitations
+            };
+        }
+
+        if (isHalf)
+        {
+            return new AngleWorkColumn
+            {
+                Column = order.Column,
+                Kind = order.Kind,
+                Construction = order.Construction,
+                Algorithm = order.Algorithm,
+                Rank = order.Rank,
+                SubRecipe = null,
                 Half = half,
                 IsComplete = order.IsComplete,
                 Note = order.Note,
@@ -554,6 +605,8 @@ public static class AngleWorkColumnBuilder
         return new AngleHalfWork
         {
             CandidateText = DescribeCandidate(half.Candidate),
+            CardTitle = DescribeHalfCardTitle(half.Target),
+            TargetColumns = half.Target.Columns?.ToArray() ?? Array.Empty<int>(),
             ColumnsText = DescribeHalfColumns(half.Target, partnersOnly: true),
             PairColumnsText = DescribeHalfColumns(half.Target, partnersOnly: false),
             IsComplete = half.IsComplete,
@@ -561,10 +614,65 @@ public static class AngleWorkColumnBuilder
             Limitations = half.Limitations,
             Nodes = chain.Nodes,
             StepNotes = chain.Notes,
-            Edges = chain.Edges,
+            Edges = LabelHalfEdges(chain.Nodes, chain.Edges),
             GraphWidth = chain.Width,
             GraphHeight = chain.Height
         };
+    }
+
+    /// <summary>
+    /// 合并卡片标题：「角 1 + 角 2」。
+    /// 列号按环顺序（1 起）；<see cref="WorkOrderTarget.Columns"/> 为空时退回「半边」。
+    /// </summary>
+    private static string DescribeHalfCardTitle(
+        WorkOrderTarget target)
+    {
+        IReadOnlyList<int> columns = target.Columns ?? Array.Empty<int>();
+
+        if (columns.Count == 0)
+        {
+            return "半边";
+        }
+
+        return string.Join(
+            " + ",
+            columns.Select(column => $"角 {column + 1}"));
+    }
+
+    /// <summary>
+    /// 给半边链的箭头加「半破」标签：只标进入 Cut 步的那一根；
+    /// 没有 Cut 步（候选 1 / 2 的完整下落）时标进入目标步的那一根。
+    /// 多刀路线有多根进入 Cut 的箭头时逐根标注，不截断。
+    /// </summary>
+    private static IReadOnlyList<AngleWorkEdge> LabelHalfEdges(
+        IReadOnlyList<AngleWorkNode> nodes,
+        IReadOnlyList<AngleWorkEdge> edges)
+    {
+        bool hasCut = nodes.Any(node => node.Kind == AngleWorkStepKind.Cut);
+
+        var labeled = new List<AngleWorkEdge>(edges.Count);
+
+        for (int index = 0;
+             index < edges.Count && index + 1 < nodes.Count;
+             index++)
+        {
+            AngleWorkNode to = nodes[index + 1];
+
+            string? label = to.Kind == AngleWorkStepKind.Cut ||
+                            (!hasCut && to.Kind == AngleWorkStepKind.Target)
+                ? "半破"
+                : null;
+
+            labeled.Add(edges[index] with { Label = label });
+        }
+
+        // 防御：节点数与箭头数不一致时保留剩余箭头（不丢边）。
+        for (int index = labeled.Count; index < edges.Count; index++)
+        {
+            labeled.Add(edges[index]);
+        }
+
+        return labeled;
     }
 
     /// <summary>
@@ -892,7 +1000,12 @@ public static class AngleWorkColumnBuilder
             $"{Number(bx - uy * half)},{Number(by + ux * half)} " +
             $"{Number(bx + uy * half)},{Number(by - ux * half)}";
 
-        return new AngleWorkEdge(from.Id, to.Id, path, arrow);
+        // 标签放在箭头中点；页面渲染后由 shapeGridLayoutEdges 按真实矩形重算。
+        return new AngleWorkEdge(from.Id, to.Id, path, arrow)
+        {
+            LabelX = (x1 + x2) / 2,
+            LabelY = (y1 + y2) / 2
+        };
     }
 
     private static string Number(

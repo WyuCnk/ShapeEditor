@@ -34,6 +34,18 @@
             }
         </svg>
 
+        @* 箭头标签（半边工序的「半破」）：首帧按 C# 坐标放置，页面渲染后由 JS 校正。 *@
+        @foreach (AngleWorkEdge edge in Edges)
+        {
+            if (!string.IsNullOrEmpty(edge.Label))
+            {
+                <span class="angle-edge-label"
+                      data-edge-from="@edge.FromId"
+                      data-edge-to="@edge.ToId"
+                      style="left:@Px(edge.LabelX)px;top:@Px(edge.LabelY)px">@edge.Label</span>
+            }
+        }
+
         @foreach (AngleWorkNode node in Nodes)
         {
             <div class="graph-node path-node angle-node @node.KindClass"

@@ -1,0 +1,79 @@
+@using ShapeEditor.Web.Services
+
+@*
+    半边工序合并卡片（用户要求）：
+    标题「角 1 + 角 2」，副标题「半边工序 · 候选X」；
+    主体直接画 Core 的 Half.Steps —— 前态 →（半破）→ 目标半边，
+    不再渲染单列步骤链，也不渲染造塔子配方。
+    半破标签由 AngleWorkView.LabelHalfEdges 只标在进入 Cut / 目标步的箭头上；
+    Half.Steps 超过 3 个形状步时整条链照常显示，不截断。
+*@
+<section class="angle-work-card angle-half-card"
+         data-angle-column="@Column"
+         data-angle-half="@Column">
+    <div class="angle-work-head">
+        <h4>@Half.CardTitle</h4>
+        <span class="angle-half-subtitle">@Half.SubtitleText</span>
+
+        @if (!Half.IsComplete)
+        {
+            <span class="angle-status-chip">尚未完全验证</span>
+        }
+    </div>
+
+    @if (Half.Nodes.Count > 0)
+    {
+        <AngleWorkNodeChain Nodes="Half.Nodes"
+                            Edges="Half.Edges"
+                            Width="Half.GraphWidth"
+                            Height="Half.GraphHeight" />
+    }
+
+    @* Note 步骤只作为文字说明，不画节点。 *@
+    @if (Half.StepNotes.Count > 0)
+    {
+        <div class="angle-work-step-notes">
+            @foreach (string stepNote in Half.StepNotes)
+            {
+                <p class="angle-work-step-note">@stepNote</p>
+            }
+        </div>
+    }
+
+    @* 目标半边 = 角1 + 角2（沿用 Core 的 Target.Columns，列号 1 起）。 *@
+    <p class="angle-half-target-line">@Half.TargetLine</p>
+
+    @if (!Half.IsComplete)
+    {
+        @* 未完成时如实显示 Note 与限制小字，沿用原有样式。 *@
+        <div class="angle-work-warning angle-half-warning">
+            <p class="angle-work-status">@Half.StatusText</p>
+
+            @if (!string.IsNullOrWhiteSpace(Half.Note))
+            {
+                <p class="angle-work-note">@Half.Note</p>
+            }
+
+            @if (Half.Limitations.Count > 0)
+            {
+                <p class="angle-work-limitation-title">限制与前提</p>
+                <ul class="angle-work-limitations">
+                    @foreach (string limitation in Half.Limitations)
+                    {
+                        <li>@limitation</li>
+                    }
+                </ul>
+            }
+        </div>
+    }
+</section>
+
+@code {
+    /// <summary>该半边工序视图（标题、候选、目标列与 Half.Steps 节点链）。</summary>
+    [Parameter]
+    public AngleHalfWork Half { get; set; } = null!;
+
+    /// <summary>当前角（0 起），只用于 DOM 的 data 属性。</summary>
+    [Parameter]
+    public int Column { get; set; }
+}
