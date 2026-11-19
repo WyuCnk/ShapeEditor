@@ -13,10 +13,11 @@ namespace ShapeEditor.Core.Analysis;
 /// </para>
 /// <para>
 /// <b>候选优先级（本仓库口径）</b>：<see cref="TempCrystalFuse"/> →
+/// §2 的 TT 双格条件（见 <see cref="HalfPairCriterion"/>）→
 /// <see cref="Algo8Self"/> → <see cref="Algo8Uplift"/>。
 /// 能做成「终止前态（临时晶体填充）+ 一次半破」的就先用它：
 /// 前态与卡片箭头说的是同一件事（真实切割），不会出现「前态没填充、箭头却写半破」。
-/// 候选 3 在某半边不成立时才退候选 1 / 2。
+/// 候选 3 在某半边不成立时才退 §2 的 TT 双格 / 候选 1 / 2。
 /// </para>
 /// <para>
 /// <b>k = n/2 列推广（P3）</b>：n ≥ 6 时半边是连续 3 列以上，三个候选的判定
@@ -142,6 +143,8 @@ public sealed record HalfWorkOrder(
 /// 判定退化成原来的两列版本（逐字一致）。</para>
 ///
 /// <para><b>候选优先级</b>：<see cref="HalfCandidate.TempCrystalFuse"/> →
+/// §2 的 TT 双格条件（<see cref="HalfPairCriterion"/>，按
+/// <see cref="HalfCandidate.Algo8Uplift"/> 记账）→
 /// <see cref="HalfCandidate.Algo8Self"/> → <see cref="HalfCandidate.Algo8Uplift"/>
 /// （用户口径：能做成「终止前态 + 一次半破」的就先用它，见
 /// <see cref="TryBuildHalfOrder"/>）。候选 1 / 2 <b>不做切割</b>：
@@ -197,11 +200,13 @@ public static partial class AngleWorkOrderBuilder
     /// <summary>半边的最小象限数（n = 4 才有两列半边的特化；n ≥ 6 走 k 列推广）。</summary>
     private const int HalfMinParts = 4;
 
-    #region 候选派发（候选 3 → 候选 1 → 候选 2）
+    #region 候选派发（候选 3 → §2 TT 双格 → 候选 1 → 候选 2）
 
     /// <summary>
     /// 半边工序的候选派发：<b>优先候选 3（临时晶体 + 保险丝 + 一刀）</b>，
     /// 它在某半边做不出来时才退论文算法 8 的候选 1（Q 自身）、候选 2（联合逆提升）。
+    /// 两者之间插了 §2 的 TT 双格条件（docs/half-side-work-order-v2.md §1.2 / §2）：
+    /// 判定通过时直接用「r → m−1 的那对 TT」造前态，判定不通过时提前排除候选 2。
     ///
     /// <para>
     /// <b>为什么不再按论文顺序 1 → 2 → 3</b>：候选 2 的前态是「提升后、未填充」的 Q′，
@@ -215,13 +220,13 @@ public static partial class AngleWorkOrderBuilder
     /// <para>
     /// 每个候选都自己完成「扫描判定 → 造前态 → 真实物理回放 → 逐格核对」；
     /// 返回 null 表示该候选不适用。候选 3 形态命中但回放没通过时返回
-    /// <c>IsComplete = false</c> 的诊断工序（不伪造 Target 步），此时仍继续试候选 1 / 2；
+    /// <c>IsComplete = false</c> 的诊断工序（不伪造 Target 步），此时仍继续试 §2 / 候选 1 / 2；
     /// 都不成立才把这份诊断交还调用方。
     /// </para>
     /// <para>
     /// <paramref name="requireTargetHalf"/> 为 true 时（<see cref="BuildHalf"/> 的语义：
     /// 「<b>这个目标</b>的那 k 列半边可得」），候选 3 的半边必须逐格等于目标的这 k 列，
-    /// 否则继续退候选 1 / 2——候选 3 会把环伙伴列改写成构造形态，那只适用于
+    /// 否则继续退 §2 / 候选 1 / 2——候选 3 会把环伙伴列改写成构造形态，那只适用于
     /// 单角 <see cref="Build"/>，不能冒充另一份目标的半边。
     /// </para>
     /// </summary>
@@ -239,7 +244,8 @@ public static partial class AngleWorkOrderBuilder
             return null;
         }
 
-        int[] halfColumns = HalfColumns(column, target.PartCount);
+        int parts = target.PartCount;
+        int[] halfColumns = HalfColumns(column, parts);
 
         // 只有「半边目标就是目标这 k 列」的工序才算这份目标的半边。
         bool MatchesTargetHalf(
@@ -252,7 +258,47 @@ public static partial class AngleWorkOrderBuilder
                  halfColumns,
                  target.PartCount));
 
+        /*
+         * §1.2：半边判定的输入是「角工序失败的原因」，不只是目标列本身。
+         *
+         * ① D(u) ✘ ⇒ 构造 H（一次顶针）的<b>必要条件</b>不成立（§5），不试「顶针」类候选。
+         *    本函数的三个候选都不是顶针类（候选 3 = 半破碎晶；候选 1 = 无需操作；
+         *    候选 2 = 纯下落），所以这一条今天<b>不排除任何候选</b>；闸门照样算出来、
+         *    写进说明，将来新增顶针候选必须先过它。
+         *
+         * ② F(u) ✘ 的缺口是【短晶段 + 无相邻 TT】⇒ 先试 §2 的 TT 双格条件。
+         *    §2 的三条一旦成立，它直接指定「要提回哪一对 TT（r → m−1）」；
+         *    不成立就提前排除「联合逆提升」——它靠的正是同一对 TT。
+         */
+        string targetText = ShapeSignature.ColumnText(target, column);
+        bool bottomResourceD = PillarSCriterion.BottomResourceD(targetText);
+        bool recursiveTerminalF = PillarSCriterion.RecursiveTerminalF(targetText);
+        bool allowPinCandidates = bottomResourceD;
+
+        HalfPairVerdict? ttVerdict = null;
+
+        if (parts == 4 && !recursiveTerminalF)
+        {
+            /*
+             * 判定本身要求「两列都有晶体、最高晶体不等高」，这两条是廉价的扫描，
+             * 先用它们挡掉绝大多数单列目标（第 2 列整列为空）：§2 一定不成立，
+             * 也就不用去建粘连组。省下来的时间全部落在 3–9 层的穷举审计上。
+             */
+            int partnerColumn = Wrap(column + 1, parts);
+            int partnerHighest = HighestCrystal(target, partnerColumn);
+
+            if (partnerHighest >= 0 &&
+                partnerHighest != HighestCrystal(target, column))
+            {
+                ttVerdict = HalfPairCriterion.Test(
+                    target,
+                    column,
+                    partnerColumn);
+            }
+        }
+
         // 第 ① 顺位：候选 3（终止前态 + 一次半破）。
+        // 用户口径不变：能做成「填充晶体 + 一刀」的就先用它，所以它仍排在 §2 之前。
         AngleWorkOrder? fuse = TryBuildTempCrystalFuse(
             target,
             column,
@@ -264,7 +310,26 @@ public static partial class AngleWorkOrderBuilder
             return fuse;
         }
 
-        // 第 ② 顺位：候选 1（Q 自身，无需切割）。
+        // 第 ② 顺位：§2 的 TT 双格条件（判定通过才用）。
+        if (ttVerdict is { Passed: true })
+        {
+            AngleWorkOrder? pair = TryBuildTTPairOrder(
+                target,
+                column,
+                cap,
+                kind,
+                halfColumns,
+                ttVerdict,
+                recursiveTerminalF,
+                allowPinCandidates);
+
+            if (pair is not null)
+            {
+                return pair;
+            }
+        }
+
+        // 第 ③ 顺位：候选 1（Q 自身，无需切割）。
         AngleWorkOrder? self = TryBuildAlgo8Self(
             target,
             column,
@@ -276,16 +341,27 @@ public static partial class AngleWorkOrderBuilder
             return self;
         }
 
-        // 第 ③ 顺位：候选 2（联合逆提升，一次下落）。
-        AngleWorkOrder? uplift = TryBuildAlgo8Uplift(
-            target,
-            column,
-            cap,
-            kind);
+        /*
+         * 第 ④ 顺位：候选 2（联合逆提升，一次下落）。
+         *
+         * k = 2 且 §2 判定不通过 ⇒ <b>提前排除</b>：§2 是半边可得的等价条件，
+         * 而联合逆提升用的就是 §2 的那一对 TT；判定不成立时它不可能成功。
+         * k ≥ 3（n ≥ 6）不套 §2（§2 是两列命题），保持原候选顺序与覆盖。
+         */
+        bool allowUplift = parts != 4 || ttVerdict is null || ttVerdict.Passed;
 
-        if (uplift is not null)
+        if (allowUplift)
         {
-            return uplift;
+            AngleWorkOrder? uplift = TryBuildAlgo8Uplift(
+                target,
+                column,
+                cap,
+                kind);
+
+            if (uplift is not null)
+            {
+                return uplift;
+            }
         }
 
         /*
@@ -294,6 +370,113 @@ public static partial class AngleWorkOrderBuilder
          * 调用方按原语义报不可制作。
          */
         return fuse;
+    }
+
+    /// <summary>
+    /// §2 的 TT 双格条件（docs/half-side-work-order-v2.md §2 / §1.2 ②）：
+    /// 判定给出的 (r, m) 直接指定前态——把两列 <c>r</c> 层那对普通格<b>提回</b> <c>m−1</c>。
+    ///
+    /// <para><b>与候选 2 的关系</b>：这是算法 8 第二候选（联合逆提升）的同一个动作；
+    /// 区别只在层号的来源——候选 2 自己扫「b 以下最高非空层 a」，这里用 §2 的
+    /// 等价条件直接给出 r（m 以下两列最后一个有材料的层，且必须是水平 <c>TT</c>）。
+    /// 所以装出来的工序仍按 <see cref="HalfCandidate.Algo8Uplift"/> 记账：
+    /// 步骤链是「前态 Q′ → 目标」+ <b>一次下落</b>，不是切割。</para>
+    ///
+    /// <para><b>覆盖闸门</b>：三道真实核对必须全过才返回，任一不过就返回 null，
+    /// 按原顺序继续试候选 1 / 候选 2——所以这条只会加覆盖，不会减少现有覆盖。</para>
+    /// <list type="number">
+    /// <item>提回后两列都属于该 n 的 S（n = 4：五项 ∧ (D∨F)）；</item>
+    /// <item>真实一次 <see cref="ShapePhysics.Collapse"/> 逐格等于目标半边；</item>
+    /// <item>末步就是目标半边本身（k 列逐格）。</item>
+    /// </list>
+    ///
+    /// <para>只处理 k = 2（n = 4）：§2 的条件是「两列」的命题，n ≥ 6 的 k 列半边走候选 1 / 2。</para>
+    /// </summary>
+    private static AngleWorkOrder? TryBuildTTPairOrder(
+        ShapeDocument target,
+        int column,
+        int cap,
+        AngleBuildKind kind,
+        int[] halfColumns,
+        HalfPairVerdict verdict,
+        bool recursiveTerminalF,
+        bool bottomResourceD)
+    {
+        if (halfColumns.Length != 2)
+        {
+            return null;
+        }
+
+        ShapeDocument half = HalfProjection(target, column, cap);
+
+        // 前态：§2 指定的那一对 TT 从 r 提回 m−1，其余格子不动。
+        ShapeDocument preState = HalfPairCriterion.BuildPreState(
+            half,
+            halfColumns[0],
+            halfColumns[1],
+            verdict);
+
+        // ① 提回后 k 列都属于该 n 的 S。
+        if (!AllHalfColumnsAreS(preState, column, target.PartCount))
+        {
+            return null;
+        }
+
+        // ② 真实一次共同下落必须逐格等于目标半边。
+        ShapeDocument? collapsed = ShapePhysics.Collapse(preState).Document;
+
+        if (!ShapeOps.Same(collapsed, half))
+        {
+            return null;
+        }
+
+        // ③ 前态里每一列都要合法（辅助列 / 目标列都不例外）。
+        if (!ShapeSignature.AllColumnsLegal(preState, out _))
+        {
+            return null;
+        }
+
+        string textU = ShapeSignature.ColumnText(half, halfColumns[0]);
+        string textV = ShapeSignature.ColumnText(half, halfColumns[1]);
+
+        var limitations = BaseLimitations(
+            "半边工序（§2 TT 双格条件）：把较低最高晶体粘连组下方那一对普通格" +
+            $"（第 {verdict.R + 1} 层的 TT）提回第 {verdict.M} 层，其余格子不动；" +
+            "k 列都属于该 n 的 S，一次共同下落恰好还原目标半边（不是切割）。");
+
+        limitations.Add(
+            "§2 判定：u = " + Trim(textU) + "，v = " + Trim(textV) + "；" +
+            $"最高晶体 u@{verdict.HighestU + 1}、v@{verdict.HighestV + 1}（不等高）；" +
+            $"m = 第 {verdict.M + 1} 层（较低最高晶体的粘连组最低层，较低那列 = " +
+            (verdict.LowerColumn == 0 ? "u" : "v") + "）；" +
+            $"r = 第 {verdict.R + 1} 层（u[{verdict.R}]=T、v[{verdict.R}]=T，水平 TT）；" +
+            $"r+1 < m；第 {verdict.M} 层两格全空。");
+
+        limitations.Add(
+            "角工序失败的原因：D(u) = " + (bottomResourceD ? "true" : "false") +
+            "，F(u) = " + (recursiveTerminalF ? "true" : "false") +
+            "（F ✘ 的缺口正是「短晶段 + 无相邻 TT」⇒ 先用 §2 的 TT 双格条件）。");
+
+        limitations.Add(
+            bottomResourceD
+                ? "§5 的 D 必要条件成立：构造 H（一次顶针）的闸门是开的；本候选仍然只做下落，不用顶针。"
+                : "§5 的 D 必要条件不成立（D ✘）：不试「顶针」类候选，只考虑「半破碎晶」/ 纯下落候选。");
+
+        limitations.Add(
+            "没有辅助列：另外 " + (target.PartCount - 2) +
+            " 个象限整列为空（不参与产物的象限允许留空）；" +
+            "两列都是带子配方的目标列，允许带洞；前态与目标只差那一对 TT 的层号。");
+
+        return BuildPaperHalfOrder(
+            target,
+            column,
+            kind,
+            HalfCandidate.Algo8Uplift,
+            preState,
+            half,
+            collapsed,
+            halfColumns,
+            limitations);
     }
 
     /// <summary>

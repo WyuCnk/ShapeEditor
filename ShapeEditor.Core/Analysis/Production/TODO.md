@@ -2386,3 +2386,102 @@ Cut / Collapse 按列置换等变，Exchange 的输出也只是同样的置换�
 - `docs/` 未改。建议 docs 更新点：`docs/half-side-work-order.md` §4.2 补一句
   「候选优先级为 3 → 1 → 2（本仓库口径）」，并注明候选 2 的链路文案是「下落」。
 - 论文顺序（1 → 2 → 3）仍如实记录在候选定义里；**派发**顺序才是 3 → 1 → 2。
+
+### 7.28 半边手动测试入口 + §2 判定接进半边入口（2026-11-19，第八轮）
+
+**任务书**：`docs/prompt-for-main-agent-half-side-test.md`；
+**规格**：`docs/half-side-work-order-v2.md` §1（位置 / 收紧顺序）、§2（等价条件）、§3、§4、§5（D）、§8。
+
+#### 改动 1：命令行手动测试入口（**不是测试断言项**）
+
+| 项 | 位置 |
+|---|---|
+| 入口 | `ShapeEditor.Tests/HalfTestCli.cs`（新文件）；`Program.Main(string[] args)` 先调 `HalfTestCli.TryRun` |
+| 单例 | `ShapeEditor.Tests.exe --half "u" "v"`、`--half-shape "短代码"`（取第 1、2 象限） |
+| 批量 | `--half-file 路径`（每行 `u<TAB>v`，`#` 开头跳过） |
+| 环境变量 | `SHAPE_HALF="u|v"`、`SHAPE_HALF_FILE=路径` |
+| 静默 | 没有任何参数 / 环境变量时**不输出任何内容**，`RunAll` 行为与以前完全一致 |
+
+- 单例输出分四段：`[判定]`（五项、D、F、S、最高晶体、§2 的 m / r / r+1<m / 第 m−1 层两格、`HalfCriterion`）、
+  `[前态]`（Q1–Q4 全列 + 稳定性 / 四列五项 / P1）、`[操作]`（半破 / 下落 + 路线 + 顺转）、
+  `[结果]`（`u'` / `v'` 逐格比较 + 第一处差异「第几层 / 期望 / 实际」+ `VERDICT`）。
+- `S(u) ✔` 时只打印 `[单角]`，**不打印半边段落**（`cT.T.ccc | TTTT.ccc` 实测走构造 G）。
+- 批量每例一行 + 末行 `HALFTEST total=… pass=… fail=… error=…`；`ERROR` 只给「五项(u) 不成立」这类前置错误。
+- 退出码：单例 PASS = 0；批量 `fail+error == 0` = 0；参数不全 = 2。
+
+#### 改动 2：§2 等价条件（`Analysis/Production/HalfPairCriterion.cs`，新文件）
+
+- `Test(u, v)` / `Test(shape, first, second)` → `HalfPairVerdict(Passed, Reason, HighestU, HighestV, LowerColumn, M, R)`：
+  ① 两列都要有晶体且最高晶体不等高；② 较低那枚的**最大粘连组**最低层 = m（复用 `PhysicsGrid.BuildGroups`）；
+  ③ 在 m 以下找两列最后一个有材料的层 r，要求是水平 `TT`、`r+1 < m`、第 `m−1` 层两格全空。
+- `BuildPreState(shape, first, second, verdict)`：把 r 层那对 `TT` **提回** `m−1`，其余格子不动。
+- 全部层号 0 起；打印时 +1 写成「第 N 层」。
+
+#### 改动 3：接进半边入口（`AngleWorkOrderHalfSide.TryBuildHalfOrder`）
+
+```
+① 五项（原有闸门）→ ② S 判据（原有路由）
+③ 半边收紧（只加提前排除，不减少任何现有候选的可达性）：
+   1. D(u) ✘ ⇒ 不试「顶针」类候选（§5 必要条件）。半边三个候选都不是顶针类
+      （候选 3 = 半破碎晶、候选 1 = 无需操作、候选 2 = 纯下落），所以这一条今天
+      不排除任何候选；闸门算出来并写进 Limitations，将来新增顶针候选必须先过它。
+   2. F(u) ✘（缺口 = 短晶段 + 无相邻 TT）⇒ 先试 §2 的 TT 双格条件：
+      判定通过 ⇒ TryBuildTTPairOrder 用判定给出的 (r, m) 造前态，必须过
+      「k 列 ∈ S + 真实一次下落 == 目标半边 + 每列合法」三道核对才返回
+      （按 Algo8Uplift 记账：步骤链 PreState → Target + 一次下落，操作写「下落」）。
+      判定不通过 ⇒ 提前排除候选 2（§2 是等价条件，联合逆提升靠的就是同一对 TT）。
+   3. 候选 3 仍排第一（用户口径：能做成终止前态 + 一次半破的就先用它），
+      之后才是 §2 → 候选 1 → 候选 2。k ≥ 3（n ≥ 6）不套 §2（§2 是两列命题）。
+```
+
+- 廉价预筛：只有「第 2 列有晶体且最高晶体不等高」时才建粘连组，3–9 层穷举的
+  单列目标直接跳过（否则 `TIGHTSTAT` 会多 ~0.6 s）。
+
+#### 实测（本机 Release，`--half` 单例）
+
+| 样本 | 判定（m / r / 第 m−1 层） | 路线 | 结果 |
+|---|---|---|---|
+| `cT.T.cPT \| TTTT.ccc` | m=6、r=4、第 5 层两格全空 | 候选 3 半破 | PASS |
+| `cT.T..cPT \| TTTT..ccc` | m=7、r=4、第 6 层两格全空 | §2 TT 双格 → 下落 | PASS |
+| `cT..T.cPT \| TTTTT.ccc` | m=7、r=5、第 6 层两格全空 | 候选 3 半破 | PASS |
+| `cT.T.cPPT \| TTTT.cccc` | m=6、r=4、第 5 层两格全空 | §2 TT 双格 → 下落 | PASS |
+| `cT.T.cTcccTc \| TTTT.cccPT..`（12 层） | u@12 / v@8 不等高；m=6、r=4、第 5 层两格全空 | §2 TT 双格 → 下落（前态 `cT..TcTcccTc \| TTT.TcccPT..`） | PASS |
+| `cT.T.ccc \| TTTT.ccc` | S(u) ✔ | 单角（构造 G，Algorithm4） | PASS（不打印半边段落） |
+
+#### 验收数字
+
+| 项 | 结果 |
+|---|---|
+| 全量测试 | **192/192** 通过（claw / 二择 2 项 XFAIL 保持），78.7 s |
+| `HALFAUDIT` | `legalNonS=229 halfTargets=2 halfComplete=6 notProducible=225 uncovered=0 problems=0`（未下降） |
+| `HALFFENCE` | 四行语料 `claimed=0`（未退化） |
+| `AUDIT` / `LAYERAUDIT` / `NINEAUDIT` | `s=2125/4320+12646/36508` 全部 `failures=0`、`falsePositives=0`（不变） |
+| 3–9 层失败数 | `TIGHTSTAT needsBreak=20100 … incomplete=0` → **0** |
+| 3–9 层统计耗时 | `TIGHTSTAT timing newMs=3415 oldMs=3505`（≤ 8000 ms；基线 3408） |
+| 无参数入口 | 完全静默（全量输出与改动前逐行一致） |
+
+#### 与任务书 / docs 的差异（不自行取舍，照原样报告）
+
+1. **`D(v)` 的实测值**：任务书示例 `cT.T.cPT | TTTT.ccc` 写 `D(v)/F(v) = true/true`，
+   但按 `PillarSCriterion.BottomResourceD`（最低晶体以下**至少两个**空格）实测 `D(v) = false`
+   （`TTTT.ccc` 的最低晶体在第 6 层，下面只有第 5 层一个空格）。入口按定义如实打印 `false`；
+   `S(v)` 仍为 `true`（由 `F` 成立）。
+2. **`r` 的打印口径**：任务书 §1.2 把 8 层例的 `r` 写成 3（0 起下标），而十二层例的参考值写 4
+   （同一格，1 起层号）。入口统一按**1 起层号**打印（`r = 4`、`m = 6`），并在括号里给出
+   0 起下标（`u[3]=T`），两个参考值都能对上。
+3. **§2 前态不保证稳定**：十二层样例的前态 `cT..TcTcccTc` 落在「提升后、未下落」的形态上，
+   `稳定性 = false` 而「一次真实下落 == 目标半边」成立。这是 §2 ③ 的正常语义（前态是落下前状态），
+   不是审计失败；P1 与四列五项都过。
+4. **候选顺序**：§1.2 的文字顺序是「§2 → 候选 1 → 候选 3」，本仓库仍把候选 3 排在最前
+   （第七轮用户口径「能做成终止前态 + 一次半破的就先用它」），实测顺序为
+   **候选 3 → §2 → 候选 1 → 候选 2**。已锁定候选 3 的四个测试因此全部保持不变。
+
+#### docs 待更新（`docs/` 由开发者维护，本次未动）
+
+1. `half-side-work-order-v2.md` §1.2：补一句「候选 3（终止前态 + 一刀）在本仓库排第一，
+   之后才是 §2 的 TT 双格条件」。
+2. 同文件 §6 表格：`顶针可行性` 一行可补「半边路径没有顶针候选，D ✘ 的闸门只作用于将来的
+   顶针候选」。
+3. `prompt-for-main-agent-half-side-test.md` §1.2 的示例：`D(v)` 应为 `false`（按定义），
+   `r` 的层号口径建议统一写「1 起层号 / 0 起下标」。
+

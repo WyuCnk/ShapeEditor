@@ -12,11 +12,22 @@ namespace ShapeEditor.Tests;
 /// </summary>
 internal static class Program
 {
-    private static int Main()
+    private static int Main(string[] args)
     {
         if (Environment.GetEnvironmentVariable("SHAPE_PROBE") == "1")
         {
             return 0;
+        }
+
+        /*
+         * 半边工序的手动测试入口（不是测试项）：
+         *   --half "u" "v" / --half-shape "短代码" / --half-file 路径
+         * 或环境变量 SHAPE_HALF="u|v" / SHAPE_HALF_FILE=路径。
+         * 没有这些参数时完全不输出任何内容，行为与以前一致。
+         */
+        if (HalfTestCli.TryRun(args, out int halfExitCode))
+        {
+            return halfExitCode;
         }
 
         /*
