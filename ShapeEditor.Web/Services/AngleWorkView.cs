@@ -162,6 +162,13 @@ public sealed class AngleHalfWork
     public string CandidateText { get; init; } = "";
 
     /// <summary>
+    /// 该候选的执行动作文案（Core 的 <see cref="HalfWorkOrder.OperationText"/>）：
+    /// 候选 3「半破」、候选 2「下落」、候选 1「无需操作」。
+    /// 箭头标签必须读它，不能一律写「半破」——候选 2 是下落不是切割。
+    /// </summary>
+    public string OperationText { get; init; } = "半破";
+
+    /// <summary>
     /// 合并卡片标题，例如「角 1 + 角 2」。
     /// 列号取自 <see cref="HalfWorkOrder.Target.Columns"/>（1 起，按环顺序）。
     /// </summary>
@@ -614,7 +621,8 @@ public static class AngleWorkColumnBuilder
             Limitations = half.Limitations,
             Nodes = chain.Nodes,
             StepNotes = chain.Notes,
-            Edges = LabelHalfEdges(chain.Nodes, chain.Edges),
+            OperationText = half.OperationText,
+            Edges = LabelHalfEdges(chain.Nodes, chain.Edges, half.OperationText),
             GraphWidth = chain.Width,
             GraphHeight = chain.Height
         };
@@ -646,7 +654,8 @@ public static class AngleWorkColumnBuilder
     /// </summary>
     private static IReadOnlyList<AngleWorkEdge> LabelHalfEdges(
         IReadOnlyList<AngleWorkNode> nodes,
-        IReadOnlyList<AngleWorkEdge> edges)
+        IReadOnlyList<AngleWorkEdge> edges,
+        string operationText)
     {
         bool hasCut = nodes.Any(node => node.Kind == AngleWorkStepKind.Cut);
 
@@ -660,7 +669,7 @@ public static class AngleWorkColumnBuilder
 
             string? label = to.Kind == AngleWorkStepKind.Cut ||
                             (!hasCut && to.Kind == AngleWorkStepKind.Target)
-                ? "半破"
+                ? operationText
                 : null;
 
             labeled.Add(edges[index] with { Label = label });
