@@ -19,6 +19,13 @@ namespace ShapeEditor.Web.Services;
 /// </list>
 ///
 /// <para>
+/// 「制作半边1/2」这些半边节点的 <see cref="ProductionNode.Row"/> 固定取交换节点的上一行：
+/// 分层排版（<see cref="ProductionPathGraph"/>）会把目标层正上方那层的半边节点对齐到目标列，
+/// 于是卡片上看到的是「半边节点在交换卡片正上方、箭头是一条短竖线」，
+/// 而不是半边放在第一行、一根长箭头斜着横跨整张图。
+/// </para>
+///
+/// <para>
 /// 「哪一侧需要半边工序」直接读 <see cref="HalfAssembly"/> 给出的两个
 /// <see cref="HalfWorkOrder"/>：候选 1（Q 自身）表示这 k 列都能按单角工序单独做，
 /// 不会生成半边工序卡片；候选 2 / 3 才会让 <see cref="AngleWorkOrderBuilder.Build"/>
@@ -233,7 +240,7 @@ public static class HalfExchangeView
     }
 
     /// <summary>
-    /// 只有一侧需要半边工序：需要的一侧换成一个半边节点，
+    /// 只有一侧需要半边工序：需要的一侧换成一个半边节点（放在交换节点上一行、与交换同列），
     /// 另一侧原样保留交换链的「带柱半半边 → 预旋转 → 交换得到半边 → 半边」展开。
     /// </summary>
     private static ProductionPathResult? BuildMixed(
@@ -313,11 +320,19 @@ public static class HalfExchangeView
             ? "half-left-process"
             : "half-right-process";
 
+        /*
+         * 行号取「交换节点上一行」：ProductionPathGraph 只按 Row 分层，
+         * 并把目标层正上方那层的半边节点对齐到目标列。
+         * 这样「制作半边X」正好画在「交换得到目标图形」正上方，箭头是短竖线，
+         * 不再从第一行斜着横跨整张图。
+         */
+        int halfRow = Math.Max(1, targetNode.Row - 1);
+
         var halfNode = new ProductionNode(
             halfNodeId,
             neededHalfTitle,
             ProductionNodeKind.PillarPiece,
-            1,
+            halfRow,
             neededHalfShape);
 
         // 左侧需要的半边放在行首（与「半边1 在左」的阅读顺序一致）。

@@ -99,6 +99,15 @@ public sealed record ProductionPathGraphEdge(
 /// 顺序从左到右紧排；层与层之间固定留 80px，行数由 Core 决定（顶针 / 堆叠 / 块会追加新层），
 /// 整张图按所有层里最宽的一层确定宽度，较窄的层水平居中。
 /// 含目标图形的层把目标放在中线上，废料排在它右侧。
+///
+/// <para>
+/// <b>目标层正上方那一层是唯一的例外</b>：如果这层里有「制作半边X」
+/// （没有上游、直接汇入目标的半边节点），为了让这个节点落在交换卡片正上方
+/// （箭头是短竖线，而不是从第一行斜着横跨整张图的长箭头），
+/// 该层改为「半边节点并排居中到目标列，其余节点按上游节点所在列摆放后向外推开」。
+/// 两侧都需要半边时两个半边节点因此左右对称地并排在同一层，
+/// 只有一侧需要时它正好压在目标列上。
+/// </para>
 /// </summary>
 public sealed class ProductionPathGraph
 {
@@ -168,18 +177,67 @@ public sealed class ProductionPathGraph
         }
 
         /*
-         * 每层先按实际宽度紧排，最宽的一层决定整张图的宽度。
-         * 含目标图形的层会把目标单独居中、左右节点向外展开，
-         * 展开后的实际宽度可能比紧排更宽，所以这里再按目标层补一次宽度，
-         * 避免目标层越出画布。行数由 Core 决定，这里不假设固定 5 层。
+         * 入边来源：用来识别「没有上游」的起始节点（半边工序的「制作半边X」就是这种）。
+         * 同一条边只记第一个上游，节点列的参考点用它就够了。
          */
-        double contentWidth = rows
-            .Select(RowWidth)
-            .Max();
+        var incomingFrom = new Dictionary<string, string>(StringComparer.Ordinal);
 
-        contentWidth = Math.Max(
-            contentWidth,
-            rows.Select(TargetRowWidth).DefaultIfEmpty(0).Max());
+        foreach (ProductionEdge edge in path.Edges)
+        {
+            incomingFrom.TryAdd(edge.ToId, edge.FromId);
+        }
+
+        int targetRowIndex = rows.FindIndex(
+            row => row.Exists(node => node.Kind == ProductionNodeKind.Target));
+
+        /*
+         * 先按「相对画布中线」算每层节点的横向位置，再由最外的一侧决定整图宽度。
+         * 中线取目标层的中线：目标层把目标放在中线上，其余层也以这条中线居中，
+         * 这样跨层箭头在两个节点同列时就是一条短竖线。
+         *
+         * 目标层正上方那层交给 AlignedFeederRowLefts：有「制作半边X」时把它摆到目标列正上方。
+         */
+        var rowLefts = new List<double[]>(rows.Count);
+
+        var centers = new Dictionary<string, double>(StringComparer.Ordinal);
+
+        for (int index = 0; index < rows.Count; index++)
+        {
+            List<ProductionPathGraphNode> row = rows[index];
+
+            double[] lefts = (targetRowIndex > 0 && index == targetRowIndex - 1
+                    ? AlignedFeederRowLefts(
+                        row,
+                        rows[targetRowIndex],
+                        path.Edges,
+                        incomingFrom,
+                        centers)
+                    : null)
+                ?? RowLefts(row);
+
+            rowLefts.Add(lefts);
+
+            for (int offset = 0; offset < row.Count; offset++)
+            {
+                centers[row[offset].Id] = lefts[offset] + row[offset].Width / 2;
+            }
+        }
+
+        double contentWidth = 0;
+
+        for (int index = 0; index < rows.Count; index++)
+        {
+            double[] lefts = rowLefts[index];
+
+            for (int offset = 0; offset < rows[index].Count; offset++)
+            {
+                contentWidth = Math.Max(
+                    contentWidth,
+                    Math.Max(
+                        Math.Abs(lefts[offset]),
+                        Math.Abs(lefts[offset] + rows[index][offset].Width)) * 2);
+            }
+        }
 
         double contentHeight = rows
             .Select(RowHeight)
@@ -188,13 +246,21 @@ public sealed class ProductionPathGraph
 
         double top = GraphMargin;
 
+        double centerX = GraphMargin + contentWidth / 2;
+
         for (int index = 0; index < rows.Count; index++)
         {
             List<ProductionPathGraphNode> row = rows[index];
 
-            PlaceRow(row, contentWidth, ref top);
+            double[] lefts = rowLefts[index];
 
-            top += RowGap;
+            for (int offset = 0; offset < row.Count; offset++)
+            {
+                row[offset].X = centerX + lefts[offset];
+                row[offset].Y = top;
+            }
+
+            top += RowHeight(row) + RowGap;
         }
 
         var nodesById = nodes.ToDictionary(node => node.Id);
@@ -228,6 +294,7 @@ public sealed class ProductionPathGraph
         };
     }
 
+    /// <summary>一层节点紧排后需要的总宽度。</summary>
     private static double RowWidth(
         IReadOnlyList<ProductionPathGraphNode> row)
     {
@@ -247,14 +314,17 @@ public sealed class ProductionPathGraph
     }
 
     /// <summary>
-    /// 含目标图形的层的实际宽度。
+    /// 一层节点的横向位置（左边 X，相对整图中线）。
     ///
-    /// 目标居中后左右两侧的节点向外展开，整层宽度取左右两翼中较长的一翼，
-    /// 不居中（没有目标）的层仍按紧排宽度。
+    /// 含目标图形的层把目标放在中线上，其余节点按原顺序向左右两侧展开（废料在右），
+    /// 让两条来自旋转后半边的箭头对称地汇入目标；
+    /// 其余层整层紧排后以中线居中。
     /// </summary>
-    private static double TargetRowWidth(
+    private static double[] RowLefts(
         IReadOnlyList<ProductionPathGraphNode> row)
     {
+        var lefts = new double[row.Count];
+
         int targetIndex = -1;
 
         for (int index = 0; index < row.Count; index++)
@@ -269,26 +339,219 @@ public sealed class ProductionPathGraph
 
         if (targetIndex < 0)
         {
-            return RowWidth(row);
+            double cursor = -RowWidth(row) / 2;
+
+            for (int index = 0; index < row.Count; index++)
+            {
+                lefts[index] = cursor;
+                cursor += row[index].Width + ColumnGap;
+            }
+
+            return lefts;
         }
 
         ProductionPathGraphNode target = row[targetIndex];
 
-        double leftExtent = target.Width / 2;
+        lefts[targetIndex] = -target.Width / 2;
 
-        for (int index = 0; index < targetIndex; index++)
+        // 目标左侧的节点从目标左边向左依次排开。
+        double left = lefts[targetIndex] - ColumnGap;
+
+        for (int index = targetIndex - 1; index >= 0; index--)
         {
-            leftExtent += ColumnGap + row[index].Width;
+            left -= row[index].Width;
+
+            lefts[index] = left;
+
+            left -= ColumnGap;
         }
 
-        double rightExtent = target.Width / 2;
+        // 目标右侧的节点（废料）从目标右边向右依次排开。
+        double right = lefts[targetIndex] + target.Width + ColumnGap;
 
         for (int index = targetIndex + 1; index < row.Count; index++)
         {
-            rightExtent += ColumnGap + row[index].Width;
+            lefts[index] = right;
+
+            right += row[index].Width + ColumnGap;
         }
 
-        return Math.Max(leftExtent, rightExtent) * 2;
+        return lefts;
+    }
+
+    /// <summary>
+    /// 目标层正上方那层的横向位置（左边 X，相对整图中线）。
+    ///
+    /// <para>
+    /// 只有这层里存在「制作半边X」（PillarPiece、没有上游、并且直接汇入目标）时才特殊处理，
+    /// 其余情况返回 null，仍按普通层紧排：
+    /// </para>
+    /// <list type="bullet">
+    /// <item>半边节点先并排居中到目标列：一个半边时正好压在中线上（箭头是短竖线），
+    /// 两个半边时左右对称地并排在同一层；</item>
+    /// <item>其余节点先按上游节点所在列摆放，再向远离中线的一侧推开，彼此至少留 <see cref="ColumnGap"/>。
+    /// 于是普通角工序一侧的展开节点仍挂在原来的列下方，不会被半边节点挤到别处。</item>
+    /// </list>
+    /// </summary>
+    /// <param name="row">目标层正上方的那一层。</param>
+    /// <param name="targetRow">含目标图形的层。</param>
+    /// <param name="edges">节点图的全部箭头（用来判断哪些节点直接汇入目标）。</param>
+    /// <param name="incomingFrom">节点 → 第一个上游节点，用来识别「没有上游」的起始节点。</param>
+    /// <param name="centers">已排好的节点 → 相对中线的中心 X（上面的层先算）。</param>
+    /// <returns>该层每个节点的左边 X；没有半边节点时返回 null。</returns>
+    private static double[]? AlignedFeederRowLefts(
+        IReadOnlyList<ProductionPathGraphNode> row,
+        IReadOnlyList<ProductionPathGraphNode> targetRow,
+        IReadOnlyList<ProductionEdge> edges,
+        IReadOnlyDictionary<string, string> incomingFrom,
+        IReadOnlyDictionary<string, double> centers)
+    {
+        ProductionPathGraphNode? target = null;
+
+        foreach (ProductionPathGraphNode node in targetRow)
+        {
+            if (node.Kind == ProductionNodeKind.Target)
+            {
+                target = node;
+
+                break;
+            }
+        }
+
+        if (target is null)
+        {
+            return null;
+        }
+
+        var feeders = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (ProductionEdge edge in edges)
+        {
+            if (edge.ToId == target.Id)
+            {
+                feeders.Add(edge.FromId);
+            }
+        }
+
+        var starts = new List<int>();
+
+        for (int index = 0; index < row.Count; index++)
+        {
+            ProductionPathGraphNode node = row[index];
+
+            if (node.Kind == ProductionNodeKind.PillarPiece &&
+                !incomingFrom.ContainsKey(node.Id) &&
+                feeders.Contains(node.Id))
+            {
+                starts.Add(index);
+            }
+        }
+
+        if (starts.Count == 0)
+        {
+            return null;
+        }
+
+        var lefts = new double[row.Count];
+
+        // 第 1 步：半边节点并排居中到目标列。
+        double groupWidth = ColumnGap * (starts.Count - 1);
+
+        foreach (int index in starts)
+        {
+            groupWidth += row[index].Width;
+        }
+
+        double groupLeft = -groupWidth / 2;
+
+        double cursor = groupLeft;
+
+        foreach (int index in starts)
+        {
+            lefts[index] = cursor;
+
+            cursor += row[index].Width + ColumnGap;
+        }
+
+        double groupRight = groupLeft + groupWidth;
+
+        // 第 2 步：其余节点先按上游节点所在列摆，再按「在中线哪一侧」向外推开。
+        var leftSide = new List<int>();
+        var rightSide = new List<int>();
+
+        for (int index = 0; index < row.Count; index++)
+        {
+            if (starts.Contains(index))
+            {
+                continue;
+            }
+
+            double desiredCenter;
+
+            if (incomingFrom.TryGetValue(row[index].Id, out string? parentId) &&
+                centers.TryGetValue(parentId, out double parentCenter))
+            {
+                desiredCenter = parentCenter;
+            }
+            else
+            {
+                // 找不到上游（正常不会发生）：先当作要排在半边组右侧。
+                desiredCenter = groupRight + ColumnGap + row[index].Width / 2;
+            }
+
+            lefts[index] = desiredCenter - row[index].Width / 2;
+
+            if (desiredCenter < 0)
+            {
+                leftSide.Add(index);
+            }
+            else
+            {
+                rightSide.Add(index);
+            }
+        }
+
+        // 左侧：从离中线最近的开始向左依次排开（同一列时按节点原顺序，保证排布稳定）。
+        leftSide.Sort((first, second) =>
+        {
+            int byCenter = lefts[second].CompareTo(lefts[first]);
+
+            return byCenter != 0 ? byCenter : first.CompareTo(second);
+        });
+
+        double boundary = groupLeft - ColumnGap;
+
+        foreach (int index in leftSide)
+        {
+            double rightEdge = Math.Min(
+                lefts[index] + row[index].Width,
+                boundary);
+
+            lefts[index] = rightEdge - row[index].Width;
+
+            boundary = lefts[index] - ColumnGap;
+        }
+
+        // 右侧：从离中线最近的开始向右依次排开（同一列时按节点原顺序，保证排布稳定）。
+        rightSide.Sort((first, second) =>
+        {
+            int byCenter = lefts[first].CompareTo(lefts[second]);
+
+            return byCenter != 0 ? byCenter : first.CompareTo(second);
+        });
+
+        boundary = groupRight + ColumnGap;
+
+        foreach (int index in rightSide)
+        {
+            double leftEdge = Math.Max(lefts[index], boundary);
+
+            lefts[index] = leftEdge;
+
+            boundary = leftEdge + row[index].Width + ColumnGap;
+        }
+
+        return lefts;
     }
 
     private static double RowHeight(
@@ -302,74 +565,6 @@ public sealed class ProductionPathGraph
         }
 
         return height;
-    }
-
-    /// <summary>
-    /// 放置一层节点。
-    ///
-    /// 普通层水平居中；含目标图形的层把目标放在整张图的中线上，
-    /// 废料依次排在它右侧，让两条来自旋转后半边的箭头对称地汇入目标。
-    /// </summary>
-    private static void PlaceRow(
-        List<ProductionPathGraphNode> row,
-        double contentWidth,
-        ref double top)
-    {
-        double rowWidth = RowWidth(row);
-
-        int targetIndex = row.FindIndex(
-            node => node.Kind == ProductionNodeKind.Target);
-
-        if (targetIndex >= 0)
-        {
-            ProductionPathGraphNode target = row[targetIndex];
-
-            target.X = GraphMargin + contentWidth / 2 - target.Width / 2;
-
-            target.Y = top;
-
-            // 目标左侧的节点从目标左边向左依次排开。
-            double left = target.X - ColumnGap;
-
-            for (int index = targetIndex - 1; index >= 0; index--)
-            {
-                ProductionPathGraphNode node = row[index];
-
-                left -= node.Width;
-
-                node.X = left;
-                node.Y = top;
-
-                left -= ColumnGap;
-            }
-
-            // 目标右侧的节点（废料）从目标右边向右依次排开。
-            double right = target.X + target.Width + ColumnGap;
-
-            for (int index = targetIndex + 1; index < row.Count; index++)
-            {
-                ProductionPathGraphNode node = row[index];
-
-                node.X = right;
-                node.Y = top;
-
-                right += node.Width + ColumnGap;
-            }
-        }
-        else
-        {
-            double left = GraphMargin + (contentWidth - rowWidth) / 2;
-
-            foreach (ProductionPathGraphNode node in row)
-            {
-                node.X = left;
-                node.Y = top;
-
-                left += node.Width + ColumnGap;
-            }
-        }
-
-        top += RowHeight(row);
     }
 
     /// <summary>
