@@ -10,8 +10,11 @@ namespace ShapeEditor.Web.Services;
 /// </para>
 /// <list type="bullet">
 /// <item>两侧都是半边 ⇒ <c>半边1 + 半边2</c>（用户要求：不再带列号括注）；</item>
-/// <item>只有左侧是半边 ⇒ <c>半边1 + (3+4)</c>（非半边一侧保留列号）；</item>
-/// <item>只有右侧是半边 ⇒ <c>(1+2) + 半边2</c>（非半边一侧保留列号）；</item>
+/// <item>只有一侧是半边、另一侧正好是同一轴的另一半（两侧列号互补）⇒
+/// 同样写 <c>半边1 + 半边2</c>：用户已裁决「只有一个半边需要半边工序」时，
+/// 普通角工序那一侧仍按「半边2」称呼，只是节点图里保留半半边展开；</item>
+/// <item>只有一侧是半边、但两侧列号不互补 ⇒ 保留旧写法
+/// <c>半边1 + (3+4)</c> / <c>(1+2) + 半边2</c>，避免把不相干的列叫成半边；</item>
 /// <item>两侧都不是半边 ⇒ 保持 Core 的 <c>(1+2)+(3+4)</c>。</item>
 /// </list>
 /// <para>
@@ -36,8 +39,8 @@ public static class ExchangeDisplay
 
     /// <summary>
     /// 格式化交换方向。例如 <c>(1+2)+(3+4)</c> →
-    /// <c>半边1 + 半边2</c>（两侧都是半边）或
-    /// <c>半边1 + (3+4)</c> / <c>(1+2) + 半边2</c>（只有一侧是半边）。
+    /// <c>半边1 + 半边2</c>（两侧都是半边，或只有一侧是半边且另一侧是同一轴的另一半）或
+    /// <c>半边1 + (3+4)</c> / <c>(1+2) + 半边2</c>（只有一侧是半边且列号不互补）。
     /// </summary>
     /// <param name="direction">Core 给出的方向文本。</param>
     /// <param name="partCount">图形象限数；只有 4 才改写。</param>
@@ -73,6 +76,16 @@ public static class ExchangeDisplay
             return $"{LeftHalfText} + {RightHalfText}";
         }
 
+        /*
+         * 只有一侧是半边：若另一侧正好是同一轴的另一半（列号互补），
+         * 交换的两侧仍然都是「半边」，按用户最新口径写 半边1 + 半边2；
+         * 列号不互补时才退回旧的「半边1 + (3+4)」写法。
+         */
+        if (IsComplementary(left, right))
+        {
+            return $"{LeftHalfText} + {RightHalfText}";
+        }
+
         return leftIsHalf
             ? $"{LeftHalfText} + ({rightText})"
             : $"({leftText}) + {RightHalfText}";
@@ -83,8 +96,9 @@ public static class ExchangeDisplay
     ///
     /// <para>
     /// 与 <see cref="FormatDirection"/> 用同一套半边称呼：
-    /// 命中半边工序的一侧写成「半边1」/「半边2」；另一侧不是半边时
-    /// 保留列号「(1+2)」/「(3+4)」；两侧都没有半边工序时保留 Core 原题。
+    /// 命中半边工序的一侧写成「半边1」/「半边2」；只有一侧是半边、
+    /// 另一侧列号互补时，另一侧的交换输出也叫「半边1」/「半边2」；
+    /// 两侧都没有半边工序时保留 Core 原题。
     /// 两侧都是半边时节点标题正好是 <see cref="LeftHalfText"/> 与
     /// <see cref="RightHalfText"/>，与方向文本的 <c>半边1 + 半边2</c> 一致。
     /// </para>
@@ -113,9 +127,12 @@ public static class ExchangeDisplay
         string leftText = string.Join("+", left);
         string rightText = string.Join("+", right);
 
+        // 一侧是半边、另一侧正好是同一轴的另一半 ⇒ 两侧都按半边称呼。
+        bool complementary = IsComplementary(left, right);
+
         if (title == "交换得到左半边")
         {
-            if (leftIsHalf)
+            if (leftIsHalf || (rightIsHalf && complementary))
             {
                 return LeftHalfText;
             }
@@ -127,7 +144,7 @@ public static class ExchangeDisplay
 
         if (title == "交换得到右半边")
         {
-            if (rightIsHalf)
+            if (rightIsHalf || (leftIsHalf && complementary))
             {
                 return RightHalfText;
             }
@@ -138,6 +155,25 @@ public static class ExchangeDisplay
         }
 
         return title;
+    }
+
+    /// <summary>
+    /// 两侧列号是否正好互补（合起来恰好覆盖 n = 4 的全部 4 列且不重复）：
+    /// 是则它们是同一条轴划分出的两个半边。
+    /// </summary>
+    private static bool IsComplementary(
+        IReadOnlyList<int> left,
+        IReadOnlyList<int> right)
+    {
+        if (left.Count + right.Count != HalfParts)
+        {
+            return false;
+        }
+
+        return left
+            .Concat(right)
+            .Distinct()
+            .Count() == HalfParts;
     }
 
     /// <summary>某一侧的列集合是否就是某个 Half 的目标列（都用 0 起比较）。</summary>

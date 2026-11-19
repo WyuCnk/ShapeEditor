@@ -788,7 +788,8 @@
 
     /// <summary>
     /// 交换方向的显示文本：按半边为单位改写（两侧都是半边 ⇒「半边1 + 半边2」，
-    /// 单侧是半边 ⇒「半边1 + (3+4)」/「(1+2) + 半边2」），
+    /// 只有一侧是半边且两侧列号互补 ⇒ 同样写「半边1 + 半边2」，
+    /// 列号不互补时才写「半边1 + (3+4)」/「(1+2) + 半边2」），
     /// 两侧都不是半边时保持 Core 的 <c>(1+2)+(3+4)</c>。
     /// </summary>
     private string FormatExchangeDirection(
@@ -934,6 +935,23 @@
     private void RecomputePath()
     {
         _path = _document is null ? null : ProductionPathParser.Parse(_document, _mode);
+
+        /*
+         * 半边工序粒度：当某一侧半边确实需要半边工序时，交换卡片直接从「半边」开始画，
+         * 不再把半边的内部构造展开成半半边。判定 / 求解都在 HalfExchangeView 里，
+         * 只在分析阶段执行一次；返回 null 表示保持原来的交换链节点图。
+         */
+        if (_document is not null && _half?.IsExchangeable == true)
+        {
+            ProductionPathResult? halfView = HalfExchangeView.TryCreate(
+                _document,
+                _path);
+
+            if (halfView is not null)
+            {
+                _path = halfView;
+            }
+        }
 
         _pathGraph = _path?.Path is null
             ? null
