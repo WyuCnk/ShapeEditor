@@ -4,18 +4,21 @@ namespace ShapeEditor.Web.Services;
 /// 交换工序的显示文案（只改 Web 显示层，不改 Core 的 Direction / 节点标题）。
 ///
 /// <para>
-/// 当当前图形确实有角走了半边工序（<c>AngleWorkOrder.Half != null</c>）时，
-/// 交换的两侧不再都写成普通的 <c>(1+2)+(3+4)</c>：
+/// 交换的两侧按「半边」为单位称呼：左侧是半边工序产物时叫「半边1」，
+/// 右侧是半边工序产物时叫「半边2」。当当前图形确实有角走了半边工序
+/// （<c>AngleWorkOrder.Half != null</c>）时：
 /// </para>
 /// <list type="bullet">
-/// <item>只有一侧命中 <c>Half.Target.Columns</c> ⇒ <c>半边（1+2） + (3+4)</c>
-/// （命中后半边时写成 <c>(1+2) + 半边（3+4）</c>）；</item>
-/// <item>两侧都命中 ⇒ <c>半边（1+2） + 半边（3+4）</c>；</item>
-/// <item>两侧都不命中 ⇒ 保持 Core 的 <c>(1+2)+(3+4)</c>。</item>
+/// <item>两侧都是半边 ⇒ <c>半边1 + 半边2</c>（用户要求：不再带列号括注）；</item>
+/// <item>只有左侧是半边 ⇒ <c>半边1 + (3+4)</c>（非半边一侧保留列号）；</item>
+/// <item>只有右侧是半边 ⇒ <c>(1+2) + 半边2</c>（非半边一侧保留列号）；</item>
+/// <item>两侧都不是半边 ⇒ 保持 Core 的 <c>(1+2)+(3+4)</c>。</item>
 /// </list>
 /// <para>
 /// 只处理 n = 4（半边工序只在 4 象限出现，每侧恰好 2 列）；
 /// 其它象限数的方向文本原样返回，避免误改 n ≥ 6 的 <c>(12+3)+(4+56)</c> 这类写法。
+/// 一侧的列号与某个 <c>Half.Target.Columns</c> 对不上时视为「无法判断」，
+/// 该侧按非半边显示（两侧都对不上时整段方向文本原样返回）。
 /// </para>
 /// </summary>
 public static class ExchangeDisplay
@@ -25,9 +28,16 @@ public static class ExchangeDisplay
 
     private const int HalfWidth = HalfParts / 2;
 
+    /// <summary>左侧（第一）半边的显示名。</summary>
+    private const string LeftHalfText = "半边1";
+
+    /// <summary>右侧（第二）半边的显示名。</summary>
+    private const string RightHalfText = "半边2";
+
     /// <summary>
     /// 格式化交换方向。例如 <c>(1+2)+(3+4)</c> →
-    /// <c>半边（1+2） + (3+4)</c>、<c>半边（1+2） + 半边（3+4)</c>。
+    /// <c>半边1 + 半边2</c>（两侧都是半边）或
+    /// <c>半边1 + (3+4)</c> / <c>(1+2) + 半边2</c>（只有一侧是半边）。
     /// </summary>
     /// <param name="direction">Core 给出的方向文本。</param>
     /// <param name="partCount">图形象限数；只有 4 才改写。</param>
@@ -60,20 +70,23 @@ public static class ExchangeDisplay
 
         if (leftIsHalf && rightIsHalf)
         {
-            return $"半边（{leftText}） + 半边（{rightText}）";
+            return $"{LeftHalfText} + {RightHalfText}";
         }
 
         return leftIsHalf
-            ? $"半边（{leftText}） + ({rightText})"
-            : $"({leftText}) + 半边（{rightText}）";
+            ? $"{LeftHalfText} + ({rightText})"
+            : $"({leftText}) + {RightHalfText}";
     }
 
     /// <summary>
     /// 格式化交换工序里的「交换得到左/右半边」节点标题。
     ///
     /// <para>
-    /// 命中半边工序的一侧写成「半边（1+2）」；另一侧如果是配对半边，
-    /// 写成普通的「(3+4)」；两侧都没有半边工序时保留 Core 原题。
+    /// 与 <see cref="FormatDirection"/> 用同一套半边称呼：
+    /// 命中半边工序的一侧写成「半边1」/「半边2」；另一侧不是半边时
+    /// 保留列号「(1+2)」/「(3+4)」；两侧都没有半边工序时保留 Core 原题。
+    /// 两侧都是半边时节点标题正好是 <see cref="LeftHalfText"/> 与
+    /// <see cref="RightHalfText"/>，与方向文本的 <c>半边1 + 半边2</c> 一致。
     /// </para>
     /// </summary>
     public static string FormatSideNodeTitle(
@@ -104,7 +117,7 @@ public static class ExchangeDisplay
         {
             if (leftIsHalf)
             {
-                return $"半边（{leftText}）";
+                return LeftHalfText;
             }
 
             return rightIsHalf
@@ -116,7 +129,7 @@ public static class ExchangeDisplay
         {
             if (rightIsHalf)
             {
-                return $"半边（{rightText}）";
+                return RightHalfText;
             }
 
             return leftIsHalf
