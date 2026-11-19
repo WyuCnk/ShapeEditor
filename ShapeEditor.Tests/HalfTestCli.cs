@@ -40,41 +40,86 @@ internal static class HalfTestCli
     {
         exitCode = 0;
 
-        if (args is not null && args.Length > 0)
+        /*
+         * 先剥掉 --parts N（n ≥ 6 的 k 列半边需要指定象限数）。
+         * 其余参数原样交给下面的 switch；没有 --parts 时默认 4 象限。
+         */
+        int parts = 4;
+
+        if (int.TryParse(
+                Environment.GetEnvironmentVariable("SHAPE_HALF_PARTS"),
+                out int envParts) &&
+            envParts >= 2 &&
+            envParts % 2 == 0)
         {
-            switch (args[0])
+            parts = envParts;
+        }
+
+        var cleaned = new List<string>();
+
+        for (int index = 0; index < args.Length; index++)
+        {
+            if (args[index] == "--parts")
+            {
+                if (index + 1 >= args.Length ||
+                    !int.TryParse(args[index + 1], out int parsed) ||
+                    parsed < 2 ||
+                    parsed % 2 != 0)
+                {
+                    Console.WriteLine("--parts 需要一个偶数（例如 4 / 6 / 8）。");
+                    exitCode = 2;
+                    return true;
+                }
+
+                parts = parsed;
+                index++;
+                continue;
+            }
+
+            cleaned.Add(args[index]);
+        }
+
+        if (cleaned.Count > 0)
+        {
+            string[] remaining = cleaned.ToArray();
+
+            switch (remaining[0])
             {
                 case "--half":
-                    if (args.Length < 3)
+                    if (remaining.Length < 3)
                     {
-                        Console.WriteLine("用法：--half \"u\" \"v\"（两列目标，例如 --half \"cT.T.cPT\" \"TTTT.ccc\"）");
+                        Console.WriteLine(
+                            "用法：--half \"u\" \"v\" [\"w\"] [--parts N]" +
+                            "（默认两列；--parts 6 时半边 = 3 列）");
                         exitCode = 2;
                         return true;
                     }
 
-                    exitCode = RunSingle(args[1], args[2]);
+                    exitCode = RunSingle(
+                        remaining.Skip(1).ToArray(),
+                        parts);
                     return true;
 
                 case "--half-shape":
-                    if (args.Length < 2)
+                    if (remaining.Length < 2)
                     {
                         Console.WriteLine("用法：--half-shape \"短代码\"");
                         exitCode = 2;
                         return true;
                     }
 
-                    exitCode = RunShape(args[1]);
+                    exitCode = RunShape(remaining[1]);
                     return true;
 
                 case "--half-file":
-                    if (args.Length < 2)
+                    if (remaining.Length < 2)
                     {
                         Console.WriteLine("用法：--half-file 路径（每行「u<TAB>v」）");
                         exitCode = 2;
                         return true;
                     }
 
-                    exitCode = RunBatchFile(args[1]);
+                    exitCode = RunBatchFile(remaining[1]);
                     return true;
             }
         }
@@ -83,7 +128,7 @@ internal static class HalfTestCli
 
         if (halfEnv.Length > 0)
         {
-            exitCode = RunSingleText(halfEnv, "--half / SHAPE_HALF");
+            exitCode = RunSingleText(halfEnv, "--half / SHAPE_HALF", parts);
             return true;
         }
 
@@ -100,22 +145,41 @@ internal static class HalfTestCli
 
     #region 单例
 
-    /// <summary>单例：两列目标直接给列字符串。</summary>
+    /// <summary>
+    /// 单例：直接给半边目标的各列。默认两列（n = 4）；<paramref name="parts"/> = 6 / 8 时
+    /// 半边是 k = n/2 列（n = 6 → 3 列，n = 8 → 4 列），缺的列按空列补足。
+    /// </summary>
     private static int RunSingle(
-        string u,
-        string v)
+        string[] columns,
+        int parts)
     {
-        CaseOutcome outcome = Evaluate(u, v);
+        int width = Math.Max(2, parts / 2);
 
-        PrintSingle(outcome);
+        if (columns.Length > width)
+        {
+            Console.WriteLine(
+                "给了 " + columns.Length + " 列，但 n = " + parts +
+                " 的半边只有 " + width + " 列。");
+            return 2;
+        }
 
-        return outcome.Verdict == VerdictKind.Pass ? 0 : 1;
+        if (parts == 4 && columns.Length == 2)
+        {
+            CaseOutcome outcome = Evaluate(columns[0], columns[1]);
+
+            PrintSingle(outcome);
+
+            return outcome.Verdict == VerdictKind.Pass ? 0 : 1;
+        }
+
+        return RunHalfColumns(columns, parts);
     }
 
     /// <summary>环境变量 <c>SHAPE_HALF="u|v"</c>：也接受制表符 / 逗号分割。</summary>
     private static int RunSingleText(
         string text,
-        string source)
+        string source,
+        int parts)
     {
         string[] pieces = text.Split(
             new[] { '|', '\t', ',' },
@@ -128,7 +192,140 @@ internal static class HalfTestCli
             return 2;
         }
 
-        return RunSingle(pieces[0].Trim(), pieces[1].Trim());
+        return RunSingle(
+            pieces.Select(piece => piece.Trim()).ToArray(),
+            parts);
+    }
+
+    /// <summary>
+    /// n ≥ 6 的 k 列半边诊断（k = n/2）：前态、P1、真实回放逐列打印。
+    /// 与两列入口共用 <see cref="Evaluate"/> 的判定口径，但输出面向 k 列。
+    /// </summary>
+    private static int RunHalfColumns(
+        string[] givenColumns,
+        int parts)
+    {
+        int width = parts / 2;
+        int layers = Math.Max(
+            1,
+            givenColumns.Length == 0
+                ? 1
+                : givenColumns.Max(column => column.Length));
+
+        var padded = new string[width];
+
+        for (int index = 0; index < width; index++)
+        {
+            padded[index] = index < givenColumns.Length
+                ? Pad(givenColumns[index], layers)
+                : new string('.', layers);
+        }
+
+        var target = new ShapeDocument(layers, parts);
+
+        for (int index = 0; index < width; index++)
+        {
+            Write(target, index, padded[index]);
+        }
+
+        Console.WriteLine(
+            "=== half target: parts = " + parts + ", k = " + width +
+            " 列；layers = " + layers + " ===");
+
+        for (int index = 0; index < width; index++)
+        {
+            Console.WriteLine(
+                "  Q" + (index + 1) + " = " + padded[index]);
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("[判定]");
+
+        for (int index = 0; index < width; index++)
+        {
+            string text = padded[index];
+            bool five = ShapeSignature.CheckColumn(text).IsLegal;
+            bool s = parts >= 6
+                ? five
+                : PillarSCriterion.IsPillarColumn(text);
+
+            Console.WriteLine(
+                "  五项(Q" + (index + 1) + ") = " + Bool(five) +
+                " ; S(Q" + (index + 1) + ") = " + Bool(s));
+        }
+
+        HalfWorkOrder? half = AngleWorkOrderBuilder.BuildHalf(
+            target,
+            0,
+            layers);
+
+        if (half is null)
+        {
+            Console.WriteLine();
+            Console.WriteLine(
+                "[前态] —（三个候选都没有给出可行工序）");
+            Console.WriteLine("P1       = —（无前态）");
+            Console.WriteLine();
+            Console.WriteLine(
+                "  VERDICT = FAIL（半边工序 UNCOVERED，不是「不可制作」）");
+            return 1;
+        }
+
+        ShapeDocument preState = half.Steps[0].Shape!;
+
+        Console.WriteLine();
+        Console.WriteLine("[前态]");
+
+        for (int part = 0; part < preState.PartCount; part++)
+        {
+            Console.WriteLine(
+                "  Q" + (part + 1) + " = " +
+                ShapeSignature.ColumnText(preState, part));
+        }
+
+        Console.WriteLine("  稳定性       = " + Bool(ShapeOps.IsStable(preState)));
+        Console.WriteLine(
+            "  四列五项     = " +
+            Bool(ShapeSignature.AllColumnsLegal(preState, out int badColumn)) +
+            (ShapeSignature.AllColumnsLegal(preState, out _)
+                ? string.Empty
+                : "（第 " + (badColumn + 1) + " 象限不合法）"));
+        Console.WriteLine("  P1           = " +
+            (half.Candidate == HalfCandidate.TempCrystalFuse
+                ? CheckP1(preState)
+                : "—（候选 1 / 2 不是一刀前态，P1 不适用）"));
+
+        Console.WriteLine();
+        Console.WriteLine(
+            "[操作] " + (half.OperationText ?? "—") +
+            "（" + CandidateName(half.Candidate) + "；顺转 " +
+            half.Rotation + " 个象限）");
+
+        ShapeDocument? replayed = ReplayHalf(half);
+        bool allOk = replayed is not null;
+
+        Console.WriteLine();
+        Console.WriteLine("[结果]");
+
+        for (int index = 0; index < width; index++)
+        {
+            string expected = Trim(padded[index]);
+            string actual = replayed is null
+                ? "—"
+                : Trim(ShapeSignature.ColumnText(replayed, index));
+            bool ok = actual == expected;
+
+            allOk &= ok;
+
+            Console.WriteLine(
+                "  q" + (index + 1) + "' = " + Align(actual, expected) +
+                "     期望 " + expected + "   " + (ok ? "✔" : "✘"));
+        }
+
+        Console.WriteLine(
+            "  VERDICT = " + (allOk ? "PASS" : "FAIL（回放与目标不符）"));
+
+        return allOk ? 0 : 1;
     }
 
     /// <summary>单例：整图短代码（取第 1、2 象限当作 u、v）。</summary>

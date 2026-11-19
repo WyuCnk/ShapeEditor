@@ -824,6 +824,50 @@ public static partial class AngleWorkOrderBuilder
             out badColumn);
     }
 
+    /// <summary>
+    /// <b>P1 检查</b>（docs/angle-work-order-general-algorithm.md §0.1 / §1）：
+    /// 初始前态里每颗晶体都必须直接坐在材料上，即正下方一格非空。
+    ///
+    /// <para>
+    /// 只约束<b>初始前态</b>：多刀之间的中间态允许晶下间隙。
+    /// 返回 true 表示找到一处违规，<paramref name="part"/> / <paramref name="layer"/>
+    /// 是第一个「晶体下方为空」的位置（0 起）。
+    /// </para>
+    /// <para>
+    /// 顶层晶体下方为空也算违规；层 0 的晶体接地，永远不违规。
+    /// </para>
+    /// </summary>
+    public static bool P1Violation(
+        ShapeDocument preState,
+        out int part,
+        out int layer)
+    {
+        for (part = 0; part < preState.PartCount; part++)
+        {
+            string text = ShapeSignature.ColumnText(preState, part);
+
+            for (layer = 1; layer < text.Length; layer++)
+            {
+                if (text[layer] == ShapeSignature.CrystalCode &&
+                    text[layer - 1] == ShapeSignature.EmptyCode)
+                {
+                    return true;
+                }
+            }
+        }
+
+        part = -1;
+        layer = -1;
+
+        return false;
+    }
+
+    /// <summary>P1 的自文档化包装：初始前态每颗晶体下方非空。</summary>
+    public static bool SatisfiesP1(ShapeDocument preState)
+    {
+        return !P1Violation(preState, out _, out _);
+    }
+
     /// <summary>把「前态存在非法列」写成带列位置的失败原因。</summary>
     private static string DescribeIllegalPreState(
         ShapeDocument preState,
@@ -861,6 +905,18 @@ public static partial class AngleWorkOrderBuilder
             cap,
             enforceFiveConditions,
             preferCrystalBreak);
+
+        /*
+         * n ≥ 6 的总闸门：所有路线（无晶体 / Simple / 算法 1/2/3）的初始前态
+         * 都必须满足 P1——每颗晶体正下方非空。任何一条漏网的候选都在这里被拒，
+         * 不再出现「L4 的晶体悬空」这种前态。
+         */
+        if (target.PartCount >= 6 &&
+            order.IsComplete &&
+            P1Rejected(order, order.Algorithm, out string p1Reason))
+        {
+            order = AppendFailure(order, p1Reason);
+        }
 
         return FinalizeTargetShape(order, target, column, cap);
     }
@@ -1113,6 +1169,22 @@ public static partial class AngleWorkOrderBuilder
         {
             return tierOrder ??
                    ConstructHUncovered(column, kind, tierRejectionReason);
+        }
+
+        /*
+         * n ≥ 6 的碎晶角只走切割路线（算法 1 → 2 → 3 / 构造 F）。
+         * 论文的 n ≥ 6 路线里没有顶针（构造 H），所以这里**不再**落到底链；
+         * 三条算法全失败时如实返回未覆盖，而不是改走顶针。
+         */
+        if (parts >= 6)
+        {
+            return tierOrder ??
+                   Incomplete(
+                       column,
+                       kind,
+                       "n ≥ 6 只走切割路线（构造 F）：三条算法都未通过回放；" +
+                       "论文的 n ≥ 6 路线不使用顶针（构造 H）。",
+                       construction: AngleConstruction.F);
         }
 
         /*
@@ -5682,7 +5754,9 @@ public static partial class AngleWorkOrderBuilder
     /// </list>
     /// <para>
     /// 算法 1/2 复用「填充 + 暴破」的两种填法（抬升填 / 直接填），但额外补上
-    /// 构造 C 的交接步；算法 3 是 n ≥ 6 专用的构造 F。三条都没过才让调用方退兜底链。
+    /// 构造 C 的交接步；算法 3 是 n ≥ 6 专用的构造 F（前态由算法 1 的正规核心生成）。
+    /// <b>每个候选的初始前态都必须通过 P1 断言</b>，不满足即拒绝并继续下一条；
+    /// 三条都没过才让调用方报未覆盖——n ≥ 6 <b>不再</b>退到顶针（构造 H）兜底。
     /// </para>
     /// </summary>
     private static AngleWorkOrder TryBuildSixPlusOrder(
@@ -5693,6 +5767,8 @@ public static partial class AngleWorkOrderBuilder
         int half,
         AngleBuildKind kind)
     {
+        string? rejectedForP1 = null;
+
         // ── 算法 1（提升）：§5 规则二——缺口下方的普通格抬到缺口顶端，让出的位置填成晶体 ──
         AngleWorkOrder lift = TryBuildFillBreak(
             target,
@@ -5706,7 +5782,14 @@ public static partial class AngleWorkOrderBuilder
 
         if (lift.IsComplete)
         {
-            return Label(lift, AngleAlgorithm.Algorithm1, attempt: true);
+            if (P1Rejected(lift, AngleAlgorithm.Algorithm1, out string? liftP1))
+            {
+                rejectedForP1 = liftP1;
+            }
+            else
+            {
+                return Label(lift, AngleAlgorithm.Algorithm1, attempt: true);
+            }
         }
 
         // ── 算法 2（正规核心）：把晶体塔下的缺口直接填成紧核心 ──
@@ -5722,10 +5805,17 @@ public static partial class AngleWorkOrderBuilder
 
         if (direct.IsComplete)
         {
-            return Label(direct, AngleAlgorithm.Algorithm2, attempt: true);
+            if (P1Rejected(direct, AngleAlgorithm.Algorithm2, out string? directP1))
+            {
+                rejectedForP1 = AppendText(rejectedForP1, directP1);
+            }
+            else
+            {
+                return Label(direct, AngleAlgorithm.Algorithm2, attempt: true);
+            }
         }
 
-        // ── 算法 3（构造 F 送回）：N | A | B | E 四列，一次受控下落到 d 层 ──
+        // ── 算法 3（构造 F 送回）：N | A | B | E 四列，按算法 1 的全部提升受控下落 ──
         AngleWorkOrder f = TryBuildConstructF(
             target,
             column,
@@ -5736,11 +5826,26 @@ public static partial class AngleWorkOrderBuilder
 
         if (f.IsComplete)
         {
-            return Label(f, AngleAlgorithm.Algorithm3, attempt: true);
+            if (P1Rejected(f, AngleAlgorithm.Algorithm3, out string? constructFP1))
+            {
+                rejectedForP1 = AppendText(rejectedForP1, constructFP1);
+            }
+            else
+            {
+                return Label(f, AngleAlgorithm.Algorithm3, attempt: true);
+            }
         }
 
-        return AppendFailure(
-            Label(lift, AngleAlgorithm.Algorithm1, attempt: true),
+        /*
+         * 失败时保留「已验证前缀」：构造 F 若已经画出前态（之后才卡在回放），
+         * 那是本单最有信息量的诊断，优先保留它；否则退回算法 1 的失败单。
+         */
+        AngleWorkOrder prefix = f.Steps.Count > 0
+            ? Label(f, AngleAlgorithm.Algorithm3, attempt: true)
+            : Label(lift, AngleAlgorithm.Algorithm1, attempt: true);
+
+        AngleWorkOrder failure = AppendFailure(
+            prefix,
             "算法 2（正规核心）与算法 3（构造 F 送回）也未通过：" +
             StripUncoveredPrefix(
                 f.Note ??
@@ -5748,93 +5853,154 @@ public static partial class AngleWorkOrderBuilder
                 "未知原因") +
             "；算法 1 的提升填法：" +
             StripUncoveredPrefix(lift.Note ?? "未知原因"));
+
+        return rejectedForP1 is null
+            ? failure
+            : AppendFailure(failure, rejectedForP1);
     }
 
     /// <summary>
-    /// 扫描构造 F 的规范 <c>(s, d)</c> 下落窗口。<b>全部由扫描得出</b>（§10）：
-    ///
-    /// <list type="bullet">
-    /// <item><c>t</c>：某个晶体段的底端（<c>target[t]</c> 是晶体、<c>target[t−1]</c> 不是）；</item>
-    /// <item><c>s = t − 1</c>：晶体段正下方那一层，<b>必须是空位</b>（构造 F 的针槽层）；</item>
-    /// <item><c>d</c>：<c>s</c> 以下最高的非空层，<b>必须是普通格</b>（构造 F 只送回普通格）。</item>
-    /// </list>
+    /// n ≥ 6 的候选必须通过 P1：初始前态的每颗晶体正下方非空。
+    /// 不满足时给出拒绝原因（<paramref name="reason"/>），调用方继续试下一条算法。
+    /// </summary>
+    private static bool P1Rejected(
+        AngleWorkOrder order,
+        AngleAlgorithm algorithm,
+        out string reason)
+    {
+        foreach (AngleWorkStep step in order.Steps)
+        {
+            if (step.Kind == AngleWorkStepKind.PreState &&
+                step.Shape is { } preState &&
+                P1Violation(preState, out int part, out int layer))
+            {
+                reason =
+                    "P1：算法 " + DescribeAlgorithm(algorithm) +
+                    " 的初始前态第 " + (part + 1) + " 象限第 " + (layer + 1) +
+                    " 层晶体正下方为空，拒绝该候选。";
+
+                return true;
+            }
+        }
+
+        reason = string.Empty;
+
+        return false;
+    }
+
+    /// <summary>把两条失败原因接起来（空的跳过）。</summary>
+    private static string AppendText(
+        string? existing,
+        string addition)
+    {
+        return string.IsNullOrEmpty(existing)
+            ? addition
+            : existing + "；" + addition;
+    }
+
+    /// <summary>
+    /// 算法 1（提升）：扫描目标列里<b>每一个</b>「晶体段底端正下方是空位」的段，
+    /// 沿连续空位向下找到最近的普通格，记录「抬到晶体正下方」的
+    /// <c>(s, d)</c>（<c>s</c> = 抬升后的层，<c>d</c> = 原来的层）。
     ///
     /// <para>
-    /// 从最高晶体段往下扫描，返回<b>最高</b>的合法窗口（规范窗口）；
-    /// 没有窗口时返回 null。这里不做「逐窗口回放筛选」。
     /// 层号全部来自扫描，没有「第几层」常量，也没有按 n × 层数的表（§10）。
+    /// 每次只提一格：<c>s</c> 就是晶体段底端正下方那一层，<c>d</c> 是它下方
+    /// 最近的普通格（普通格与晶体段之间全是空位）。
+    /// </para>
+    /// <para>
+    /// 返回的记录构成构造 F 的<b>全部</b>受控下落窗口。它们的
+    /// <c>[d, s−1]</c> 通道两两不相交（较高窗口的落点 d 高于较低窗口的源层 s），
+    /// 所以可以一刀同时碎掉所有通道、让各段普通格按 <c>s → d</c> 落回。
+    /// </para>
+    /// <para>
+    /// 已经坐在材料上的晶体段不在表里；没有「晶下间隙」的列返回空表
+    /// （那种列不需要构造 F，交给构造 A / C 或填充+暴破）。
     /// </para>
     /// </summary>
-    private static (int S, int D)? FindCanonicalDropWindow(
+    private static List<(int S, int D)> FindCrystalLifts(
         ShapeDocument target,
         int column)
     {
+        var lifts = new List<(int S, int D)>();
+
         int highest = AngleClassifier.HighestCrystalLayer(target, column);
 
-        for (int t = highest; t >= 1; t--)
+        for (int t = 1; t <= highest; t++)
         {
+            // t 必须是晶体段的底端：上方（t+1）不是晶体即可，本身是晶体。
             if (target[t, column].Type != CellType.Crystal ||
                 target[t - 1, column].Type == CellType.Crystal)
             {
                 continue;
             }
 
-            int s = t - 1;
-
-            if (target[s, column].Type != CellType.Empty)
+            // 段底正下方不是空位 ⇒ 已经满足 P1，不需要提升。
+            if (target[t - 1, column].Type != CellType.Empty)
             {
                 continue;
             }
 
             int d = -1;
 
-            for (int layer = s - 1; layer >= 0; layer--)
+            for (int layer = t - 2; layer >= 0; layer--)
             {
-                if (target[layer, column].Type != CellType.Empty)
+                if (target[layer, column].Type == CellType.Empty)
+                {
+                    continue;
+                }
+
+                if (target[layer, column].Type == CellType.Shape)
                 {
                     d = layer;
-
-                    break;
                 }
+
+                break;
             }
 
-            if (d < 0 || target[d, column].Type != CellType.Shape)
+            if (d >= 0)
             {
-                continue;
+                lifts.Add((t - 1, d));
             }
-
-            return (s, d);
         }
 
-        return null;
+        return lifts;
     }
 
     /// <summary>
     /// 算法 3（n ≥ 6）：构造 F 受控下落（文档 §3 的 F 原语）。
     ///
+    /// <para>
+    /// <b>前态由正规核心生成</b>：先跑算法 1（<see cref="FindCrystalLifts"/>），
+    /// 把<b>每一个</b>「晶体正下方是空位」的段下方的最近普通格抬到晶体正下方。
+    /// 这一步保证初始前态满足 <b>P1</b>（每颗晶体都坐在材料上），
+    /// 同时给出全部受控下落窗口 <c>(s, d)</c>。
+    /// </para>
     /// <para><b>四列布局</b>（沿环四个连续位置，其余象限留空，三根柱子从地面做到画布高度）：</para>
     /// <code>
     /// 针槽柱 N | 目标 A | 辅助柱 B   | 碎晶桥柱 E
-    /// 第 s 层针 | 目标列 | 第 d..s−1 层晶体 | 第 d 层晶体
+    /// 第 s_i 层针 | 提升后的正规核心 | 第 d_i..s_i−1 层晶体 | 第 d_i 层晶体
     /// 其余 T   |        | 其余 T          | 其余 T
     /// </code>
     /// <para><b>为什么这样摆</b>（§5 四条规则）：</para>
     /// <list type="number">
-    /// <item><b>规则二</b>：先把 d 层那枚普通格<b>抬到</b> s 层（晶体段正下方的缺口顶端），
-    /// d 层让出落点。于是 B 的填充晶体通道与目标晶体塔隔着这一层位移、不会纵向融合，
+    /// <item><b>规则二</b>：先把 d_i 层那枚普通格<b>抬到</b> s_i 层（晶体段正下方的缺口顶端），
+    /// d_i 层让出落点。于是 B 的填充晶体通道与目标晶体塔隔着这一层位移、不会纵向融合，
     /// 切开时只删 B、不误伤 A 的晶体塔。</item>
-    /// <item><b>规则一</b>：N 的<b>第 s 层换成顶针</b>——顶针不参与横向粘连，s 层那格
+    /// <item><b>规则一</b>：N 的第 s_i 层换成顶针——顶针不参与横向粘连，s_i 层那格
     /// 不与 N 粘住；同时针把 N 分成「下段接地」「上段托住晶体塔」两截，
     /// A 的晶体塔靠同层侧向粘连挂在 N 上，不会跟着下落。</item>
     /// <item><b>规则三</b>：半破轴取 <c>p = half − 2</c>，保留侧正好是 <c>N | A | B</c>
     /// 三列（n ≥ 6 的半边容得下三列），E 落在刀口另一侧。</item>
-    /// <item><b>规则四</b>：前态的目标列是「d 层普通格抬到 s 层」的形态，与目标列不同。</item>
+    /// <item><b>规则四</b>：前态的目标列是「各 d_i 层普通格抬到 s_i 层」的形态，
+    /// 与目标列不同。</item>
     /// </list>
-    /// <para><b>落点</b>：切开后 B 的晶体通道整段碎掉，A[s] 与 B[s] 的两枚普通格粘成
-    /// 双格一起下落；B 的第 d−1 层（0 起）普通格当刹车，双格正好停在 d 层，
-    /// 也就是目标列里那枚普通格原来的位置。</para>
+    /// <para><b>落点</b>：切开后 B 的每段晶体通道整段碎掉，A[s_i] 与 B[s_i] 的两枚
+    /// 普通格粘成双格一起下落；B 的第 d_i−1 层（0 起）普通格当刹车，双格正好停在
+    /// d_i 层，也就是目标列里那枚普通格原来的位置。各通道
+    /// <c>[d_i, s_i−1]</c> 两两不相交，所以一刀能同时恢复全部提升。</para>
     /// <para>
-    /// <c>s</c> 与 <c>d</c> 一律来自 <see cref="FindCanonicalDropWindow"/> 的扫描结果，
+    /// <c>s</c> 与 <c>d</c> 一律来自 <see cref="FindCrystalLifts"/> 的扫描结果，
     /// 没有任何「第几层」常量，也没有按 n × 层数的表（§10）。
     /// </para>
     /// </summary>
@@ -5857,42 +6023,35 @@ public static partial class AngleWorkOrderBuilder
         }
 
         var limitations = BaseLimitations(
-            "构造 F（n ≥ 6）：沿环四个连续位置摆「针槽柱 N | 目标 A | 辅助柱 B | " +
-            "碎晶桥柱 E」，其余象限留空；Cut 沿半破轴 p = half − 2 切开，" +
+            "构造 F（n ≥ 6）：先按算法 1 把每个晶体段下方的普通格抬到晶体正下方" +
+            "（初始前态因此满足 P1），再沿环四个连续位置摆「针槽柱 N | 目标 A | " +
+            "辅助柱 B | 碎晶桥柱 E」，其余象限留空；Cut 沿半破轴 p = half − 2 切开，" +
             "保留侧恰好是 N | A | B。");
 
         limitations.Add(
-            "N 的第 s 层是顶针（顶针不参与横向粘连），B 的第 d..s−1 层是碎晶用的晶体通道，" +
-            "E 只有第 d 层一枚晶体；三根柱子都从地面做到画布高度。");
+            "N 在每个提升源层 s_i 放顶针（顶针不参与横向粘连），B 在每段 d_i..s_i−1 " +
+            "放晶体通道，E 在每段落点 d_i 放一枚晶体；三根柱子都从地面做到画布高度。");
 
         limitations.Add(
-            "切开后 B 的晶体通道整段碎掉，A[s] 与 B[s] 粘成双格一起下落，" +
-            "B 的第 d−1 层普通格当刹车，双格停在 d 层；最后构造 C 交接回普通柱。");
+            "切开后 B 的各段晶体通道一起碎掉，A[s_i] 与 B[s_i] 粘成双格一起下落，" +
+            "B 的第 d_i−1 层普通格当刹车，双格停在 d_i 层；最后构造 C 交接回普通柱。");
 
         limitations.Add(
+            "P1：初始前态每颗晶体正下方都是材料（算法 1 的提升保证）；" +
             "n ≥ 6 时 S ⟺ 五项条件（文档 §1.3），本档不使用 n = 4 的 D/F 判据。");
 
-        const string noWindow =
-            "该列没有可用的 (s, d) 下落窗口：每个晶体段底端的正下方都要是空位，" +
-            "且 s 以下最高的非空层必须是普通格。";
+        List<(int S, int D)> lifts = FindCrystalLifts(target, column);
 
-        /*
-         * 规范窗口：扫描出的最高合法窗口。构造 F 只按这一个窗口装前态，
-         * 不再「逐个窗口回放筛选」——窗口严格由扫描给出，失败就如实报未覆盖。
-         */
-        (int S, int D)? window = FindCanonicalDropWindow(target, column);
-
-        if (window is null)
+        if (lifts.Count == 0)
         {
             return Incomplete(
                 column,
                 kind,
-                noWindow,
+                "该列没有「晶体正下方为空」的段（不需要算法 1 提升），" +
+                "构造 F 没有可用的受控下落窗口。",
                 limitations,
                 construction: AngleConstruction.F);
         }
-
-        (int s, int d) = window.Value;
 
         AngleWorkOrder? candidate = TryConstructFCandidate(
             target,
@@ -5901,23 +6060,38 @@ public static partial class AngleWorkOrderBuilder
             parts,
             half,
             kind,
-            s,
-            d,
+            lifts,
             limitations);
 
         return candidate ?? Incomplete(
             column,
             kind,
-            "构造 F 的最高下落窗口（第 " + (s + 1) + " 层 → 第 " + (d + 1) + " 层）" +
-            "装出的前态不成立（象限布局冲突），无法回放。",
+            "构造 F 的 " + DescribeLiftWindows(lifts) +
+            "装出的前态不成立（象限布局冲突或回放不符），无法回放。",
             limitations,
             construction: AngleConstruction.F);
     }
 
+    /// <summary>把构造 F 的下落窗口写成「第 s+1 层 → 第 d+1 层」的清单。</summary>
+    private static string DescribeLiftWindows(
+        IReadOnlyList<(int S, int D)> lifts)
+    {
+        return string.Join(
+            "、",
+            lifts.Select(lift =>
+                $"第 {lift.S + 1} 层 → 第 {lift.D + 1} 层"));
+    }
+
     /// <summary>
-    /// 按给定的 <c>(s, d)</c> 装出一份构造 F 的前态，再用真实物理把
+    /// 按算法 1 的提升表装出一份构造 F 的前态，再用真实物理把
     /// <c>PreState → Cut → Collapse → Support → Target</c> 整条链回放并逐格核对。
     /// 任何一条验收不过就返回带 Note 的未完成单（可能是 null 之外的空候选）。
+    ///
+    /// <para>
+    /// 前态用<b>正规核心</b>：目标列先按算法 1 把每个「晶体正下方是空位」的段下方的
+    /// 最近普通格抬到晶体正下方（<paramref name="lifts"/>），因此初始前态必然满足
+    /// <b>P1</b>；辅助列按每段 <c>[d, s−1]</c> 的通道放晶体、按 <c>s</c> 放顶针。
+    /// </para>
     /// </summary>
     private static AngleWorkOrder? TryConstructFCandidate(
         ShapeDocument target,
@@ -5926,8 +6100,7 @@ public static partial class AngleWorkOrderBuilder
         int parts,
         int half,
         AngleBuildKind kind,
-        int s,
-        int d,
+        IReadOnlyList<(int S, int D)> lifts,
         List<string> limitations)
     {
         char color = CrystalColor(target, column);
@@ -5942,7 +6115,7 @@ public static partial class AngleWorkOrderBuilder
             return null;
         }
 
-        // ── 前态：按 §5 的规则逐列摆出来（不是「照抄目标 + 加柱子」）──
+        // ── 前态：正规核心（算法 1 的全部提升）+ N | B | E 三根辅助柱 ──
 
         var preState = new ShapeDocument(layers, parts);
 
@@ -5954,27 +6127,48 @@ public static partial class AngleWorkOrderBuilder
         }
 
         /*
-         * 规则二（抬升）：把 d 层那枚普通格搬到 s 层（晶体段正下方），d 层让出落点。
-         * 这一步同时保证规则四：前态的目标列不再等于目标列。
+         * 算法 1（提升）：把每个晶体段正下方最近的普通格搬到 s 层，d 层让出落点。
+         * 这一步同时保证 P1（每颗晶体坐在材料上）与规则四（前态目标列 ≠ 目标列）。
          */
-        preState[s, column] = target[d, column].Clone();
-        preState[d, column] = ShapeCell.Empty();
-
-        // 针槽柱 N：第 s 层为针，其余普通格（规则一：顶针不参与横向粘连）。
-        FillPillar(preState, nColumn);
-        preState[s, nColumn] = ShapeCell.Pin();
-
-        // 辅助柱 B：第 d..s−1 层为晶体通道，其余普通格。
-        FillPillar(preState, bColumn);
-
-        for (int layer = d; layer <= s - 1; layer++)
+        foreach ((int s, int d) in lifts)
         {
-            preState[layer, bColumn] = ShapeCell.Crystal(color);
+            if (s < 0 || s >= copyLayers ||
+                d < 0 || d >= copyLayers ||
+                s <= d)
+            {
+                return null;
+            }
+
+            if (preState[s, column].Type != CellType.Empty ||
+                preState[d, column].Type != CellType.Shape)
+            {
+                return null;
+            }
+
+            preState[s, column] = preState[d, column].Clone();
+            preState[d, column] = ShapeCell.Empty();
         }
 
-        // 碎晶桥柱 E：只有第 d 层一枚晶体，其余普通格。
+        // 针槽柱 N：每个提升源层 s_i 为针，其余普通格（规则一：顶针不参与横向粘连）。
+        FillPillar(preState, nColumn);
+
+        // 辅助柱 B：每段 d_i..s_i−1 为晶体通道，其余普通格。
+        FillPillar(preState, bColumn);
+
+        // 碎晶桥柱 E：每段落点 d_i 一枚晶体，其余普通格。
         FillPillar(preState, eColumn);
-        preState[d, eColumn] = ShapeCell.Crystal(color);
+
+        foreach ((int s, int d) in lifts)
+        {
+            preState[s, nColumn] = ShapeCell.Pin();
+
+            for (int layer = d; layer <= s - 1; layer++)
+            {
+                preState[layer, bColumn] = ShapeCell.Crystal(color);
+            }
+
+            preState[d, eColumn] = ShapeCell.Crystal(color);
+        }
 
         var auxiliaryColumns = new[] { nColumn, bColumn, eColumn };
 
@@ -5996,19 +6190,46 @@ public static partial class AngleWorkOrderBuilder
                     AngleWorkStepKind.Note));
         }
 
+        // ── P1 断言：初始前态每颗晶体正下方非空，不满足即拒绝该候选 ──
+
+        if (P1Violation(preState, out int p1Part, out int p1Layer))
+        {
+            return Incomplete(
+                column,
+                kind,
+                "构造 F 的初始前态违反 P1：第 " + (p1Part + 1) + " 象限第 " +
+                (p1Layer + 1) + " 层的晶体正下方为空（拒绝该候选）。",
+                limitations,
+                construction: AngleConstruction.F,
+                auxiliaryColumns: auxiliaryColumns,
+                diagnostic: new AngleWorkStep(
+                    "P1 违规的前态（已作废）：" +
+                    ShapeSignature.ColumnText(preState, p1Part),
+                    preState,
+                    AngleWorkStepKind.Note));
+        }
+
         // ── 验收二：前态的目标列 ≠ 目标列（§5 规则四 / §7.1 循环闸门）──
 
-        if (IsCyclicPreState(preState, target, column, hasLift: true) ||
-            preState[s, column].Type == CellType.Empty ||
-            preState[d, column].Type != CellType.Empty)
+        if (IsCyclicPreState(preState, target, column, hasLift: true))
         {
             return null;
         }
 
+        foreach ((int s, int d) in lifts)
+        {
+            if (preState[s, column].Type == CellType.Empty ||
+                preState[d, column].Type != CellType.Empty)
+            {
+                return null;
+            }
+        }
+
         string preStateTitle =
-            $"构造 F 的前态：环形四连位 N（第 {s + 1} 层顶针）| A | " +
-            $"B（第 {d + 1}–{s} 层晶体通道）| E（第 {d + 1} 层晶体），其余象限留空；" +
-            $"目标列把第 {d + 1} 层的普通格抬到第 {s + 1} 层、让出落点";
+            "构造 F 的前态（算法 1 提升后的正规核心）：环形四连位 " +
+            "N（各提升源层顶针）| A | B（各段晶体通道）| E（各段落点晶体），" +
+            "其余象限留空；目标列把 " + DescribeLiftWindows(lifts) +
+            " 的普通格抬升、让出落点";
 
         var steps = new List<AngleWorkStep>
         {
@@ -6115,35 +6336,50 @@ public static partial class AngleWorkOrderBuilder
 
         bool channelBuilt = true;
         bool channelGone = true;
+        bool bridgeBuilt = true;
+        bool bridgeBroken = true;
+        bool pinKept = true;
+        bool fellThrough = true;
 
-        for (int layer = d; layer <= s - 1; layer++)
+        foreach ((int s, int d) in lifts)
         {
-            if (rotated[layer, bRotated].Type != CellType.Crystal)
+            for (int layer = d; layer <= s - 1; layer++)
             {
-                channelBuilt = false;
+                if (rotated[layer, bRotated].Type != CellType.Crystal)
+                {
+                    channelBuilt = false;
+                }
+
+                if (rawWest[layer, bRotated].Type == CellType.Crystal)
+                {
+                    channelGone = false;
+                }
             }
 
-            if (rawWest[layer, bRotated].Type == CellType.Crystal)
+            if (rotated[d, eRotated].Type != CellType.Crystal)
             {
-                channelGone = false;
+                bridgeBuilt = false;
+            }
+
+            if (realCut.East is null ||
+                realCut.East[d, eRotated].Type == CellType.Crystal)
+            {
+                bridgeBroken = false;
+            }
+
+            if (rotated[s, nRotated].Type != CellType.Pin ||
+                rawWest[s, nRotated].Type != CellType.Pin)
+            {
+                pinKept = false;
+            }
+
+            // s 层那两枚普通格的正下方必须真空出来，双格才落得下去。
+            if (rawWest[s - 1, pRotated].Type != CellType.Empty ||
+                rawWest[s - 1, bRotated].Type != CellType.Empty)
+            {
+                fellThrough = false;
             }
         }
-
-        bool bridgeBuilt =
-            rotated[d, eRotated].Type == CellType.Crystal;
-
-        bool bridgeBroken =
-            realCut.East is not null &&
-            realCut.East[d, eRotated].Type != CellType.Crystal;
-
-        bool pinKept =
-            rotated[s, nRotated].Type == CellType.Pin &&
-            rawWest[s, nRotated].Type == CellType.Pin;
-
-        // s 层那两枚普通格的正下方必须真空出来，双格才落得下去。
-        bool fellThrough =
-            rawWest[s - 1, pRotated].Type == CellType.Empty &&
-            rawWest[s - 1, bRotated].Type == CellType.Empty;
 
         if (!targetKept ||
             !channelBuilt ||
@@ -6209,8 +6445,10 @@ public static partial class AngleWorkOrderBuilder
             (rotation == 0
                 ? "切割（碎晶并落定）：沿半破轴（保留侧 N | A | B）切一刀，"
                 : $"切割（碎晶并落定）：先顺转 {rotation} 个象限，再沿半破轴（保留侧 N | A | B）切一刀，") +
-            $"打碎 B 的晶体通道与 E 的桥晶体；A 第 {s + 1} 层的普通格与 B 的同层普通格" +
-            $"粘成双格一起下落，被 B 第 {d} 层的普通格（刹车）托住，双格停在第 {d + 1} 层",
+            "打碎 B 的各段晶体通道与 E 的桥晶体；A 与 B 在 " +
+            DescribeLiftWindows(lifts) +
+            " 的普通格粘成双格一起下落，各自由 B 的 d−1 层普通格（刹车）托住、" +
+            "停回目标层",
             collapsedBack,
             AngleWorkStepKind.Cut));
 

@@ -527,6 +527,27 @@ public static partial class AngleWorkOrderBuilder
         }
 
         /*
+         * P1（docs/angle-work-order-general-algorithm.md §0.1）：初始前态里
+         * 每颗晶体都必须直接坐在材料上。
+         *
+         * 只对「一刀半破」的候选 3 生效：它的前态是真正的初始前态。
+         * 候选 1（Q 自身）与候选 2（联合逆提升）的半边来自交换/整图装配，
+         * 其前态可能就是目标本身（那列已经属于 S），不适用 P1。
+         */
+        if (order.Half.Candidate == HalfCandidate.TempCrystalFuse)
+        {
+            foreach (AngleWorkStep step in order.Steps)
+            {
+                if (step.Kind == AngleWorkStepKind.PreState &&
+                    step.Shape is { } halfPreState &&
+                    AngleWorkOrderBuilder.P1Violation(halfPreState, out _, out _))
+                {
+                    return null;
+                }
+            }
+        }
+
+        /*
          * BuildHalf 的语义是「<b>这个目标</b>的那 k 列半边可得」：
          * 候选 3 会把环伙伴列改写成构造形态（那是给单角 Build 用的），
          * 若它给出的半边与目标的这 k 列不一致，就不能算这份目标的半边。

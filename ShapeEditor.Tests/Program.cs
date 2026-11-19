@@ -31,6 +31,17 @@ internal static class Program
         }
 
         /*
+         * 单列诊断 / 审计入口（不是测试项）：
+         *   --col ".T.cTT.c" --parts 6
+         *   --audit --parts 6
+         * 或环境变量 SHAPE_DIAG_COLUMNS + SHAPE_DIAG_PARTS / SHAPE_DIAG_AUDIT。
+         */
+        if (AngleDiagCli.TryRun(args, out int diagExitCode))
+        {
+            return diagExitCode;
+        }
+
+        /*
          * 导出入口（不是测试项）：把 3–9 层的四份列清单写进 docs/handoff/lists/。
          * 只有设置 SHAPE_EXPORT_LISTS=1 时才会进入，只跑导出、不跑断言。
          */

@@ -3229,7 +3229,11 @@ internal static class AngleWorkOrderTests
             (6, 6, ".T.cTc", AngleAlgorithm.Algorithm3, AngleConstruction.F),
 
             // 算法 3（构造 F），n = 8。
-            (8, 8, "..T.c...", AngleAlgorithm.Algorithm3, AngleConstruction.F)
+            (8, 8, "..T.c...", AngleAlgorithm.Algorithm3, AngleConstruction.F),
+
+            // 算法 3（构造 F）：两段晶体都在空位上方，初始前态必须为
+            // ..TcT.Tc（算法 1 提升后的正规核心，P1 ✔），一刀落回 .T.cTT.c。
+            (6, 8, ".T.cTT.c", AngleAlgorithm.Algorithm3, AngleConstruction.F)
         };
 
         foreach ((int parts, int layers, string text, AngleAlgorithm algorithm,
@@ -3271,6 +3275,19 @@ internal static class AngleWorkOrderTests
             Assert.True(
                 ShapeSignature.AllColumnsLegal(preState, out int firstBad),
                 label + " 的前态第 " + (firstBad + 1) + " 象限不过五项条件");
+
+            // ── P1：初始前态每颗晶体正下方非空（n ≥ 6 的硬闸门）──
+            Assert.True(
+                AngleWorkOrderBuilder.SatisfiesP1(preState),
+                label + " 的初始前态必须满足 P1（每颗晶体坐在材料上）");
+
+            if (text == ".T.cTT.c")
+            {
+                Assert.Equal(
+                    "..TcT.Tc",
+                    ShapeSignature.ColumnText(preState, 0),
+                    "n=6 的 .T.cTT.c：前态 col0 必须是算法 1 提升后的 ..TcT.Tc");
+            }
 
             // ── 验收二：前态的目标列 ≠ 目标列（§5 规则四，禁止循环）──
             Assert.NotEqual(
