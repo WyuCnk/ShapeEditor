@@ -2485,3 +2485,51 @@ Cut / Collapse 按列置换等变，Exchange 的输出也只是同样的置换�
 3. `prompt-for-main-agent-half-side-test.md` §1.2 的示例：`D(v)` 应为 `false`（按定义），
    `r` 的层号口径建议统一写「1 起层号 / 0 起下标」。
 
+### 7.29 候选 3 的跨层抬升（2026-11-19，第九轮）
+
+**用户反馈**：`cT.T..cPT` / `cT.T.cPPT` / `cT.T.cTcccTc` / `cT.T.cTccc` 这些半边
+只有 §2 的「下落」路线（前态无填充、不稳定），希望它们也能做成候选 3 的
+「填充爆破晶体 + 半破」前态。
+
+**根因**：`TryBuildTempCrystalFuse` 把抬升写死成 `text[s−1]=='.' && text[s−2]=='T'`，
+只允许紧挨着的下一层是普通格；`s−2` 是空时直接拒绝，退回 §2 / 候选 2。
+
+#### 改动（`Analysis/AngleWorkOrderHalfSide.cs`）
+
+| 点 | 内容 |
+|---|---|
+| 旧窄形态 | 严格保留：`s = 最高晶体`、顶部 `c-P-T`、`L = s−2`；先试它，命中后前态 / 切后两列 / 说明文字逐字不变 |
+| 环锚 | `FuseRingAnchors`：`text[s−1]=='.'` 的晶体层（从高到低）；s 不必是最高晶体（十二层样例 s 上方还有原生晶段） |
+| 跨层抬升 | `NearestSolidBelow`：s−1 以下最近的一枚普通格 L（只允许跨空层）；把 L 搬到 s−1，L+1 … s−2 填临时晶体 |
+| 环伙伴 | `Preserved`：目标邻列有材料时逐格沿用，只把 L … s−2 改成闸门晶体、s−1 改成普通格；顶部连晶 / 尾部针 / 普通格原样保留。`Constructed`：目标邻列为空时按模板重建（0…L−1 普通格、L…s−2 闸门晶体、s−1 普通格、s…t 连晶，t = 针串上方的普通格） |
+| 保险丝 | 不变：每个临时晶体块顶层各一颗晶体，块数由 `TemporaryCrystalBlocks` 扫描 |
+| 回放闸门 | 仍用真实 `ShapePhysics.Cut`：前态稳定 / 每列合法 / 紧列 / 切后 k 列逐格等于目标，任一不过就继续找下一个环锚；旧窄形态失败时仍返回旧诊断，保持原语义 |
+
+#### 验收（`--half`，本机 Release）
+
+| 目标（u \| v） | 前态 Q1 / Q2 / Q3 / Q4 | 稳定 | 操作 | 结果 |
+|---|---|---|---|---|
+| `cT.T.cPT \| TTTT.ccc` | `cTccTcPT` / `TTTcTccc` / 空 / `TTTc....` | true | 半破 | PASS（旧输出不变） |
+| `cT...T.cPT \| TTTTTT.ccc` | `cTccccTcPT` / `TTTTTcTccc` / 空 / `TTTTTc....` | true | 半破 | PASS（旧输出不变） |
+| `cT.T..cPT \| TTTT..ccc` | `cTcccTcPT` / `TTTccTccc` / 空 / `TTTTc....` | true | 半破 | PASS（跨 1 层） |
+| `cT.T.cPPT \| TTTT.cccc` | `cTccTcPPT` / `TTTcTcccc` / 空 / `TTTc.....` | true | 半破 | PASS（双针环，顶部 cccc） |
+| `cT.T.cTcccTc \| TTTT.cccPT..`（12 层） | `cTccTcTcccTc` / `TTTcTcccPT..` / 空 / `TTTc........` | true | 半破 | PASS（环锚 s=5，保留 v 尾部） |
+| `cT.T.cTccc \| TTTT.cccPT`（10 层） | `cTccTcTccc` / `TTTcTcccPT` / 空 / `TTTc......` | true | 半破 | PASS（同上） |
+
+#### 回归与审计
+
+| 项 | 结果 |
+|---|---|
+| 全量测试 | **194/194** 通过（192 项既有 + 2 项新增；claw / 二择 2 项 XFAIL 保持） |
+| 新增测试 | `角工序:半边候选 3 跨层抬升`、`角工序:半边候选 3 跨层环锚与尾部保留`（前态稳定 + 一刀 + 逐格等于目标）；前者还含 `cT.T.T..cPT` 的跨层多块样例（两个临时晶体块、两颗保险丝） |
+| `HALFAUDIT` | `legalNonS=229 halfTargets=2 halfComplete=8 notProducible=223 uncovered=0 problems=0`（原 6，未下降） |
+| `AUDIT` / `LAYERAUDIT` / `NINEAUDIT` | `failures=0` / `falsePositives=0`（3–9 层） |
+| `HALFFENCE` | 四行语料 `claimed=0`（未退化） |
+
+#### 已知边界
+
+- 重建模式（目标邻列为空）只处理「s 上方是若干连续顶针 + 最末一层普通格」的模板；
+  其它尾部形态仍返回 null，不伪造工序。
+- 保留模式要求目标邻列在 s 及上方至少还有一枚晶体（用作环）；真实 Cut 逐格回放是最终闸门，
+  回放不过时退回原规则，不会破坏已锁定的四个样例。
+

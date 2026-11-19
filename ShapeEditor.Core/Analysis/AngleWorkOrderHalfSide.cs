@@ -1047,14 +1047,36 @@ public static partial class AngleWorkOrderBuilder
 
     #region 候选 3：临时晶体 + 保险丝 + 一刀
 
+    /// <summary>候选 3 环伙伴的两种来源。</summary>
+    private enum FusePartnerMode
+    {
+        /// <summary>
+        /// 目标邻列为空（或旧窄形态）：按模板重建——
+        /// <c>0 … L−1</c> 普通格（刹车）、<c>L … s−2</c> 闸门晶体、
+        /// <c>s−1</c> 普通格、<c>s … t</c> 顶部连晶。
+        /// </summary>
+        Constructed,
+
+        /// <summary>
+        /// 目标邻列本身有材料：逐格沿用，只把 <c>L … s−2</c> 改成闸门晶体、
+        /// <c>s−1</c> 改成普通格；顶部连晶与尾部原样保留。
+        /// </summary>
+        Preserved
+    }
+
     /// <summary>
     /// 候选 3：临时晶体 + 保险丝 + 一刀（k 列推广）。
     ///
     /// <para>
-    /// 返回 null 表示目标列<b>不在候选 3 的形态范围</b>里（顶部三层不是 c-P-T、
-    /// s−1 不是洞、临时晶体块与原生晶体纵向融合……），调用方按原语义报「不可制作」。
+    /// 先按旧窄形态（最高晶体 c-P-T、s−2 紧邻抬升）试一次；不成立再按
+    /// 「跨层抬升 / 环锚不必是最高晶体」推广：s−1 是洞，s−1 以下最近的普通格 L，
+    /// 把 L 抬到 s−1、被让出的层填临时晶体，环伙伴优先沿用目标邻列。
+    /// </para>
+    /// <para>
+    /// 返回 null 表示目标列<b>不在候选 3 的形态范围</b>里（没有合适的环锚 / 抬升源、
+    /// 临时晶体块与原生晶体纵向融合……），调用方按原语义报「不可制作」。
     /// 返回非 null 时：要么是回放验证通过的完整工序（含 <see cref="HalfWorkOrder"/>），
-    /// 要么是形态命中但回放没过的「未覆盖」工序（IsComplete = false，只保留已验证前缀）。
+    /// 要么是旧窄形态命中但回放没过的「未覆盖」工序（IsComplete = false，只保留已验证前缀）。
     /// </para>
     /// </summary>
     private static AngleWorkOrder? TryBuildTempCrystalFuse(
@@ -1064,7 +1086,6 @@ public static partial class AngleWorkOrderBuilder
         AngleBuildKind kind)
     {
         int parts = target.PartCount;
-        int width = parts / 2;
 
         if (parts < HalfMinParts ||
             parts % 2 != 0 ||
@@ -1091,32 +1112,133 @@ public static partial class AngleWorkOrderBuilder
             return null;
         }
 
-        /*
-         * 顶部三层的环：
-         *   s   = 最高晶体层（沿列扫描，不是查表）
-         *   s+1 = 顶针（不参与横向粘连 ⇒ 环必须从环伙伴的竖直晶体段绕过去）
-         *   s+2 = 普通格（与环伙伴顶层晶体横向咬合，闭合循环支撑）
-         */
-        int s = text.LastIndexOf(ShapeSignature.CrystalCode);
-
-        if (s < 2 || s + 2 != text.Length - 1)
-        {
-            return null;
-        }
-
-        if (text[s + 1] != ShapeSignature.PinCode ||
-            text[s + 2] != ShapeSignature.SolidCode)
-        {
-            return null;
-        }
+        int highest = text.LastIndexOf(ShapeSignature.CrystalCode);
+        AngleWorkOrder? legacyFailure = null;
 
         /*
-         * 抬升：目标在 s−1 必须留洞、s−2 必须是普通格。
-         * 把 s−2 的普通格搬到 s−1（与环伙伴同层普通格配对），s−2 让出的位置
-         * 和其余洞一起填临时晶体——这正是「不写打表、只按结构扫描」的形态谓词。
+         * 旧窄形态（原规则，必须逐字保留输出）：
+         *   s = 最高晶体，顶部三层 c-P-T，s−1 是洞，s−2 是普通格
+         *   ⇒ 把 s−2 的普通格搬到 s−1（紧挨着的下一层）。
+         * 先试它；命中就按旧路径返回（前态 / 切后两列 / 说明文字都不变）。
          */
-        if (text[s - 1] != ShapeSignature.EmptyCode ||
-            text[s - 2] != ShapeSignature.SolidCode)
+        if (highest >= 2 &&
+            highest + 2 == text.Length - 1 &&
+            text[highest + 1] == ShapeSignature.PinCode &&
+            text[highest + 2] == ShapeSignature.SolidCode &&
+            text[highest - 1] == ShapeSignature.EmptyCode &&
+            text[highest - 2] == ShapeSignature.SolidCode)
+        {
+            AngleWorkOrder? legacy = TryBuildFuseLayout(
+                target,
+                column,
+                cap,
+                kind,
+                text,
+                highest,
+                highest - 2,
+                FusePartnerMode.Constructed,
+                partnerRingTop: highest + 2);
+
+            if (legacy is { IsComplete: true })
+            {
+                return legacy;
+            }
+
+            legacyFailure = legacy;
+        }
+
+        /*
+         * 推广形态（跨层抬升 / 环锚不必是最高晶体）：
+         *   ① s−1 必须是洞；
+         *   ② 在 s−1 以下找最近的一枚普通格 L（只允许跨过空层）；
+         *   ③ 把 L 的普通格搬到 s−1，L+1 … s−2 全部填临时晶体；
+         *   ④ 目标邻列有材料就原样保留（只改 L … s−1），否则按模板重建；
+         *   ⑤ 真实 Cut 回放逐格等于目标半边才接受，否则继续找下一个环锚。
+         *
+         * 旧窄形态失败时仍返回它自己的诊断（若形态命中），保持原语义：
+         * 新增覆盖只增加可行工序，不把「不可制作」改写成别的结论。
+         */
+        string partnerText = ShapeSignature.ColumnText(
+            target,
+            Wrap(column + 1, target.PartCount));
+
+        foreach (int anchor in FuseRingAnchors(text))
+        {
+            int liftFrom = NearestSolidBelow(text, anchor);
+
+            if (liftFrom < 0)
+            {
+                continue;
+            }
+
+            FusePartnerMode mode;
+            int ringTop = 0;
+
+            /*
+             * 目标邻列有材料 ⇒ 原样保留。这里不能要求它本身是紧列：
+             * 目标邻列允许带洞（它是 S 列），前态的洞会被 L … s−1 的闸门晶体 /
+             * 抬升普通格填掉；紧列由下面的验收条件七按真实前态核对。
+             */
+            if (partnerText.TrimEnd(ShapeSignature.EmptyCode).Length > 0 &&
+                HasCrystalAtOrAbove(partnerText, anchor))
+            {
+                mode = FusePartnerMode.Preserved;
+            }
+            else if (partnerText.TrimEnd(ShapeSignature.EmptyCode).Length == 0 &&
+                     TryGetConstructedRingTop(text, anchor, out ringTop))
+            {
+                mode = FusePartnerMode.Constructed;
+            }
+            else
+            {
+                continue;
+            }
+
+            AngleWorkOrder? order = TryBuildFuseLayout(
+                target,
+                column,
+                cap,
+                kind,
+                text,
+                anchor,
+                liftFrom,
+                mode,
+                ringTop);
+
+            if (order is { IsComplete: true })
+            {
+                return order;
+            }
+        }
+
+        return legacyFailure;
+    }
+
+    /// <summary>
+    /// 候选 3 的单次布局尝试：给定环锚 <paramref name="s"/>、抬升源
+    /// <paramref name="liftFrom"/>、环伙伴来源与顶部连晶上端，造前态并经真实
+    /// <see cref="ShapePhysics.Cut"/> 回放。返回 null 表示形态上不成立；
+    /// 返回 <c>IsComplete = false</c> 表示形态命中但回放没过（保留已验证前缀）。
+    /// </summary>
+    private static AngleWorkOrder? TryBuildFuseLayout(
+        ShapeDocument target,
+        int column,
+        int cap,
+        AngleBuildKind kind,
+        string text,
+        int s,
+        int liftFrom,
+        FusePartnerMode partnerMode,
+        int partnerRingTop)
+    {
+        int parts = target.PartCount;
+        int width = parts / 2;
+
+        if (s < 1 ||
+            s >= text.Length ||
+            text[s] != ShapeSignature.CrystalCode ||
+            liftFrom < 0 ||
+            liftFrom > s - 2)
         {
             return null;
         }
@@ -1130,8 +1252,8 @@ public static partial class AngleWorkOrderBuilder
             preColumn[layer] = text[layer];
         }
 
-        preColumn[s - 1] = text[s - 2];
-        preColumn[s - 2] = ShapeSignature.EmptyCode;
+        preColumn[s - 1] = text[liftFrom];
+        preColumn[liftFrom] = ShapeSignature.EmptyCode;
 
         for (int layer = 0; layer < s; layer++)
         {
@@ -1182,58 +1304,30 @@ public static partial class AngleWorkOrderBuilder
 
         /*
          * 环伙伴（紧列，位于同一半边内部、与目标列相邻）：
-         *   0 … s−3  普通格（s−3 这一枚是双格下落时的刹车）
-         *   s−2      晶体（与临时晶体同层，一刀碎掉，腾出落点）
+         *   0 … L−1  普通格（L−1 这一枚是双格下落时的刹车）
+         *   L … s−2  闸门晶体（与 Q1 的临时晶体同层，一刀一起碎掉）
          *   s−1      普通格（与 Q1 抬升的普通格横向粘连、配对下落）
-         *   s … s+2  三连晶（顶部咬合 Q1 的 c-P-T，构成循环支撑）
+         *   s … t    顶部连晶（咬合 Q1 的尾部，构成循环支撑）
+         * 旧窄形态 L = s−2、t = s+2，退化成原来的单颗闸门晶体 + 三连晶。
+         *
+         * 目标邻列本身有材料时优先「原样保留」：只改 L … s−1，
+         * 顶部连晶 / 尾部针 / 普通格逐格沿用目标，切后正好回到目标邻列。
          */
-        var partner = new char[cap];
-        var fuse = new char[cap];
+        string partnerText = partnerMode == FusePartnerMode.Preserved
+            ? ShapeSignature.ColumnText(target, partnerColumn)
+            : BuildConstructedPartner(liftFrom, s, partnerRingTop, cap);
 
-        Array.Fill(partner, ShapeSignature.EmptyCode);
-        Array.Fill(fuse, ShapeSignature.EmptyCode);
+        string prePartnerText = partnerMode == FusePartnerMode.Preserved
+            ? BuildPreservedPartnerText(partnerText, liftFrom, s)
+            : partnerText;
 
-        for (int layer = 0; layer < s - 2; layer++)
-        {
-            partner[layer] = ShapeSignature.SolidCode;
-        }
-
-        partner[s - 2] = ShapeSignature.CrystalCode;
-        partner[s - 1] = ShapeSignature.SolidCode;
-        partner[s] = ShapeSignature.CrystalCode;
-        partner[s + 1] = ShapeSignature.CrystalCode;
-        partner[s + 2] = ShapeSignature.CrystalCode;
-
-        /*
-         * 保险丝柱（紧列）：在每个临时晶体块的「顶层」各放一颗晶体，
-         * 与 Q1 的临时晶体横向相邻（跨刀口），其余层用普通格垫满。
-         * n = 4 时只有一个块，上端 = s−2，退化成原来的一颗保险丝。
-         */
-        int highestBlockTop = 0;
-
-        foreach ((int _, int blockTop) in blocks)
-        {
-            highestBlockTop = Math.Max(highestBlockTop, blockTop);
-        }
-
-        for (int layer = 0; layer <= highestBlockTop; layer++)
-        {
-            fuse[layer] = ShapeSignature.SolidCode;
-        }
-
-        foreach ((int _, int blockTop) in blocks)
-        {
-            fuse[blockTop] = ShapeSignature.CrystalCode;
-        }
-
-        string partnerText = new string(partner);
-        string fuseText = new string(fuse);
+        string fuseText = BuildFuseColumn(blocks, cap);
 
         var preState = new ShapeDocument(cap, parts);
 
         /*
          * Q1：保留目标列的原生格（形状码 / 颜色逐格沿用），
-         * 抬升的那一格沿用 s−2 的原生格，临时晶体用目标晶体颜色。
+         * 抬升的那一格沿用 L 的原生格，临时晶体用目标晶体颜色。
          */
         for (int layer = 0; layer < cap; layer++)
         {
@@ -1245,9 +1339,23 @@ public static partial class AngleWorkOrderBuilder
                     : CellFromCode(preColumn[layer], color);
         }
 
-        preState[s - 1, column] = target[s - 2, column].Clone();
+        preState[s - 1, column] = target[liftFrom, column].Clone();
 
-        WriteColumn(preState, partnerColumn, partnerText, color);
+        if (partnerMode == FusePartnerMode.Preserved)
+        {
+            WritePreservedPartner(
+                preState,
+                partnerColumn,
+                target,
+                liftFrom,
+                s,
+                color);
+        }
+        else
+        {
+            WriteColumn(preState, partnerColumn, partnerText, color);
+        }
+
         WriteColumn(preState, fuseColumn, fuseText, color);
 
         /*
@@ -1267,14 +1375,20 @@ public static partial class AngleWorkOrderBuilder
             }
         }
 
-        string expectedPartner = BuildHalfPartnerColumn(s, cap);
+        /*
+         * 切后环伙伴：保留模式就是目标邻列本身（逐格沿用）；
+         * 重建模式是「0 … L 普通格 + s … t 顶部连晶」，闸门晶体与抬升格已落回。
+         */
+        string expectedPartner = partnerMode == FusePartnerMode.Preserved
+            ? partnerText
+            : BuildConstructedPartnerAfterCut(liftFrom, s, partnerRingTop, cap);
 
         ShapeDocument expectedHalf = BuildHalfExpectation(
             target,
             column,
             cap,
             partnerColumn,
-            expectedPartner,
+            partnerMode == FusePartnerMode.Preserved ? null : expectedPartner,
             color,
             parts);
 
@@ -1282,17 +1396,38 @@ public static partial class AngleWorkOrderBuilder
             ? new[] { partnerColumn, Wrap(column + 2, parts), fuseColumn }
             : new[] { partnerColumn, fuseColumn };
 
+        bool highestAnchor = s == text.LastIndexOf(ShapeSignature.CrystalCode);
+
         var limitations = BaseLimitations(
             $"半边工序（候选 3：临时晶体 + 保险丝 + 一刀）：半边 = 连续 {width} 列（n/2 = {width}），" +
-            "与交换链的轴划分一致。Q1 抬升 + 临时晶体、环伙伴顶部 c-P-T ↔ c-c-c 咬合、" +
+            "与交换链的轴划分一致。Q1 抬升 + 临时晶体、环伙伴顶部连晶 ↔ Q1 尾部咬合、" +
             "保险丝柱在每个临时晶体块的顶层各放一颗晶体；半破后 k 列逐格核对。");
 
         limitations.Add(
-            $"扫描结果：s = 第 {s + 1} 层（最高晶体），抬升层 = 第 {s - 1} 层 → 第 {s} 层，" +
-            $"临时晶体块 = " + DescribeBlocks(blocks) + "。");
+            $"扫描结果：s = 第 {s + 1} 层" +
+            (highestAnchor ? "（最高晶体）" : "（环锚晶体，其上方还有原生材料）") +
+            $"；抬升层 = 第 {liftFrom + 1} 层 → 第 {s} 层" +
+            (liftFrom < s - 2 ? $"（跨 {s - 1 - liftFrom} 层）" : "（紧邻）") +
+            $"；临时晶体块 = " + DescribeBlocks(blocks) + "。");
+
+        if (liftFrom < s - 2)
+        {
+            limitations.Add(
+                $"跨层抬升：L = 第 {liftFrom + 1} 层（s−1 以下最近的普通格），" +
+                $"L+1 … s−2（第 {liftFrom + 2}–{s - 1} 层）全部填临时晶体，" +
+                "保险丝仍按每块顶层各放一颗。");
+        }
+
+        if (partnerMode == FusePartnerMode.Preserved)
+        {
+            limitations.Add(
+                "环伙伴沿用目标邻列：只把 L … s−2 改成闸门晶体、s−1 改成普通格，" +
+                "顶部连晶与尾部逐格保留，切后正好回到目标邻列。");
+        }
+
         limitations.Add(
             $"前态：Q1 = {Trim(preColumn)}，" +
-            $"环伙伴（第 {partnerColumn + 1} 象限）= {partnerText.TrimEnd(ShapeSignature.EmptyCode)}，" +
+            $"环伙伴（第 {partnerColumn + 1} 象限）= {prePartnerText.TrimEnd(ShapeSignature.EmptyCode)}，" +
             $"保险丝（第 {fuseColumn + 1} 象限）= {fuseText.TrimEnd(ShapeSignature.EmptyCode)}。" +
             (width > 2
                 ? "其余半边列原样保留：" + DescribeColumns(
@@ -1404,11 +1539,12 @@ public static partial class AngleWorkOrderBuilder
         }
 
         // 断口两侧的晶体必须全部碎掉：临时晶体（含全部块）+ 环伙伴的闸门晶体；
-        // 目标列的原生晶体一颗不少、环伙伴顶部三连晶保留。
+        // 目标列的原生晶体一颗不少、环伙伴顶部连晶保留（保留模式下就是目标邻列的晶体数）。
         int targetCrystals = CountCrystalsInText(text);
+        int partnerCrystals = CountCrystalsInText(expectedPartner);
 
         if (CrystalsInColumn(west, targetRotated) != targetCrystals ||
-            CrystalsInColumn(west, partnerRotated) != 3)
+            CrystalsInColumn(west, partnerRotated) != partnerCrystals)
         {
             return BuildHalfFailure(
                 target,
@@ -1860,40 +1996,261 @@ public static partial class AngleWorkOrderBuilder
     #region 列扫描小工具（半边工序专用）
 
     /// <summary>
-    /// 半边环伙伴半破后的期望形态：
-    /// <c>0 … s−2</c> 是普通格，<c>s−1</c> 是洞（配对下落让出的那一层），
-    /// <c>s … s+2</c> 是顶部三连晶。
+    /// 候选 3 的环锚：目标列中 s−1 是洞的那些晶体层（从高到低）。
+    /// 旧窄形态的「最高晶体」也在其中；推广形态允许 s 上方继续有原生材料
+    /// （十二层 / 十层样例：顶部晶段自己构成环，s 只是环的锚点）。
     /// </summary>
-    private static string BuildHalfPartnerColumn(
+    private static IEnumerable<int> FuseRingAnchors(
+        string text)
+    {
+        for (int layer = text.Length - 1; layer >= 1; layer--)
+        {
+            if (text[layer] == ShapeSignature.CrystalCode &&
+                text[layer - 1] == ShapeSignature.EmptyCode)
+            {
+                yield return layer;
+            }
+        }
+    }
+
+    /// <summary>
+    /// s−1 以下最近的一枚普通格 L：只允许跨过空层；先碰到针 / 晶体就返回 −1
+    /// （抬升路径会被挡住，交给其它候选）。
+    /// </summary>
+    private static int NearestSolidBelow(
+        string text,
+        int crystal)
+    {
+        for (int layer = crystal - 2; layer >= 0; layer--)
+        {
+            if (text[layer] == ShapeSignature.SolidCode)
+            {
+                return layer;
+            }
+
+            if (text[layer] != ShapeSignature.EmptyCode)
+            {
+                return -1;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// 目标邻列为空时的环顶：允许 s 上方是「若干连续顶针 + 最末一层普通格」，
+    /// 环伙伴的连晶从 s 一直铺到那层普通格 t（旧窄形态 t = s+2）。
+    /// </summary>
+    private static bool TryGetConstructedRingTop(
+        string text,
+        int crystal,
+        out int ringTop)
+    {
+        ringTop = -1;
+
+        if (crystal + 1 >= text.Length ||
+            text[crystal + 1] != ShapeSignature.PinCode)
+        {
+            return false;
+        }
+
+        for (int layer = crystal + 1; layer < text.Length - 1; layer++)
+        {
+            if (text[layer] != ShapeSignature.PinCode)
+            {
+                return false;
+            }
+        }
+
+        if (text[text.Length - 1] != ShapeSignature.SolidCode)
+        {
+            return false;
+        }
+
+        ringTop = text.Length - 1;
+
+        return true;
+    }
+
+    /// <summary>某列在 <paramref name="layer"/> 及其上方是否还有晶体（环伙伴必须能接上）。</summary>
+    private static bool HasCrystalAtOrAbove(
+        string text,
+        int layer)
+    {
+        for (int index = Math.Max(0, layer); index < text.Length; index++)
+        {
+            if (text[index] == ShapeSignature.CrystalCode)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// 重建环伙伴（前态）：<c>0 … L−1</c> 普通格、<c>L … s−2</c> 闸门晶体、
+    /// <c>s−1</c> 普通格、<c>s … t</c> 顶部连晶。旧窄形态 L = s−2、t = s+2，
+    /// 退化成 <c>0 … s−3 普通格 + s−2 晶体 + s−1 普通格 + s … s+2 三连晶</c>。
+    /// </summary>
+    private static string BuildConstructedPartner(
+        int liftFrom,
         int s,
+        int ringTop,
         int cap)
     {
         var cells = new char[cap];
 
         Array.Fill(cells, ShapeSignature.EmptyCode);
 
-        for (int layer = 0; layer < s - 1; layer++)
+        for (int layer = 0; layer < liftFrom; layer++)
         {
             cells[layer] = ShapeSignature.SolidCode;
         }
 
-        cells[s] = ShapeSignature.CrystalCode;
-        cells[s + 1] = ShapeSignature.CrystalCode;
-        cells[s + 2] = ShapeSignature.CrystalCode;
+        for (int layer = liftFrom; layer <= s - 2; layer++)
+        {
+            cells[layer] = ShapeSignature.CrystalCode;
+        }
+
+        cells[s - 1] = ShapeSignature.SolidCode;
+
+        for (int layer = s; layer <= ringTop && layer < cap; layer++)
+        {
+            cells[layer] = ShapeSignature.CrystalCode;
+        }
 
         return new string(cells);
     }
 
     /// <summary>
-    /// 目标半边的期望图形：半边的 k 列逐格复制目标（环伙伴那一列再按
-    /// <see cref="BuildHalfPartnerColumn"/> 写入：普通格 <c>C/u</c>、晶体用目标晶体颜色）。
+    /// 重建环伙伴（切后）：闸门晶体已碎、抬升格落到 L，所以是
+    /// <c>0 … L</c> 普通格 + <c>s … t</c> 顶部连晶，中间是配对下落让出的洞。
+    /// </summary>
+    private static string BuildConstructedPartnerAfterCut(
+        int liftFrom,
+        int s,
+        int ringTop,
+        int cap)
+    {
+        var cells = new char[cap];
+
+        Array.Fill(cells, ShapeSignature.EmptyCode);
+
+        for (int layer = 0; layer <= liftFrom; layer++)
+        {
+            cells[layer] = ShapeSignature.SolidCode;
+        }
+
+        for (int layer = s; layer <= ringTop && layer < cap; layer++)
+        {
+            cells[layer] = ShapeSignature.CrystalCode;
+        }
+
+        return new string(cells);
+    }
+
+    /// <summary>
+    /// 保险丝柱（紧列）：在每个临时晶体块的顶层各放一颗晶体（其余层用普通格垫满），
+    /// 与 Q1 的临时晶体横向相邻、跨刀口。
+    /// </summary>
+    private static string BuildFuseColumn(
+        List<(int Bottom, int Top)> blocks,
+        int cap)
+    {
+        var cells = new char[cap];
+
+        Array.Fill(cells, ShapeSignature.EmptyCode);
+
+        int highestBlockTop = 0;
+
+        foreach ((int _, int blockTop) in blocks)
+        {
+            highestBlockTop = Math.Max(highestBlockTop, blockTop);
+        }
+
+        for (int layer = 0; layer <= highestBlockTop; layer++)
+        {
+            cells[layer] = ShapeSignature.SolidCode;
+        }
+
+        foreach ((int _, int blockTop) in blocks)
+        {
+            cells[blockTop] = ShapeSignature.CrystalCode;
+        }
+
+        return new string(cells);
+    }
+
+    /// <summary>
+    /// 保留模式的环伙伴前态列代码：目标邻列只把 <c>L … s−2</c> 改成晶体、
+    /// <c>s−1</c> 改成普通格；只用于说明文字（真实前态按单元格逐格写入）。
+    /// </summary>
+    private static string BuildPreservedPartnerText(
+        string targetPartner,
+        int liftFrom,
+        int s)
+    {
+        var cells = targetPartner.ToCharArray();
+
+        for (int layer = liftFrom; layer <= s - 2 && layer < cells.Length; layer++)
+        {
+            cells[layer] = ShapeSignature.CrystalCode;
+        }
+
+        if (s - 1 < cells.Length)
+        {
+            cells[s - 1] = ShapeSignature.SolidCode;
+        }
+
+        return new string(cells);
+    }
+
+    /// <summary>
+    /// 保留模式的环伙伴前态：逐格沿用目标邻列，只把
+    /// <c>L … s−2</c> 改成闸门晶体、<c>s−1</c> 改成一枚普通格（沿用目标 L 层的单元格，
+    /// 形状码 / 颜色不变），切后它正好落回 L。
+    /// </summary>
+    private static void WritePreservedPartner(
+        ShapeDocument preState,
+        int partnerColumn,
+        ShapeDocument target,
+        int liftFrom,
+        int s,
+        char color)
+    {
+        for (int layer = 0; layer < preState.LayerCount; layer++)
+        {
+            if (layer >= liftFrom && layer <= s - 2)
+            {
+                preState[layer, partnerColumn] = ShapeCell.Crystal(color);
+            }
+            else if (layer == s - 1)
+            {
+                preState[layer, partnerColumn] = liftFrom < target.LayerCount
+                    ? target[liftFrom, partnerColumn].Clone()
+                    : ShapeCell.Empty();
+            }
+            else
+            {
+                preState[layer, partnerColumn] = layer < target.LayerCount
+                    ? target[layer, partnerColumn].Clone()
+                    : ShapeCell.Empty();
+            }
+        }
+    }
+
+    /// <summary>
+    /// 目标半边的期望图形：半边的 k 列逐格复制目标。
+    /// <paramref name="partnerText"/> 非 null 时再按构造形态覆盖环伙伴那一列
+    /// （普通格 <c>C/u</c>、晶体用目标晶体颜色）；为 null 表示环伙伴沿用目标邻列。
     /// </summary>
     private static ShapeDocument BuildHalfExpectation(
         ShapeDocument target,
         int column,
         int cap,
         int partnerColumn,
-        string partnerText,
+        string? partnerText,
         char color,
         int parts)
     {
@@ -1912,7 +2269,10 @@ public static partial class AngleWorkOrderBuilder
             }
         }
 
-        WriteColumn(expected, partnerColumn, partnerText, color);
+        if (partnerText is not null)
+        {
+            WriteColumn(expected, partnerColumn, partnerText, color);
+        }
 
         return expected;
     }
