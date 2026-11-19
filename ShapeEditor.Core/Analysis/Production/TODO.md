@@ -2312,4 +2312,77 @@ Cut / Collapse 按列置换等变，Exchange 的输出也只是同样的置换�
   「`HalfAssembly` 已按两个方向装配，输入取半边工序产物」；§4.2 候选 2 的 Q′ 注明
   「Q′ 是工序内部的下落前状态，不是装配输入」。
 
+### 7.27 半边候选优先级：终止前态 + 一次半破优先（2026-11-18，第七轮）
 
+**用户反馈**：图形 `crCucrCu:CuCuCuCu:--Cu--Cu:CuCuCuCu:--------:crcrcrcr:P-crP-cr:CucrCucr`
+（8 层，两半相同：`q1 = q3 = cT.T.cPT`、`q2 = q4 = TTTT.ccc`）的两个半边工序，
+卡片前态是**没有填充爆破晶体**的「候选 2 联合逆提升」形态（`cT..TcPT` / `TTT.Tccc`），
+箭头却写着「半破」——前态与操作对不上。
+
+**根因**：`TryBuildHalfOrder` 按论文顺序试候选 1 → 2 → 3，候选 2 在示例半边上先命中
+（`cT.T.cPT | TTTT.ccc` 满足联合逆提升：最高晶体 5 / 7 不等高、`a = 3`、`b = 5`、
+第 3 层有相邻 `TT`，`Q′` 一次下落恰好得到 Q）。候选 3 其实也能做（前态
+`cTccTcPT | TTTcTccc | ........ | TTTc....`，一刀半破逐格回到目标半边），只是排在最后。
+
+**改法（只动 Core / Tests）**
+
+1. **候选顺序改为 3 → 1 → 2**（`AngleWorkOrderHalfSide.TryBuildHalfOrder`）：
+   候选 3（`TempCrystalFuse`）命中且回放通过就用它；不成立才退候选 1（Q 自身）、
+   候选 2（联合逆提升）。候选 3 形态命中但回放没过时仍继续试 1 / 2，
+   都不成立才把候选 3 的「未覆盖」诊断交还调用方（语义不变）。
+2. **`BuildHalf` 加 `requireTargetHalf` 闸门**：候选 3 会把环伙伴列改写成构造形态
+   （`TTTT.ccc`，给单角 `Build` 用）。`BuildHalf` 的语义是「**这个目标**的 k 列可得」，
+   所以候选 3 的半边与目标那 k 列不逐格相等时不算数，继续退 1 / 2，
+   而不是直接返回 null（否则会抢掉原本由候选 2 命中的半边）。
+3. **候选 2 的文案只写「下落」**：`BuildPaperHalfOrder` 的目标步改成
+   「一次下落，不是切割：Q′ 装配后自动下落并进本步」/「无需切割、无需下落」；
+   新增 `HalfWorkOrder.OperationText`（候选 3 = 半破、候选 2 = 下落、候选 1 = 无需操作）
+   作为卡片箭头 / 标题的 Core 侧唯一文案来源。
+
+**实测（`SHAPE_PROBE_MODE=halfcand`，示例半边 `cT.T.cPT`）**
+
+| 候选 | 改动前 | 改动后 |
+|---|---|---|
+| 候选 1（Q 自身） | 不可得（`cT.T.cPT` 不属于 n = 4 的 S） | 同左 |
+| 候选 2（联合逆提升） | **可得** ⇒ 被选中；前态 `cT..TcPT \| TTT.Tccc`，步骤 `PreState → Target` | 仍可得，但降为后备；标题写「下落」 |
+| 候选 3（临时晶体 + 保险丝 + 一刀） | 可得但排最后；前态 `cTccTcPT \| TTTcTccc \| ........ \| TTTc....` | **被选中**；`PreState → Cut → Target`，`Rotation = 0` |
+
+`BuildHalf(target, 0, 8)`：`Algo8Uplift`（2 步）→ **`TempCrystalFuse`（3 步）**；
+两个半边（第 0 / 第 2 象限）都是候选 3。真实 `ShapePhysics.Cut` 回放后
+`q1 = cT.T.cPT`、`q2 = TTTT.ccc`（类型 / 形状码 / 颜色逐格相等）。
+`HalfAssembly.TryBuild` / `ProductionPipeline.Solve` 仍成功（两侧候选 3，方向 A 回放通过）。
+
+**k 列推广的连带影响**：n = 6 / n = 8 的 `cT.T.cPT + TTTT.ccc + 空列` 半边以前由候选 1
+（Q 自身）命中，现在由候选 3 命中（前态同样带临时晶体与保险丝，一刀半破）；候选 1 仍是
+「候选 3 不成立」时的第一后备（空主列、`cTcccccc` 等形态仍走它）。
+
+**测试改动（行为变化，均已说明原因）**
+
+| 测试 | 改动 |
+|---|---|
+| `角工序:k 列半边（n=6/8）` | 候选 `Algo8Self`（2 步）→ `TempCrystalFuse`（`PreState → Cut → Target`）；新增「前态目标列 ≠ 目标 + 晶体数变多 + 每列紧列 + 真实 Cut 回放」断言；`Rotation = Wrap(−start, n)` |
+| `语料12:n=6/8 半边装配整图` | 候选断言按轴的主列分档：n = 6（主列 `cT.T.cPT`）= 候选 3；n = 8（主列是空列）= 候选 1 |
+| `语料12:示例图形半边装配（两个方向）` | 两侧 `Algo8Uplift` → `TempCrystalFuse`，文档注释同步 |
+| **新增** `角工序:半边优先候选 3（用户图形）` | 示例图形两个半边都必须是候选 3；前态四列逐格（`cTccTcPT` / `TTTcTccc` / 空 / `TTTc....`）、临时晶体 2 颗、保险丝 1 颗、真实 Cut 逐格等于目标半边 |
+| **新增** `角工序:候选 2 只写下落不写半破` | 论文例仍走候选 2：`OperationText = 下落`、没有 Cut 步、标题不含「半破」且含「下落」 |
+
+**验收数字**
+
+| 项 | 结果 |
+|---|---|
+| 全量测试 | **192/192** 通过（190 项原有 + 2 项新增；claw / 二择 2 项 XFAIL 保持不变） |
+| `AUDIT`（≤6 层 S） | `total=5440 legal=2126 s=2125 success=2125 legalNonS=1 failures=0 falsePositives=0`（不变） |
+| `LAYERAUDIT` | 7 层 `s=4320 success=4320 failures=0`；8 层 `s=12646 success=12646 failures=0`（不变） |
+| `NINEAUDIT` | `s=36508 success=36508 failures=0 falsePositives=0 fillBreak=0`（不变） |
+| `HALFAUDIT` | `legalNonS=229 halfTargets=2 halfComplete=6 notProducible=225 uncovered=0 problems=0`（未下降） |
+| `HALFFENCE` | 四行语料 `claimed=0`（未退化） |
+
+**未改项 / 后续**
+
+- **Web 端的箭头标签仍硬编码**：`ShapeEditor.Web/Services/AngleWorkView.LabelHalfEdges`
+  在「链里没有 Cut 步」时把进入目标步的那根箭头写成「半破」。本轮按任务约束只改
+  Core / Tests，所以候选 2 的卡片箭头仍是 Web 侧文案问题；Core 已备好
+  `HalfWorkOrder.OperationText`，Web 改成读它即可（候选 2 显示「下落」）。
+- `docs/` 未改。建议 docs 更新点：`docs/half-side-work-order.md` §4.2 补一句
+  「候选优先级为 3 → 1 → 2（本仓库口径）」，并注明候选 2 的链路文案是「下落」。
+- 论文顺序（1 → 2 → 3）仍如实记录在候选定义里；**派发**顺序才是 3 → 1 → 2。

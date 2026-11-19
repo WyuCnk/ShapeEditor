@@ -12,6 +12,13 @@ namespace ShapeEditor.Core.Analysis;
 /// 这一格两条都拒绝，但半边确实可得 ⇒ 需要第三条候选。
 /// </para>
 /// <para>
+/// <b>候选优先级（本仓库口径）</b>：<see cref="TempCrystalFuse"/> →
+/// <see cref="Algo8Self"/> → <see cref="Algo8Uplift"/>。
+/// 能做成「终止前态（临时晶体填充）+ 一次半破」的就先用它：
+/// 前态与卡片箭头说的是同一件事（真实切割），不会出现「前态没填充、箭头却写半破」。
+/// 候选 3 在某半边不成立时才退候选 1 / 2。
+/// </para>
+/// <para>
 /// <b>k = n/2 列推广（P3）</b>：n ≥ 6 时半边是连续 3 列以上，三个候选的判定
 /// 与施工都按「半边宽度 = n/2」推广；n = 4（k = 2）的判定与布局保持原样。
 /// </para>
@@ -94,6 +101,24 @@ public sealed record HalfWorkOrder(
     /// </para>
     /// </summary>
     public int Rotation { get; init; }
+
+    /// <summary>
+    /// 这条半边工序从「前态」到「目标半边」实际做的操作，供卡片箭头 / 标题使用：
+    /// 候选 3 是 <c>半破</c>（真实 Cut），候选 2 是 <c>下落</c>（没有切割），
+    /// 候选 1 是 <c>无需操作</c>（前态就是 Q）。
+    ///
+    /// <para>
+    /// 这里只描述<b>真实回放过</b>的操作：候选 2 的步骤链里没有
+    /// <see cref="AngleWorkStepKind.Cut"/> 步，所以它绝不能写「半破」。
+    /// </para>
+    /// </summary>
+    public string OperationText => Candidate switch
+    {
+        HalfCandidate.TempCrystalFuse => "半破",
+        HalfCandidate.Algo8Uplift => "下落",
+        HalfCandidate.Algo8Self => "无需操作",
+        _ => "未知操作"
+    };
 }
 
 /// <summary>
@@ -104,9 +129,9 @@ public sealed record HalfWorkOrder(
 /// 五项 ✘                         → NotProducible
 /// n ≥ 6                          → 现有算法（不变；半边只在 BuildHalf / 装配层使用）
 /// n = 4 且 S ✔                   → 现有角工序（不变）
-/// n = 4 且 S ✘ 但五项 ✔          → 半边工序，按论文顺序试三个候选：
-///                                   候选 1（Q 自身）→ 候选 2（联合逆提升）
-///                                   → 候选 3（临时晶体 + 保险丝 + 一刀）
+/// n = 4 且 S ✘ 但五项 ✔          → 半边工序，按本仓库优先级试三个候选：
+///                                   候选 3（临时晶体 + 保险丝 + 一刀）
+///                                   → 候选 1（Q 自身）→ 候选 2（联合逆提升）
 ///                                   ├ 任一成功 → 角工序 + Half 字段
 ///                                   └ 全失败   → NotProducible（保持现状语义）
 /// </code>
@@ -115,6 +140,13 @@ public sealed record HalfWorkOrder(
 /// <see cref="HalfProjection"/> 取从 <c>column</c> 起的连续 k 列，其余象限置空；
 /// 三个候选的判定与「半边目标」都按 k 列核对。n = 4 时 k = 2，所有布局与
 /// 判定退化成原来的两列版本（逐字一致）。</para>
+///
+/// <para><b>候选优先级</b>：<see cref="HalfCandidate.TempCrystalFuse"/> →
+/// <see cref="HalfCandidate.Algo8Self"/> → <see cref="HalfCandidate.Algo8Uplift"/>
+/// （用户口径：能做成「终止前态 + 一次半破」的就先用它，见
+/// <see cref="TryBuildHalfOrder"/>）。候选 1 / 2 <b>不做切割</b>：
+/// 候选 1 的前态就是 Q（无操作），候选 2 的前态是 Q′、靠一次完整<b>下落</b>得到半边，
+/// 所以它们的步骤标题只写「下落」/「无需切割」，绝不写「半破」。</para>
 ///
 /// <para><b>候选 1 / 2（论文算法 8，spec §2.7）</b></para>
 /// <list type="number">
@@ -165,21 +197,40 @@ public static partial class AngleWorkOrderBuilder
     /// <summary>半边的最小象限数（n = 4 才有两列半边的特化；n ≥ 6 走 k 列推广）。</summary>
     private const int HalfMinParts = 4;
 
-    #region 候选派发（论文顺序：1 → 2 → 3）
+    #region 候选派发（候选 3 → 候选 1 → 候选 2）
 
     /// <summary>
-    /// 半边工序的候选派发：论文算法 8 的候选 1、候选 2，最后才是本仓库补的候选 3。
+    /// 半边工序的候选派发：<b>优先候选 3（临时晶体 + 保险丝 + 一刀）</b>，
+    /// 它在某半边做不出来时才退论文算法 8 的候选 1（Q 自身）、候选 2（联合逆提升）。
     ///
     /// <para>
+    /// <b>为什么不再按论文顺序 1 → 2 → 3</b>：候选 2 的前态是「提升后、未填充」的 Q′，
+    /// 装配后靠一次完整下落得到半边，卡片上只有「前态 → 目标」两步；
+    /// 用户看到的形态是「前态没有填充爆破晶体」，却仍被切成「半破」的一条链。
+    /// 候选 3 的前态是<b>终止前态</b>：q1 抬升 + 洞全部填临时晶体、环伙伴咬合、
+    /// 保险丝柱跨刀口，一刀真实 <see cref="ShapePhysics.Cut"/> 回到目标半边。
+    /// 既然两种都能做，就按用户要求取「带填充爆破晶体的一刀」这一种，
+    /// 让卡片上的前态、箭头与步骤链说的是同一件事。
+    /// </para>
+    /// <para>
     /// 每个候选都自己完成「扫描判定 → 造前态 → 真实物理回放 → 逐格核对」；
-    /// 返回 null 表示该候选不适用或回放失败，调用方继续试下一个。
+    /// 返回 null 表示该候选不适用。候选 3 形态命中但回放没通过时返回
+    /// <c>IsComplete = false</c> 的诊断工序（不伪造 Target 步），此时仍继续试候选 1 / 2；
+    /// 都不成立才把这份诊断交还调用方。
+    /// </para>
+    /// <para>
+    /// <paramref name="requireTargetHalf"/> 为 true 时（<see cref="BuildHalf"/> 的语义：
+    /// 「<b>这个目标</b>的那 k 列半边可得」），候选 3 的半边必须逐格等于目标的这 k 列，
+    /// 否则继续退候选 1 / 2——候选 3 会把环伙伴列改写成构造形态，那只适用于
+    /// 单角 <see cref="Build"/>，不能冒充另一份目标的半边。
     /// </para>
     /// </summary>
     private static AngleWorkOrder? TryBuildHalfOrder(
         ShapeDocument target,
         int column,
         int cap,
-        AngleBuildKind kind)
+        AngleBuildKind kind,
+        bool requireTargetHalf = false)
     {
         if (target.PartCount < HalfMinParts ||
             target.PartCount % 2 != 0 ||
@@ -188,45 +239,78 @@ public static partial class AngleWorkOrderBuilder
             return null;
         }
 
-        // 论文优先：第一候选（Q 自身）→ 第二候选（联合逆提升）→ 第三候选（兜底）。
-        AngleWorkOrder? order = TryBuildAlgo8Self(
+        int[] halfColumns = HalfColumns(column, target.PartCount);
+
+        // 只有「半边目标就是目标这 k 列」的工序才算这份目标的半边。
+        bool MatchesTargetHalf(
+            AngleWorkOrder order) =>
+            !requireTargetHalf ||
+            (order.Half is not null &&
+             SameHalfColumns(
+                 order.Half.Steps[^1].Shape,
+                 target,
+                 halfColumns,
+                 target.PartCount));
+
+        // 第 ① 顺位：候选 3（终止前态 + 一次半破）。
+        AngleWorkOrder? fuse = TryBuildTempCrystalFuse(
             target,
             column,
             cap,
             kind);
 
-        if (order is not null)
+        if (fuse is { IsComplete: true } && MatchesTargetHalf(fuse))
         {
-            return order;
+            return fuse;
         }
 
-        order = TryBuildAlgo8Uplift(
+        // 第 ② 顺位：候选 1（Q 自身，无需切割）。
+        AngleWorkOrder? self = TryBuildAlgo8Self(
             target,
             column,
             cap,
             kind);
 
-        if (order is not null)
+        if (self is not null)
         {
-            return order;
+            return self;
         }
 
-        return TryBuildTempCrystalFuse(
+        // 第 ③ 顺位：候选 2（联合逆提升，一次下落）。
+        AngleWorkOrder? uplift = TryBuildAlgo8Uplift(
             target,
             column,
             cap,
             kind);
+
+        if (uplift is not null)
+        {
+            return uplift;
+        }
+
+        /*
+         * 候选 3 的形态命中了、但回放没通过（或半边不是这份目标的 k 列）：
+         * 交还这份「未覆盖」诊断（只保留真实 Cut 之前已验证的前态），
+         * 调用方按原语义报不可制作。
+         */
+        return fuse;
     }
 
     /// <summary>
-    /// 独立入口：把一段半边（连续 n/2 列）按「候选 1 → 2 → 3」求解，
-    /// 返回第一个通过真实回放的半边工序。
+    /// 独立入口：把一段半边（连续 n/2 列）按「候选 3 → 1 → 2」求解，
+    /// 返回第一个通过真实回放、且半边逐格等于目标那 k 列的半边工序。
     ///
     /// <para>
     /// 角工序的 <see cref="Build"/> 只在「n = 4、五项 ✔ 但 S ✘」时进入半边分支，
     /// 因此候选 1（要求 k 列都属于 S）不可能经由 <see cref="Build"/> 命中；
     /// 它需要这个不经过单角 S 闸门的入口（交换链 / 整图判定也按定理 6 直接讨论半边）。
     /// n ≥ 6 时同样由这个入口给出 k 列半边（整图装配层使用）。
+    /// </para>
+    /// <para>
+    /// 候选 3 会把环伙伴列改写成构造形态（那是给单角 Build 用的）。本入口要求
+    /// 「<b>这个目标</b>的那 k 列」，所以候选 3 给出的半边与目标不一致时不算数，
+    /// 继续退候选 1 / 2（见 <see cref="TryBuildHalfOrder"/> 的
+    /// <c>requireTargetHalf</c>）。
     /// </para>
     /// <para>
     /// 返回 null 表示三个候选都不适用或回放失败；不等于「半边不可得」。
@@ -251,7 +335,8 @@ public static partial class AngleWorkOrderBuilder
             target,
             column,
             cap,
-            AngleClassifier.Classify(target, column));
+            AngleClassifier.Classify(target, column),
+            requireTargetHalf: true);
 
         if (order is not { IsComplete: true } || order.Half is null)
         {
@@ -1284,12 +1369,16 @@ public static partial class AngleWorkOrderBuilder
     /// </para>
     /// <para>
     /// 候选 2：<paramref name="collapseStep"/> 是真实 <see cref="ShapePhysics.Collapse"/>
-    /// 的结果 ⇒ 步骤链 <c>PreState(Q′) → Collapse → Target(Q)</c>，下落一次。
+    /// 的结果 ⇒ 步骤链 <c>PreState(Q′) → Target(Q)</c>，<b>一次下落</b>并进 Target 步。
+    /// </para>
+    /// <para>
+    /// 两条候选都<b>没有切割</b>，所以步骤标题只写「下落」/「无需切割」：
+    /// 卡片箭头要描述真实发生过的操作，写「半破」会把下落说成切割。
     /// </para>
     /// <para>
     /// k 列都是带子配方的目标列（各自按 S 单角工序制作），所以
     /// <see cref="HalfWorkOrder.TargetColumnsHaveSubRecipe"/> 为 true、允许带洞；
-    /// 另外 n−k 个象限整列为空，没有辅助列。三个候选都不含 Pin，<c>Rank = 0</c>。
+    /// 另外 n−k 个象限整列为空，没有辅助列。两个候选都不含 Pin，<c>Rank = 0</c>。
     /// </para>
     /// </summary>
     private static AngleWorkOrder BuildPaperHalfOrder(
@@ -1313,6 +1402,11 @@ public static partial class AngleWorkOrderBuilder
                 "BuildPaperHalfOrder 只处理算法 8 的两条候选。")
         };
 
+        // 真实操作：候选 2 是一次完整下落（不是半破）；候选 1 什么都不用做。
+        string operation = collapseStep is null
+            ? "前态就是 Q，无需切割、无需下落"
+            : "Q′ 装配后自动下落一次（不是切割，没有 Cut 步）";
+
         string preStateText = DescribeColumns(preState, columns, preState.PartCount);
         string targetText = DescribeColumns(expectedHalf, columns, expectedHalf.PartCount);
 
@@ -1327,11 +1421,12 @@ public static partial class AngleWorkOrderBuilder
         /*
          * 候选 2 的「一次完整下落」是装配 Q′ 之后自动发生的物理，不是独立操作；
          * 按新步骤规范并进 Target 步（末步 Shape 就是落定后的结果），
-         * 不再单独输出 Collapse 步。
+         * 不再单独输出 Collapse 步。标题写「下落」，不写「半破」。
          */
 
         halfSteps.Add(new AngleWorkStep(
-            $"半边目标（{candidateName}）：{targetText}（k 列逐格核对类型 / 形状码 / 颜色）",
+            $"半边目标（{candidateName}）：{targetText}（{operation}；" +
+            "k 列逐格核对类型 / 形状码 / 颜色）",
             expectedHalf,
             AngleWorkStepKind.Target));
 
@@ -1360,8 +1455,8 @@ public static partial class AngleWorkOrderBuilder
 
         steps.Add(new AngleWorkStep(
             collapseStep is null
-                ? "k 列逐格等于目标半边，得到目标角（无需切割）"
-                : "k 列逐格等于目标半边，得到目标角（Q′ 装配后自动下落一次，下落并进本步）",
+                ? "k 列逐格等于目标半边，得到目标角（无需切割、无需下落）"
+                : "k 列逐格等于目标半边，得到目标角（一次下落，不是切割：Q′ 装配后自动下落并进本步）",
             target,
             AngleWorkStepKind.Target));
 

@@ -213,6 +213,10 @@ internal static class Program
             ("角工序:k 列半边（n=6/8）", AngleWorkOrderTests.HalfSideGeneralizesToKColumns),
             ("角工序:k 列半边不做假阳性", AngleWorkOrderTests.HalfSideKColumnsDoesNotFakeUnstableHalf),
             ("角工序:半边候选 3 多保险丝", AngleWorkOrderTests.HalfSideFuseHandlesMultipleTemporaryBlocks),
+
+            // 2026-11-18 第七轮：候选优先级改为「终止前态 + 一次半破」优先。
+            ("角工序:半边优先候选 3（用户图形）", AngleWorkOrderTests.HalfSidePrefersTempCrystalFuseOverUplift),
+            ("角工序:候选 2 只写下落不写半破", AngleWorkOrderTests.HalfSideUpliftChainSaysFallNotHalfBreak),
             ("角工序:P1 审计（§R1）", ConstructedHGeneralTests.P1AuditIsClean),
             ("角工序:§R9 三个样例（通用 H）", ConstructedHGeneralTests.ThreePaperSamplesUseGeneralH),
             ("角工序:§0.4 覆盖深间隙与 §17 三族", ConstructedHGeneralTests.Rule17CoversDeepGapFamily),

@@ -21,6 +21,9 @@ namespace ShapeEditor.Tests;
 /// <item><c>figure</c>：读取 <c>SHAPE_PROBE_CODE</c>（完整短代码），打印整图求解、
 /// 半边装配（两个方向，<c>SHAPE_PROBE_SWAPPED=1</c> 先试方向 B）与
 /// 每条轴的 <c>BuildHalf</c> 诊断。</item>
+/// <item><c>halfcand</c>：读取 <c>SHAPE_PROBE_CODE</c>（完整短代码）与可选
+/// <c>SHAPE_PROBE_COLUMN</c>，用反射分别跑三个半边候选（候选 3 / 1 / 2），
+/// 打印各自的可得性、候选名、步骤链与四列快照，最后给出 <c>BuildHalf</c> 的选择。</item>
 /// </list>
 /// <para>
 /// 只有设置环境变量时才会进入，正常运行测试时行为不变。
@@ -56,6 +59,10 @@ internal static class Probes
 
             case "figure":
                 RunFigure();
+                return 0;
+
+            case "halfcand":
+                RunHalfCandidates();
                 return 0;
 
             default:
@@ -195,8 +202,143 @@ internal static class Probes
         }
     }
 
-    private static void PrintRecipe(Recipe recipe)
+    /// <summary>
+    /// 半边候选逐个测量：读 <c>SHAPE_PROBE_CODE</c>（完整短代码）与可选
+    /// <c>SHAPE_PROBE_COLUMN</c>（默认 0），用反射分别调用三个私有候选构造器，
+    /// 打印各自的可得性、候选名与步骤链四列。只用于诊断，不参与测试。
+    /// </summary>
+    private static void RunHalfCandidates()
     {
+        string code = Env("SHAPE_PROBE_CODE");
+
+        if (code.Length == 0)
+        {
+            Console.WriteLine("需要 SHAPE_PROBE_CODE");
+            return;
+        }
+
+        if (!ShortCodeParser.TryInferDimensions(
+                code,
+                out int layers,
+                out int parts,
+                out string? inferError))
+        {
+            Console.WriteLine("短代码尺寸推断失败：" + inferError);
+            return;
+        }
+
+        ParseResult parsed = new ShortCodeParser().Parse(code, layers, parts);
+
+        if (!parsed.Success || parsed.Document is null)
+        {
+            Console.WriteLine("短代码解析失败：" + parsed.Error);
+            return;
+        }
+
+        ShapeDocument target = parsed.Document;
+        int column = int.TryParse(
+            Environment.GetEnvironmentVariable("SHAPE_PROBE_COLUMN"),
+            out int explicitColumn)
+            ? explicitColumn
+            : 0;
+
+        AngleBuildKind kind = AngleClassifier.Classify(target, column);
+
+        Console.WriteLine(
+            "code = " + code + "；column = " + column +
+            "（" + ShapeSignature.ColumnText(target, column) + "）；kind = " + kind);
+
+        foreach ((string Name, string Method) in new[]
+                 {
+                     ("候选 3（TempCrystalFuse）", "TryBuildTempCrystalFuse"),
+                     ("候选 1（Algo8Self）", "TryBuildAlgo8Self"),
+                     ("候选 2（Algo8Uplift）", "TryBuildAlgo8Uplift")
+                 })
+        {
+            System.Reflection.MethodInfo? method = typeof(AngleWorkOrderBuilder)
+                .GetMethod(
+                    Method,
+                    System.Reflection.BindingFlags.NonPublic |
+                    System.Reflection.BindingFlags.Static);
+
+            if (method is null)
+            {
+                Console.WriteLine(Name + "：找不到方法 " + Method);
+                continue;
+            }
+
+            AngleWorkOrder? order = method.Invoke(
+                null,
+                new object[] { target, column, layers, kind }) as AngleWorkOrder;
+
+            Console.WriteLine();
+            Console.WriteLine("== " + Name + " ==");
+
+            if (order is null)
+            {
+                Console.WriteLine("不可得（返回 null）");
+                continue;
+            }
+
+            Console.WriteLine(
+                "IsComplete = " + order.IsComplete +
+                "；Construction = " + order.Construction +
+                "；Note = " + (order.Note ?? "（无）"));
+
+            foreach (AngleWorkStep step in order.Steps)
+            {
+                Console.WriteLine(
+                    "  [" + step.Kind + "] " + step.Title);
+
+                if (step.Shape is not null)
+                {
+                    Console.WriteLine("      " + Describe(step.Shape));
+                }
+            }
+
+            HalfWorkOrder? half = order.Half;
+
+            if (half is null)
+            {
+                Console.WriteLine("  Half = null");
+                continue;
+            }
+
+            Console.WriteLine(
+                "  Half.Candidate = " + half.Candidate +
+                "；IsComplete = " + half.IsComplete +
+                "；Rotation = " + half.Rotation +
+                "；Columns = " + string.Join(",", half.Target.Columns));
+
+            foreach (AngleWorkStep step in half.Steps)
+            {
+                Console.WriteLine(
+                    "  half [" + step.Kind + "] " + step.Title);
+
+                if (step.Shape is not null)
+                {
+                    Console.WriteLine("      " + Describe(step.Shape));
+                }
+            }
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("== BuildHalf ==");
+
+        HalfWorkOrder? chosen = AngleWorkOrderBuilder.BuildHalf(
+            target,
+            column,
+            layers);
+
+        Console.WriteLine(
+            chosen is null
+                ? "null"
+                : "Candidate = " + chosen.Candidate +
+                  "；Steps = " + chosen.Steps.Count +
+                  "；Rotation = " + chosen.Rotation);
+    }
+
+    private static void PrintRecipe(Recipe recipe)    {
         Console.WriteLine(
             "recipe = " + recipe.Kind + "，Rank = " + recipe.Rank +
             "，节点数 = " + recipe.CountNodes());

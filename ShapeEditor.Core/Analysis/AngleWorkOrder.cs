@@ -293,10 +293,11 @@ public sealed record AngleWorkOrder(
     /// <see cref="HalfWorkOrder.Steps"/> 才是两列的完整核对（两列逐格等于目标半边）。
     /// </para>
     /// <para>
-    /// 候选 1（<see cref="HalfCandidate.Algo8Self"/>）、候选 2
-    /// （<see cref="HalfCandidate.Algo8Uplift"/>）、候选 3
-    /// （<see cref="HalfCandidate.TempCrystalFuse"/>）按论文顺序尝试；候选 1 / 2 的
-    /// 两列都是带子配方的 S 列（<see cref="HalfWorkOrder.TargetColumnsHaveSubRecipe"/>），
+    /// 候选按<b>本仓库优先级</b>尝试：候选 3（<see cref="HalfCandidate.TempCrystalFuse"/>，
+    /// 终止前态 + 一次半破）→ 候选 1（<see cref="HalfCandidate.Algo8Self"/>，Q 自身）→
+    /// 候选 2（<see cref="HalfCandidate.Algo8Uplift"/>，联合逆提升 / 一次下落）。
+    /// 候选 1 / 2 的两列都是带子配方的 S 列
+    /// （<see cref="HalfWorkOrder.TargetColumnsHaveSubRecipe"/>），
     /// 候选 3 的环伙伴 / 保险丝仍是要求紧列的辅助列。回放没通过时
     /// <see cref="IsComplete"/> 仍为 false，<see cref="Note"/> 以「未覆盖：」开头。
     /// </para>
@@ -964,7 +965,7 @@ public static partial class AngleWorkOrderBuilder
                 }
 
                 /*
-                 * 三个候选（1 → 2 → 3）全部没通过：按本条要求统一报「不可制作」，
+                 * 三个候选（3 → 1 → 2）全部没通过：按本条要求统一报「不可制作」，
                  * 不再把「候选形态命中但回放失败」写成「未覆盖」。
                  * 候选 3 的最后一条诊断只保留在 Limitations 里。
                  */
@@ -2239,7 +2240,7 @@ public static partial class AngleWorkOrderBuilder
         if (halfFailure is not null)
         {
             limitations.Add(
-                "半边候选（1 → 2 → 3）全部没通过；最后一条诊断：" +
+                "半边候选（3 → 1 → 2）全部没通过；最后一条诊断：" +
                 halfFailure.Replace(
                     UncoveredPrefix,
                     string.Empty,

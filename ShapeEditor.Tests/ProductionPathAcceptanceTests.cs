@@ -1208,8 +1208,22 @@ internal static class ProductionPathAcceptanceTests
 
             Assert.True(left is not null, $"n = {parts} 的左半边应可得");
             Assert.True(right is not null, $"n = {parts} 的右半边应可得");
-            Assert.Equal(HalfCandidate.Algo8Self, left!.Candidate);
-            Assert.Equal(HalfCandidate.Algo8Self, right!.Candidate);
+
+            /*
+             * 2026-11-18 用户口径：半边工序优先候选 3（临时晶体 + 保险丝 + 一刀），
+             * 候选 3 不成立时才退候选 1 / 2。
+             *
+             * n = 6：两条轴的主列都是 cT.T.cPT ⇒ 候选 3 命中。
+             * n = 8：两条轴的主列（第 1 / 第 5 象限）都是空列，候选 3 的形态谓词
+             *        （s = 最高晶体层、顶部三层 c-P-T）不成立 ⇒ 退回候选 1（Q 自身），
+             *        正是「候选 3 做不出来再退 1 / 2」的那条分支。
+             */
+            HalfCandidate expectedCandidate = parts == 6
+                ? HalfCandidate.TempCrystalFuse
+                : HalfCandidate.Algo8Self;
+
+            Assert.Equal(expectedCandidate, left!.Candidate);
+            Assert.Equal(expectedCandidate, right!.Candidate);
             Assert.Equal(width, left.Target.Columns.Count);
             Assert.Equal(width, right.Target.Columns.Count);
 
@@ -1325,8 +1339,14 @@ internal static class ProductionPathAcceptanceTests
 
     /// <summary>
     /// 用户给出的 8 层示例：两个半边完全相同（<c>cT.T.cPT</c> + <c>TTTT.ccc</c>），
-    /// 两侧都由半边工序（候选 2：联合逆提升）做出来，整图必须可制作。
+    /// 两侧都由半边工序（<b>候选 3：临时晶体 + 保险丝 + 一刀</b>）做出来，整图必须可制作。
     ///
+    /// <para>
+    /// 2026-11-18 用户口径：候选 3 优先于论文候选 1 / 2。示例半边以前是
+    /// 「候选 2 联合逆提升」（前态 <c>cT..TcPT</c> / <c>TTT.Tccc</c>，没有填充晶体），
+    /// 现在是终止前态 <c>cTccTcPT</c> / <c>TTTcTccc</c> + 保险丝 <c>TTTc....</c>，
+    /// 一刀真实半破回到目标半边；卡片上的箭头与步骤链因此说同一件事。
+    /// </para>
     /// <para>
     /// 同时验证「交换方向」确实有两种，且都走真实回放：
     /// </para>
@@ -1360,14 +1380,14 @@ internal static class ProductionPathAcceptanceTests
             ShapeSignature.AllColumnsLegal(target, out _),
             "示例图形的每一列都应合法");
 
-        // 两个半边完全相同 ⇒ 两边都走半边工序（候选 2）。
+        // 两个半边完全相同 ⇒ 两边都走半边工序（候选 3：临时晶体 + 保险丝 + 一刀）。
         HalfWorkOrder? left = AngleWorkOrderBuilder.BuildHalf(target, 0, 8);
         HalfWorkOrder? right = AngleWorkOrderBuilder.BuildHalf(target, 2, 8);
 
         Assert.True(left is not null, "示例左半边应可得");
         Assert.True(right is not null, "示例右半边应可得");
-        Assert.Equal(HalfCandidate.Algo8Uplift, left!.Candidate);
-        Assert.Equal(HalfCandidate.Algo8Uplift, right!.Candidate);
+        Assert.Equal(HalfCandidate.TempCrystalFuse, left!.Candidate);
+        Assert.Equal(HalfCandidate.TempCrystalFuse, right!.Candidate);
 
         // 整图管线：示例本身可制作（当前由交换链先命中，行为不变）。
         PipelineResult solved = ProductionPipeline.Solve(target, 8);
