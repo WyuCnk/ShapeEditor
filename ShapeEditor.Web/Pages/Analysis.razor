@@ -280,7 +280,62 @@
                     }
                 </div>
 
-                @if (_half is not null)
+                @if (HasWorkOrderCards)
+                {
+                    @* 三层工序卡片：交换（最外层）→ 半边 → 角（最内层）。
+                       有卡片时替换原来的「交换工序」节点图与「角的工序」，避免重复。 *@
+                    <div class="analysis-card">
+                        <div class="analysis-section-head">
+                            <h2>工序卡片</h2>
+                            <button type="button" class="analysis-toggle"
+                                    @onclick="() => _showCards = !_showCards">
+                                @(_showCards ? "隐藏" : "显示")
+                            </button>
+                        </div>
+
+                        @if (!_showCards)
+                        {
+                            <p class="analysis-summary">@CardsSummary</p>
+                        }
+                        else
+                        {
+                            <p class="analysis-summary">@CardsSummary</p>
+
+                            @if (!string.IsNullOrWhiteSpace(_cards!.Note))
+                            {
+                                <p class="analysis-note">@_cards.Note</p>
+                            }
+
+                            <p class="analysis-note">
+                                按「交换工序 → 半边工序 → 角工序」三层从外到内平铺；每张卡显示标题、
+                                验证标记、输入（上一层卡产物）、可见步骤与输出。旋转 / 废料 / 纯支撑交接等
+                                <code>Hidden=true</code> 的步骤不渲染；未验证的卡不显示输入链，只显示 Note。
+                                角卡输出已归一化到 Q1：Q1 目标角、Q2 右柱、Q4 左柱（n = 4）。
+                            </p>
+
+                            <div class="work-order-layers">
+                                @foreach (WorkOrderCardLayer layer in _cards!.Layers)
+                                {
+                                    <section class="work-order-layer @LayerClass(layer.Kind)">
+                                        <div class="work-order-layer-head">
+                                            <h3>@layer.Title</h3>
+                                            <span class="work-order-layer-count">@layer.Cards.Count 张卡</span>
+                                        </div>
+
+                                        <div class="work-order-card-list">
+                                            @foreach (WorkOrderCardItem card in layer.Cards)
+                                            {
+                                                <WorkOrderCard Card="card" />
+                                            }
+                                        </div>
+                                    </section>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+
+                @if (_half is not null && !HasWorkOrderCards)
                 {
                     <div class="analysis-card">
                         <div class="analysis-section-head">
@@ -630,6 +685,13 @@
     private ProductionPathGraph? _pathGraph;
 
     /// <summary>
+    /// 三层工序卡片（交换 → 半边 → 角）。分析阶段按需计算一次并缓存，
+    /// 页面与导出图消费同一个对象，不在每次渲染或导出时重算 Core。
+    /// 为 null / 没有卡片（例如 n = 2）时回退旧的「制作路径」渲染。
+    /// </summary>
+    private WorkOrderCardPresentation? _cards;
+
+    /// <summary>
     /// 角工序卡片。只在「角的工序」区域显示时按列异步构建；
     /// 隐藏状态下保持 null，不做任何 AngleWorkOrderBuilder.Build。
     /// </summary>
@@ -662,6 +724,39 @@
     /// </summary>
     private IReadOnlyList<AngleWorkColumn> AngleWorks =>
         _angleWorks ?? Array.Empty<AngleWorkColumn>();
+
+    /// <summary>是否有三层工序卡片；有则替换旧的「制作路径」区块。</summary>
+    private bool HasWorkOrderCards => _cards is { HasCards: true };
+
+    /// <summary>工序卡片区块的汇总：总张数、分层张数与验证进度。</summary>
+    private string CardsSummary
+    {
+        get
+        {
+            if (_cards is null || !_cards.HasCards)
+            {
+                return "没有工序卡片。";
+            }
+
+            string layers = string.Join(
+                "、",
+                _cards.Layers.Select(layer => $"{layer.Title} {layer.Cards.Count} 张"));
+
+            return $"共 {_cards.TotalCount} 张卡（{layers}）；" +
+                   $"已验证 {_cards.VerifiedCount}/{_cards.TotalCount}。";
+        }
+    }
+
+    /// <summary>层容器的样式类：交换 / 半边 / 角各用一种强调色。</summary>
+    private static string LayerClass(
+        WorkOrderCardLayerKind kind) =>
+        kind switch
+        {
+            WorkOrderCardLayerKind.Exchange => "work-order-layer-exchange",
+            WorkOrderCardLayerKind.Half => "work-order-layer-half",
+            WorkOrderCardLayerKind.Corner => "work-order-layer-corner",
+            _ => "work-order-layer-corner"
+        };
 
     /// <summary>
     /// 页面与导出实际展示的角卡片。
@@ -935,7 +1030,6 @@
     private void RecomputePath()
     {
         _path = _document is null ? null : ProductionPathParser.Parse(_document, _mode);
-
         /*
          * 半边工序粒度：当某一侧半边确实需要半边工序时，交换卡片直接从「半边」开始画，
          * 不再把半边的内部构造展开成半半边。判定 / 求解都在 HalfExchangeView 里，
@@ -959,6 +1053,29 @@
     }
 
     /// <summary>
+    /// 建一次三层工序卡片并投影成页面 / 导出共用视图。
+    ///
+    /// <para>
+    /// 建卡失败不应该让整页分析失败：吞掉异常并返回 null，
+    /// 调用方会回退到旧的「制作路径」渲染，页面至少不会变成空白。
+    /// </para>
+    /// </summary>
+    private static WorkOrderCardPresentation? BuildWorkOrderCards(
+        ShapeDocument document)
+    {
+        try
+        {
+            WorkOrderCardSet set = CardBuilder.Build(document);
+
+            return WorkOrderCardPresentation.Create(set);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// 节点图容器的可视高度：节点少时按内容自适应，节点多时固定高度并滚动。
     /// </summary>
     private double PathGraphViewportHeight =>
@@ -972,6 +1089,12 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        // 工序卡片用的是流式节点，不需要按真实矩形校正箭头；旧节点图已不显示。
+        if (HasWorkOrderCards)
+        {
+            return;
+        }
+
         // 交换工序与角的工序都可能有节点图；只要有一处在显示就校正箭头。
         bool showExchange =
             _showPath && _showPathExchange && _pathGraph is not null;
@@ -1014,6 +1137,9 @@
     private bool _showHalf = true;
 
     private bool _showPath = true;
+
+    /// <summary>三层工序卡片默认显示；隐藏时仍保留已算好的结果，导出按开关处理。</summary>
+    private bool _showCards = true;
 
     // 制作路径下的两个子区域：交换工序（分层节点图）与角的工序（按列节点链）。
     // 交换工序默认显示；角的工序保持默认隐藏（用户要求），展开时才按需计算。
@@ -1174,10 +1300,18 @@
             payload.Sections.Add(BuildRulesSection());
         }
 
-        // 制作路径分成交换工序与角的工序两个子区域，各自按显示状态导出；
-        // 交换工序只在存在合法交换方向时出现，与页面的门控保持一致。
-        if (_showPath)
+        // 有卡片集时用「工序卡片」替换交换工序与角的工序；没有卡片集才回退旧区块。
+        if (HasWorkOrderCards)
         {
+            if (_showCards)
+            {
+                payload.Sections.Add(BuildWorkOrderCardsSection());
+            }
+        }
+        else if (_showPath)
+        {
+            // 制作路径分成交换工序与角的工序两个子区域，各自按显示状态导出；
+            // 交换工序只在存在合法交换方向时出现，与页面的门控保持一致。
             if (_showPathExchange && _half is not null && _half.IsExchangeable)
             {
                 payload.Sections.Add(BuildPathSection());
@@ -1190,6 +1324,87 @@
         }
 
         return payload;
+    }
+
+    /// <summary>
+    /// 三层工序卡片板块：与页面完全同源（同一个 <see cref="WorkOrderCardPresentation"/>），
+    /// 导出层标题、卡标题、输入、可见步骤、输出与角卡小字。
+    /// 未验证的卡不导出输入链，只导出 Note。
+    /// </summary>
+    private AnalysisExportSection BuildWorkOrderCardsSection()
+    {
+        var section = new AnalysisExportSection
+        {
+            Title = "工序卡片"
+        };
+
+        section.Lines.Add(CardsSummary);
+
+        section.Lines.Add(
+            "按「交换工序 → 半边工序 → 角工序」三层从外到内平铺；" +
+            "每张卡显示标题、验证标记、输入（上一层卡产物）、可见步骤与输出。");
+
+        section.Lines.Add(
+            "旋转 / 废料 / 纯支撑交接等隐藏步骤不导出；" +
+            "未验证的卡不导出输入链，只显示 Note。");
+
+        section.Lines.Add(
+            "角卡输出已归一化到 Q1：Q1 目标角、Q2 右柱、Q4 左柱（n = 4）；" +
+            "预览均为 30px 单元格的 1:1 竖式图。");
+
+        if (!string.IsNullOrWhiteSpace(_cards!.Note))
+        {
+            section.Notes.Add(_cards.Note);
+        }
+
+        foreach (WorkOrderCardLayer layer in _cards.Layers)
+        {
+            var exportLayer = new AnalysisExportWorkOrderLayer
+            {
+                Title = layer.Title,
+                Count = layer.Cards.Count
+            };
+
+            foreach (WorkOrderCardItem card in layer.Cards)
+            {
+                var exportCard = new AnalysisExportWorkOrderCard
+                {
+                    Title = card.Title,
+                    KindText = card.KindText,
+                    ModeText = card.ModeText,
+                    Verified = card.Verified,
+                    Note = card.Note ?? "",
+                    IsCorner = card.Kind == CardKind.Corner,
+                    OutputCaption = card.OutputCaption,
+                    CornerCaption = card.ColumnCaption,
+                    Output = ShapeCanvasState.Create(card.Output)
+                };
+
+                foreach (WorkOrderCardInput input in card.Inputs)
+                {
+                    exportCard.Inputs.Add(new AnalysisExportWorkOrderCardInput
+                    {
+                        Title = input.Title,
+                        State = ShapeCanvasState.Create(input.Shape)
+                    });
+                }
+
+                foreach (WorkOrderCardStep step in card.Steps)
+                {
+                    exportCard.Steps.Add(new AnalysisExportWorkOrderCardStep
+                    {
+                        Operation = step.Operation,
+                        State = ShapeCanvasState.Create(step.Shape)
+                    });
+                }
+
+                exportLayer.Cards.Add(exportCard);
+            }
+
+            section.WorkOrderLayers.Add(exportLayer);
+        }
+
+        return section;
     }
 
     /// <summary>
@@ -1638,6 +1853,7 @@
         _half = null;
         _path = null;
         _pathGraph = null;
+        _cards = null;
         _properties = ShapeProperty.None;
         _document = null;
 
@@ -1765,12 +1981,36 @@
                 return;
             }
 
-            // ---- 制作路径 90–100%，含 ProductionPathParser ----
-            await ReportProgressAsync(version, "制作路径", 90);
+            // ---- 工序卡片 90–97% ----
+            /*
+             * 卡片与本次分析在同一条按需计算链上：只在这里建一次，页面和导出共用。
+             * 有卡片时它已经覆盖交换图与角的工序，不再跑 ProductionPathParser；
+             * 没有卡片（例如 n = 2）时才回退旧的制作路径计算，避免空白页。
+             */
+            await ReportProgressAsync(version, "工序卡片", 90);
 
-            RecomputePath();
+            _cards = BuildWorkOrderCards(document);
 
-            await ReportProgressAsync(version, "制作路径", 100);
+            await ReportProgressAsync(version, "工序卡片", 97);
+
+            if (IsStale(version))
+            {
+                return;
+            }
+
+            if (HasWorkOrderCards)
+            {
+                await ReportProgressAsync(version, "工序卡片", 100);
+            }
+            else
+            {
+                // ---- 制作路径 97–100%，含 ProductionPathParser ----
+                await ReportProgressAsync(version, "制作路径", 97);
+
+                RecomputePath();
+
+                await ReportProgressAsync(version, "制作路径", 100);
+            }
 
             if (IsStale(version))
             {
@@ -1781,8 +2021,11 @@
 
             await InvokeAsync(StateHasChanged);
 
-            // 角工序默认隐藏；若之前展开着，则按列异步重建，并单独显示它自己的进度。
-            if (_showPath && _showPathAngles && !_disposed)
+            // 旧「角的工序」只在没有卡片集时才会显示；有卡片时不必逐列构建。
+            if (!HasWorkOrderCards &&
+                _showPath &&
+                _showPathAngles &&
+                !_disposed)
             {
                 _ = BuildAngleWorksAsync();
             }
@@ -1808,6 +2051,7 @@
         _half = null;
         _path = null;
         _pathGraph = null;
+        _cards = null;
         _properties = ShapeProperty.None;
         _angleWorks = null;
         _angleWorksDocument = null;

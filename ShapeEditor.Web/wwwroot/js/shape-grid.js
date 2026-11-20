@@ -2131,6 +2131,14 @@ window.shapeGrid.downloadAnalysis = async function (payload, fileName) {
                     ANALYSIS_ANGLE_CARD_PADDING * 2);
             }
         }
+
+        /*
+         * 三层工序卡片：输出 / 输入 / 步骤都是 30px 单元格的 1:1 竖式图，
+         * 卡片左右各有内边距。大图形需要把整张导出图撑宽。
+         */
+        graphContentWidth = Math.max(
+            graphContentWidth,
+            workOrderCardsContentWidth(sections[i] && sections[i].workOrderLayers));
     }
 
     const contentWidth = Math.max(
@@ -2272,6 +2280,33 @@ window.shapeGrid.downloadAnalysis = async function (payload, fileName) {
                 lines: lines,
                 notes: noteLines,
                 angleLayout: angleLayout
+            });
+
+            continue;
+        }
+
+        /*
+         * 三层工序卡片：层标题 + 卡片（标题 / 输入 / 可见步骤 / 输出）。
+         * 布局阶段量好全部高度，绘制阶段直接复用，避免卡片高度与内容错位。
+         */
+        const workOrderLayout = layoutAnalysisWorkOrderLayers(
+            measure,
+            section.workOrderLayers,
+            contentWidth);
+
+        if (workOrderLayout) {
+            blocks.push({
+                kind: "workOrderCards",
+                height:
+                    SECTION_TITLE_HEIGHT +
+                    lines.length * LINE_HEIGHT +
+                    noteLines.length * NOTE_LINE_HEIGHT +
+                    workOrderLayout.height +
+                    SECTION_GAP,
+                title: title,
+                lines: lines,
+                notes: noteLines,
+                workOrderLayout: workOrderLayout
             });
 
             continue;
@@ -2632,6 +2667,58 @@ window.shapeGrid.downloadAnalysis = async function (payload, fileName) {
             ctx.beginPath();
             ctx.moveTo(PADDING, angleBottom + 6);
             ctx.lineTo(width - PADDING, angleBottom + 6);
+            ctx.stroke();
+
+            y += block.height;
+            continue;
+        }
+
+        if (block.kind === "workOrderCards") {
+            drawSectionTitle(block.title, y);
+
+            ctx.font = TEXT_FONT;
+            ctx.fillStyle = "#3A3A44";
+            ctx.textAlign = "left";
+            ctx.textBaseline = "top";
+
+            let lineY = y + SECTION_TITLE_HEIGHT;
+
+            for (let j = 0; j < block.lines.length; j++) {
+                if (block.lines[j] !== "") {
+                    ctx.fillText(block.lines[j], PADDING, lineY);
+                }
+
+                lineY += LINE_HEIGHT;
+            }
+
+            const noteLines = Array.isArray(block.notes) ? block.notes : [];
+
+            if (noteLines.length > 0) {
+                ctx.font = NOTE_FONT;
+                ctx.fillStyle = "#6B6B76";
+
+                for (let j = 0; j < noteLines.length; j++) {
+                    if (noteLines[j] !== "") {
+                        ctx.fillText(noteLines[j], PADDING, lineY);
+                    }
+
+                    lineY += NOTE_LINE_HEIGHT;
+                }
+            }
+
+            const cardsBottom = drawAnalysisWorkOrderLayers(
+                ctx,
+                block.workOrderLayout,
+                PADDING,
+                lineY,
+                contentWidth);
+
+            // 板块之间的细分隔线
+            ctx.strokeStyle = "#EEEAF7";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(PADDING, cardsBottom + 6);
+            ctx.lineTo(width - PADDING, cardsBottom + 6);
             ctx.stroke();
 
             y += block.height;
@@ -4729,9 +4816,829 @@ function drawAnalysisAngleHalf(ctx, card, left, top) {
     return cursorY;
 }
 
+/* ==================== 分析页：三层工序卡片（导出） ==================== */
+
+/*
+ * 与页面同一份 WorkOrderCardPresentation：
+ * 层 = 交换工序 → 半边工序 → 角工序；卡 = 标题 + 输入 + 可见步骤 + 输出。
+ * 未验证的卡只画红色警示和 Note，不画输入链（C# 已经把 Inputs 清空）。
+ * 所有竖式图固定 30px 单元格、1:1 绘制；图形宽时整张导出图随之变宽。
+ */
+const ANALYSIS_WORK_ORDER_CARD_PADDING = 12;
+
+const ANALYSIS_WORK_ORDER_CARD_GAP = 12;
+
+const ANALYSIS_WORK_ORDER_LAYER_GAP = 14;
+
+const ANALYSIS_WORK_ORDER_CELL = 30;
+
+const ANALYSIS_WORK_ORDER_LAYER_FONT = '700 14px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+
+const ANALYSIS_WORK_ORDER_LAYER_LINE_HEIGHT = 22;
+
+const ANALYSIS_WORK_ORDER_TITLE_FONT = '700 15px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+
+const ANALYSIS_WORK_ORDER_TITLE_LINE_HEIGHT = 22;
+
+const ANALYSIS_WORK_ORDER_LABEL_FONT = '700 12px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+
+const ANALYSIS_WORK_ORDER_LABEL_LINE_HEIGHT = 18;
+
+const ANALYSIS_WORK_ORDER_NOTE_FONT = '400 12px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+
+const ANALYSIS_WORK_ORDER_NOTE_LINE_HEIGHT = 17;
+
+const ANALYSIS_WORK_ORDER_ITEM_GAP = 12;
+
+const ANALYSIS_WORK_ORDER_TITLE_COLOR = "#4527A0";
+
+const ANALYSIS_WORK_ORDER_NOTE_COLOR = "#6B6B76";
+
+const ANALYSIS_WORK_ORDER_STATUS_COLOR = "#C62828";
+
+const ANALYSIS_WORK_ORDER_OK_COLOR = "#2E7D32";
+
+const ANALYSIS_WORK_ORDER_ACCENT_COLOR = "#512BD4";
+
+/* 归一化一张卡片里的竖式图；结构不完整时返回 null。 */
+function normalizeWorkOrderShapeState(raw) {
+    if (!raw ||
+        typeof raw !== "object" ||
+        !Array.isArray(raw.cells) ||
+        !(Number(raw.columns) > 0) ||
+        !(Number(raw.rows) > 0)) {
+        return null;
+    }
+
+    return raw;
+}
+
+/* 归一化导出的三层卡片；空层 / 空卡直接跳过。 */
+function normalizeWorkOrderLayers(rawLayers) {
+    if (!Array.isArray(rawLayers)) {
+        return [];
+    }
+
+    const layers = [];
+
+    for (let i = 0; i < rawLayers.length; i++) {
+        const rawLayer = rawLayers[i];
+
+        if (!rawLayer || typeof rawLayer !== "object") {
+            continue;
+        }
+
+        const rawCards = Array.isArray(rawLayer.cards) ? rawLayer.cards : [];
+        const cards = [];
+
+        for (let j = 0; j < rawCards.length; j++) {
+            const raw = rawCards[j];
+
+            if (!raw || typeof raw !== "object") {
+                continue;
+            }
+
+            const output = normalizeWorkOrderShapeState(raw.output);
+
+            if (!output) {
+                continue;
+            }
+
+            const inputs = [];
+            const rawInputs = Array.isArray(raw.inputs) ? raw.inputs : [];
+
+            for (let k = 0; k < rawInputs.length; k++) {
+                const rawInput = rawInputs[k];
+
+                if (!rawInput || typeof rawInput !== "object") {
+                    continue;
+                }
+
+                const state = normalizeWorkOrderShapeState(rawInput.state);
+
+                if (!state) {
+                    continue;
+                }
+
+                inputs.push({
+                    title: rawInput.title === null || rawInput.title === undefined
+                        ? ""
+                        : String(rawInput.title),
+                    state: state
+                });
+            }
+
+            const steps = [];
+            const rawSteps = Array.isArray(raw.steps) ? raw.steps : [];
+
+            for (let k = 0; k < rawSteps.length; k++) {
+                const rawStep = rawSteps[k];
+
+                if (!rawStep || typeof rawStep !== "object") {
+                    continue;
+                }
+
+                const state = normalizeWorkOrderShapeState(rawStep.state);
+
+                if (!state) {
+                    continue;
+                }
+
+                steps.push({
+                    operation: rawStep.operation === null || rawStep.operation === undefined
+                        ? ""
+                        : String(rawStep.operation),
+                    state: state
+                });
+            }
+
+            cards.push({
+                title: raw.title === null || raw.title === undefined ? "" : String(raw.title),
+                kindText: raw.kindText === null || raw.kindText === undefined ? "" : String(raw.kindText),
+                modeText: raw.modeText === null || raw.modeText === undefined ? "" : String(raw.modeText),
+                verified: !!raw.verified,
+                note: raw.note === null || raw.note === undefined ? "" : String(raw.note),
+                isCorner: !!raw.isCorner,
+                outputCaption: raw.outputCaption === null || raw.outputCaption === undefined
+                    ? ""
+                    : String(raw.outputCaption),
+                cornerCaption: raw.cornerCaption === null || raw.cornerCaption === undefined
+                    ? ""
+                    : String(raw.cornerCaption),
+                output: output,
+                inputs: inputs,
+                steps: steps
+            });
+        }
+
+        if (cards.length === 0) {
+            continue;
+        }
+
+        layers.push({
+            title: rawLayer.title === null || rawLayer.title === undefined
+                ? ""
+                : String(rawLayer.title),
+            cards: cards
+        });
+    }
+
+    return layers;
+}
+
+/*
+ * 卡片内容需要的导出宽度：取输出 / 输入 / 步骤里最宽的竖式图，
+ * 加上卡片内边距。只有大图形才会撑宽导出图（最小宽度仍是 720）。
+ */
+function workOrderCardsContentWidth(rawLayers) {
+    const layers = normalizeWorkOrderLayers(rawLayers);
+    let width = 0;
+
+    for (let i = 0; i < layers.length; i++) {
+        const cards = layers[i].cards;
+
+        for (let j = 0; j < cards.length; j++) {
+            const card = cards[j];
+            const states = [card.output]
+                .concat(card.inputs.map(function (input) { return input.state; }))
+                .concat(card.steps.map(function (step) { return step.state; }));
+
+            for (let k = 0; k < states.length; k++) {
+                width = Math.max(
+                    width,
+                    Number(states[k].columns) * ANALYSIS_WORK_ORDER_CELL +
+                    ANALYSIS_WORK_ORDER_CARD_PADDING * 2 +
+                    24);
+            }
+        }
+    }
+
+    return width;
+}
+
+/*
+ * 输入 / 步骤的流式格子：固定 30px 单元格，按可用宽度自动换行。
+ * 返回每行的 item（含相对 x）与整块高度，布局和绘制共用同一份数据。
+ */
+function layoutWorkOrderShapeGrid(measure, items, innerWidth, options) {
+    const opts = options || {};
+    const padding = opts.padding === undefined ? 8 : opts.padding;
+    const labelFont = opts.labelFont || ANALYSIS_WORK_ORDER_NOTE_FONT;
+    const labelLineHeight = opts.labelLineHeight || ANALYSIS_WORK_ORDER_NOTE_LINE_HEIGHT;
+    const gap = opts.gap === undefined ? ANALYSIS_WORK_ORDER_ITEM_GAP : opts.gap;
+
+    const rows = [];
+    let row = null;
+
+    for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        const shapeWidth = Number(item.state.columns) * ANALYSIS_WORK_ORDER_CELL;
+        const shapeHeight = Number(item.state.rows) * ANALYSIS_WORK_ORDER_CELL;
+        const labelLines = wrapAnalysisText(
+            measure,
+            item.label || "",
+            labelFont,
+            Math.max(80, shapeWidth),
+            false);
+        const itemWidth = Math.max(shapeWidth + padding * 2, 92);
+        const itemHeight =
+            padding * 2 +
+            labelLines.length * labelLineHeight +
+            4 +
+            shapeHeight;
+
+        if (!row ||
+            (row.items.length > 0 && row.width + gap + itemWidth > innerWidth)) {
+            row = { items: [], width: 0, height: 0 };
+            rows.push(row);
+        }
+
+        const x = row.items.length === 0 ? 0 : row.width + gap;
+
+        row.items.push({
+            labelLines: labelLines,
+            state: item.state,
+            operation: item.operation || "",
+            shapeWidth: shapeWidth,
+            shapeHeight: shapeHeight,
+            itemWidth: itemWidth,
+            itemHeight: itemHeight,
+            x: x
+        });
+
+        row.width = x + itemWidth;
+        row.height = Math.max(row.height, itemHeight);
+    }
+
+    let height = 0;
+
+    for (let i = 0; i < rows.length; i++) {
+        height += rows[i].height + (i > 0 ? 10 : 0);
+    }
+
+    return {
+        rows: rows,
+        height: height,
+        padding: padding,
+        gap: gap,
+        labelFont: labelFont,
+        labelLineHeight: labelLineHeight
+    };
+}
+
+/* 一张卡的布局：标题 / 警示 / 输入 / 可见步骤 / 输出。 */
+function layoutWorkOrderCard(measure, card, innerWidth) {
+    const headerText = [card.title, card.kindText, card.modeText]
+        .filter(function (part) { return part !== ""; })
+        .join(" · ");
+
+    const headerLines = wrapAnalysisText(
+        measure,
+        headerText,
+        ANALYSIS_WORK_ORDER_TITLE_FONT,
+        Math.max(80, innerWidth - 72),
+        false);
+
+    let noteLines = [];
+
+    if (!card.verified) {
+        noteLines = wrapAnalysisText(
+            measure,
+            card.note || "未通过真实回放。",
+            ANALYSIS_WORK_ORDER_NOTE_FONT,
+            Math.max(80, innerWidth - 20),
+            false);
+    }
+
+    let inputs = null;
+
+    if (card.verified && card.inputs.length > 0) {
+        inputs = {
+            headingLines: wrapAnalysisText(
+                measure,
+                "输入（上一层卡产物）",
+                ANALYSIS_WORK_ORDER_LABEL_FONT,
+                innerWidth,
+                false),
+            grid: layoutWorkOrderShapeGrid(
+                measure,
+                card.inputs.map(function (input) {
+                    return { label: input.title, state: input.state };
+                }),
+                innerWidth)
+        };
+    }
+
+    let steps = null;
+    let emptyLines = [];
+
+    if (card.steps.length > 0) {
+        steps = {
+            headingLines: wrapAnalysisText(
+                measure,
+                "可见步骤（" + card.steps.length + " 步）",
+                ANALYSIS_WORK_ORDER_LABEL_FONT,
+                innerWidth,
+                false),
+            grid: layoutWorkOrderShapeGrid(
+                measure,
+                card.steps.map(function (step) {
+                    return { label: step.operation, state: step.state, operation: step.operation };
+                }),
+                innerWidth,
+                {
+                    padding: 8,
+                    labelFont: '600 11px "Microsoft YaHei", "Noto Sans SC", sans-serif',
+                    labelLineHeight: 15
+                })
+        };
+    }
+    else if (card.verified) {
+        emptyLines = wrapAnalysisText(
+            measure,
+            "没有可见步骤：旋转 / 废料 / 纯支撑交接等结构步骤已隐藏。",
+            ANALYSIS_WORK_ORDER_NOTE_FONT,
+            innerWidth,
+            false);
+    }
+
+    const outputHeading = card.outputCaption === ""
+        ? "输出"
+        : "输出 · " + card.outputCaption;
+
+    const outputHeadingLines = wrapAnalysisText(
+        measure,
+        outputHeading,
+        ANALYSIS_WORK_ORDER_LABEL_FONT,
+        innerWidth,
+        false);
+
+    const outputShapeWidth = Number(card.output.columns) * ANALYSIS_WORK_ORDER_CELL;
+    const outputShapeHeight = Number(card.output.rows) * ANALYSIS_WORK_ORDER_CELL;
+
+    const cornerLines = card.isCorner && card.cornerCaption !== ""
+        ? wrapAnalysisText(
+            measure,
+            card.cornerCaption,
+            ANALYSIS_WORK_ORDER_NOTE_FONT,
+            innerWidth,
+            false)
+        : [];
+
+    let height =
+        ANALYSIS_WORK_ORDER_CARD_PADDING * 2 +
+        headerLines.length * ANALYSIS_WORK_ORDER_TITLE_LINE_HEIGHT;
+
+    if (noteLines.length > 0) {
+        height +=
+            10 +
+            8 +
+            noteLines.length * ANALYSIS_WORK_ORDER_NOTE_LINE_HEIGHT +
+            8;
+    }
+
+    if (inputs) {
+        height +=
+            12 +
+            inputs.headingLines.length * ANALYSIS_WORK_ORDER_LABEL_LINE_HEIGHT +
+            inputs.grid.height;
+    }
+
+    if (steps) {
+        height +=
+            12 +
+            steps.headingLines.length * ANALYSIS_WORK_ORDER_LABEL_LINE_HEIGHT +
+            steps.grid.height;
+    }
+    else if (emptyLines.length > 0) {
+        height +=
+            12 +
+            emptyLines.length * ANALYSIS_WORK_ORDER_NOTE_LINE_HEIGHT;
+    }
+
+    height +=
+        12 +
+        outputHeadingLines.length * ANALYSIS_WORK_ORDER_LABEL_LINE_HEIGHT +
+        outputShapeHeight + 16;
+
+    if (cornerLines.length > 0) {
+        height +=
+            4 +
+            cornerLines.length * ANALYSIS_WORK_ORDER_NOTE_LINE_HEIGHT;
+    }
+
+    return {
+        verified: card.verified,
+        output: card.output,
+        headerLines: headerLines,
+        noteLines: noteLines,
+        inputs: inputs,
+        steps: steps,
+        emptyLines: emptyLines,
+        outputHeadingLines: outputHeadingLines,
+        outputShapeWidth: outputShapeWidth,
+        outputShapeHeight: outputShapeHeight,
+        cornerLines: cornerLines,
+        height: height
+    };
+}
+
+/*
+ * 三层卡片的整体排版：层标题 + 每张卡的高度。
+ * 没有卡片时返回 null，调用方继续按普通文本板块绘制。
+ */
+function layoutAnalysisWorkOrderLayers(measure, rawLayers, maxWidth) {
+    const layers = normalizeWorkOrderLayers(rawLayers);
+
+    if (layers.length === 0) {
+        return null;
+    }
+
+    const cardWidth = Math.max(160, maxWidth);
+    const innerWidth = Math.max(80, cardWidth - ANALYSIS_WORK_ORDER_CARD_PADDING * 2);
+    const result = [];
+    let totalHeight = 0;
+
+    for (let i = 0; i < layers.length; i++) {
+        const layer = layers[i];
+        const title = layer.title + "（" + layer.cards.length + " 张卡）";
+
+        const titleLines = wrapAnalysisText(
+            measure,
+            title,
+            ANALYSIS_WORK_ORDER_LAYER_FONT,
+            innerWidth,
+            false);
+
+        const cards = [];
+
+        for (let j = 0; j < layer.cards.length; j++) {
+            cards.push(layoutWorkOrderCard(measure, layer.cards[j], innerWidth));
+        }
+
+        let layerHeight =
+            titleLines.length * ANALYSIS_WORK_ORDER_LAYER_LINE_HEIGHT +
+            10;
+
+        for (let j = 0; j < cards.length; j++) {
+            layerHeight += cards[j].height;
+
+            if (j < cards.length - 1) {
+                layerHeight += ANALYSIS_WORK_ORDER_CARD_GAP;
+            }
+        }
+
+        result.push({
+            titleLines: titleLines,
+            cards: cards,
+            height: layerHeight
+        });
+
+        totalHeight += layerHeight;
+
+        if (i < layers.length - 1) {
+            totalHeight += ANALYSIS_WORK_ORDER_LAYER_GAP;
+        }
+    }
+
+    return {
+        layers: result,
+        height: totalHeight,
+        cardWidth: cardWidth,
+        innerWidth: innerWidth
+    };
+}
+
+/* 步骤名 → 边框 / 底色：与页面 angle-node 的配色保持一致。 */
+function workOrderStepColors(operation) {
+    switch (operation) {
+        case "碎晶":
+            return { fill: "#FFF1F1", stroke: "#C62828" };
+        case "交换":
+            return { fill: "#F7EBFA", stroke: "#8E24AA" };
+        case "顶破":
+            return { fill: "#F2FBFB", stroke: "#0E7C86" };
+        case "堆叠":
+            return { fill: "#FFF8EE", stroke: "#B26A00" };
+        default:
+            return { fill: "#FFFFFF", stroke: "#D0D0D0" };
+    }
+}
+
+/* 右上角验证标记：已验证绿色、未验证红色。 */
+function drawWorkOrderVerifiedBadge(ctx, right, top, verified) {
+    const text = verified ? "已验证" : "未验证";
+    const font = '700 11px "Microsoft YaHei", "Noto Sans SC", sans-serif';
+
+    ctx.save();
+    ctx.font = font;
+
+    const badgeWidth = Math.max(48, ctx.measureText(text).width + 16);
+    const badgeHeight = 18;
+    const badgeX = right - badgeWidth;
+
+    ctx.fillStyle = verified ? "#EAF7EE" : "#FDEAEA";
+    ctx.strokeStyle = verified ? "#B7DFC3" : "#E7B6B6";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(badgeX, top, badgeWidth, badgeHeight, 9);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = verified ? ANALYSIS_WORK_ORDER_OK_COLOR : ANALYSIS_WORK_ORDER_STATUS_COLOR;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, badgeX + badgeWidth / 2, top + badgeHeight / 2);
+
+    ctx.restore();
+}
+
+/* 画输入 / 步骤的流式格子；返回画完后的纵坐标。 */
+function drawWorkOrderShapeGrid(ctx, grid, left, top, isSteps) {
+    if (!grid || !Array.isArray(grid.rows)) {
+        return top;
+    }
+
+    let rowTop = top;
+
+    for (let i = 0; i < grid.rows.length; i++) {
+        const row = grid.rows[i];
+
+        for (let j = 0; j < row.items.length; j++) {
+            const item = row.items[j];
+            const itemLeft = left + item.x;
+            const colors = isSteps
+                ? workOrderStepColors(item.operation)
+                : { fill: "#FAF8FF", stroke: "#E6E2F2" };
+
+            ctx.save();
+            ctx.fillStyle = colors.fill;
+            ctx.strokeStyle = colors.stroke;
+            ctx.lineWidth = isSteps ? 2 : 1;
+            ctx.beginPath();
+            ctx.roundRect(itemLeft, rowTop, item.itemWidth, item.itemHeight, 8);
+            ctx.fill();
+            ctx.stroke();
+            ctx.restore();
+
+            ctx.font = grid.labelFont;
+            ctx.fillStyle = isSteps ? "#4A3F72" : ANALYSIS_WORK_ORDER_NOTE_COLOR;
+            ctx.textAlign = "left";
+            ctx.textBaseline = "top";
+
+            let labelY = rowTop + grid.padding;
+
+            for (let k = 0; k < item.labelLines.length; k++) {
+                ctx.fillText(item.labelLines[k], itemLeft + grid.padding, labelY);
+                labelY += grid.labelLineHeight;
+            }
+
+            const shapeLeft =
+                itemLeft + Math.max(
+                    grid.padding,
+                    (item.itemWidth - item.shapeWidth) / 2);
+            const shapeTop =
+                rowTop +
+                grid.padding +
+                item.labelLines.length * grid.labelLineHeight +
+                4;
+
+            window.shapeGrid.drawAnalysisShape(
+                ctx,
+                item.state,
+                shapeLeft,
+                shapeTop,
+                ANALYSIS_WORK_ORDER_CELL,
+                ANALYSIS_WORK_ORDER_CELL);
+        }
+
+        rowTop += row.height + 10;
+    }
+
+    return top + grid.height;
+}
+
+/* 画一张卡：标题 + 验证标记 / 警示 / 输入 / 可见步骤 / 输出。 */
+function drawAnalysisWorkOrderCard(ctx, card, left, top, width) {
+    const padding = ANALYSIS_WORK_ORDER_CARD_PADDING;
+
+    ctx.save();
+    ctx.fillStyle = card.verified ? "#FCFBFF" : "#FFFAFA";
+    ctx.strokeStyle = card.verified ? "#E6E2F2" : "#E7B6B6";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(left, top, width, card.height, 10);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+
+    const innerLeft = left + padding;
+    const innerWidth = width - padding * 2;
+    let y = top + padding;
+
+    ctx.font = ANALYSIS_WORK_ORDER_TITLE_FONT;
+    ctx.fillStyle = ANALYSIS_WORK_ORDER_TITLE_COLOR;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+
+    for (let i = 0; i < card.headerLines.length; i++) {
+        ctx.fillText(card.headerLines[i], innerLeft, y);
+        y += ANALYSIS_WORK_ORDER_TITLE_LINE_HEIGHT;
+    }
+
+    drawWorkOrderVerifiedBadge(
+        ctx,
+        left + width - padding,
+        top + padding - 1,
+        card.verified);
+
+    if (!card.verified && card.noteLines.length > 0) {
+        y += 10;
+
+        const boxHeight =
+            8 +
+            card.noteLines.length * ANALYSIS_WORK_ORDER_NOTE_LINE_HEIGHT +
+            8;
+
+        ctx.save();
+        ctx.fillStyle = "#FDF6F6";
+        ctx.strokeStyle = "#E7B6B6";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.roundRect(innerLeft, y, innerWidth, boxHeight, 6);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+
+        // 左侧红色竖条，和页面的警示块一致。
+        ctx.fillStyle = ANALYSIS_WORK_ORDER_STATUS_COLOR;
+        ctx.fillRect(innerLeft, y, 3, boxHeight);
+
+        ctx.font = ANALYSIS_WORK_ORDER_NOTE_FONT;
+        ctx.fillStyle = "#5B5B66";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+
+        let noteY = y + 8;
+
+        for (let i = 0; i < card.noteLines.length; i++) {
+            ctx.fillText(card.noteLines[i], innerLeft + 10, noteY);
+            noteY += ANALYSIS_WORK_ORDER_NOTE_LINE_HEIGHT;
+        }
+
+        y += boxHeight;
+    }
+
+    if (card.inputs) {
+        y += 12;
+
+        ctx.font = ANALYSIS_WORK_ORDER_LABEL_FONT;
+        ctx.fillStyle = ANALYSIS_WORK_ORDER_TITLE_COLOR;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+
+        for (let i = 0; i < card.inputs.headingLines.length; i++) {
+            ctx.fillText(card.inputs.headingLines[i], innerLeft, y);
+            y += ANALYSIS_WORK_ORDER_LABEL_LINE_HEIGHT;
+        }
+
+        y = drawWorkOrderShapeGrid(ctx, card.inputs.grid, innerLeft, y, false);
+    }
+
+    if (card.steps) {
+        y += 12;
+
+        ctx.font = ANALYSIS_WORK_ORDER_LABEL_FONT;
+        ctx.fillStyle = ANALYSIS_WORK_ORDER_TITLE_COLOR;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+
+        for (let i = 0; i < card.steps.headingLines.length; i++) {
+            ctx.fillText(card.steps.headingLines[i], innerLeft, y);
+            y += ANALYSIS_WORK_ORDER_LABEL_LINE_HEIGHT;
+        }
+
+        y = drawWorkOrderShapeGrid(ctx, card.steps.grid, innerLeft, y, true);
+    }
+    else if (card.emptyLines.length > 0) {
+        y += 12;
+
+        ctx.font = ANALYSIS_WORK_ORDER_NOTE_FONT;
+        ctx.fillStyle = ANALYSIS_WORK_ORDER_NOTE_COLOR;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+
+        for (let i = 0; i < card.emptyLines.length; i++) {
+            ctx.fillText(card.emptyLines[i], innerLeft, y);
+            y += ANALYSIS_WORK_ORDER_NOTE_LINE_HEIGHT;
+        }
+    }
+
+    // 输出：醒目紫色双线框 + 30px 单元格预览。
+    y += 12;
+
+    ctx.font = ANALYSIS_WORK_ORDER_LABEL_FONT;
+    ctx.fillStyle = ANALYSIS_WORK_ORDER_TITLE_COLOR;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+
+    for (let i = 0; i < card.outputHeadingLines.length; i++) {
+        ctx.fillText(card.outputHeadingLines[i], innerLeft, y);
+        y += ANALYSIS_WORK_ORDER_LABEL_LINE_HEIGHT;
+    }
+
+    const outputBoxWidth = card.outputShapeWidth + 16;
+    const outputBoxHeight = card.outputShapeHeight + 16;
+
+    ctx.save();
+    ctx.fillStyle = "#FAF8FF";
+    ctx.strokeStyle = ANALYSIS_WORK_ORDER_ACCENT_COLOR;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(innerLeft, y, outputBoxWidth, outputBoxHeight, 10);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+
+    window.shapeGrid.drawAnalysisShape(
+        ctx,
+        card.output,
+        innerLeft + 8,
+        y + 8,
+        ANALYSIS_WORK_ORDER_CELL,
+        ANALYSIS_WORK_ORDER_CELL);
+
+    y += outputBoxHeight;
+
+    if (card.cornerLines.length > 0) {
+        y += 4;
+
+        ctx.font = ANALYSIS_WORK_ORDER_NOTE_FONT;
+        ctx.fillStyle = ANALYSIS_WORK_ORDER_NOTE_COLOR;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+
+        for (let i = 0; i < card.cornerLines.length; i++) {
+            ctx.fillText(card.cornerLines[i], innerLeft, y);
+            y += ANALYSIS_WORK_ORDER_NOTE_LINE_HEIGHT;
+        }
+    }
+
+    return y;
+}
+
+/* 画三层卡片；返回整块的下边界，供板块分隔线定位。 */
+function drawAnalysisWorkOrderLayers(ctx, layout, left, top, cardWidth) {
+    if (!layout || !Array.isArray(layout.layers) || layout.layers.length === 0) {
+        return top;
+    }
+
+    let layerTop = top;
+
+    for (let i = 0; i < layout.layers.length; i++) {
+        const layer = layout.layers[i];
+
+        // 层标题左侧的主色竖条，和板块标题同一套视觉。
+        ctx.fillStyle = ANALYSIS_WORK_ORDER_ACCENT_COLOR;
+        ctx.fillRect(left, layerTop + 4, 4, 16);
+
+        ctx.font = ANALYSIS_WORK_ORDER_LAYER_FONT;
+        ctx.fillStyle = ANALYSIS_WORK_ORDER_TITLE_COLOR;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+
+        for (let j = 0; j < layer.titleLines.length; j++) {
+            ctx.fillText(layer.titleLines[j], left + 12, layerTop);
+            layerTop += ANALYSIS_WORK_ORDER_LAYER_LINE_HEIGHT;
+        }
+
+        layerTop += 10;
+
+        for (let j = 0; j < layer.cards.length; j++) {
+            drawAnalysisWorkOrderCard(
+                ctx,
+                layer.cards[j],
+                left,
+                layerTop,
+                cardWidth);
+
+            layerTop += layer.cards[j].height;
+
+            if (j < layer.cards.length - 1) {
+                layerTop += ANALYSIS_WORK_ORDER_CARD_GAP;
+            }
+        }
+
+        if (i < layout.layers.length - 1) {
+            layerTop += ANALYSIS_WORK_ORDER_LAYER_GAP;
+        }
+    }
+
+    return layerTop;
+}
+
 /* 供 Blazor 回读节点的真实渲染尺寸，箭头锚点据此贴合边框 */
-window.shapeGridMeasureNodes = function () {
-    return Array.from(document.querySelectorAll(".graph-node[data-node-id]")).map(function (el) {
+window.shapeGridMeasureNodes = function () {    return Array.from(document.querySelectorAll(".graph-node[data-node-id]")).map(function (el) {
         const rect = el.getBoundingClientRect();
 
         return { id: el.getAttribute("data-node-id"), height: rect.height, width: rect.width };

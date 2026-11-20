@@ -74,6 +74,12 @@ public sealed class AnalysisExportSection
     /// 与页面上的角工序卡片一致；为空时该板块仍按普通文本行绘制。
     /// </summary>
     public List<AnalysisExportAngleColumn> AngleColumns { get; set; } = new();
+
+    /// <summary>
+    /// 三层工序卡片：交换工序 → 半边工序 → 角工序。
+    /// 非空时在板块文本之后按「层标题 + 卡片」绘制，与页面的工序卡片区块一致。
+    /// </summary>
+    public List<AnalysisExportWorkOrderLayer> WorkOrderLayers { get; set; } = new();
 }
 
 /// <summary>
@@ -261,6 +267,86 @@ public sealed class AnalysisExportGraphEdge
     /// 只标在进入 Cut / 目标步的那根箭头上，与页面一致。
     /// </summary>
     public string Label { get; set; } = "";
+}
+
+/// <summary>
+/// 导出图里的一层工序卡片（交换 / 半边 / 角）。
+///
+/// 页面与导出图消费同一个 <see cref="AnalysisExportSection.WorkOrderLayers"/>，
+/// 数据来自同一份 <c>WorkOrderCardPresentation</c>，避免显示规则漂移。
+/// </summary>
+public sealed class AnalysisExportWorkOrderLayer
+{
+    /// <summary>层标题：交换工序 / 半边工序 / 角工序。</summary>
+    public string Title { get; set; } = "";
+
+    /// <summary>这一层的卡片数（标题会写成「……（N 张卡）」）。</summary>
+    public int Count { get; set; }
+
+    public List<AnalysisExportWorkOrderCard> Cards { get; set; } = new();
+}
+
+/// <summary>
+/// 导出图里的一张工序卡片。
+/// </summary>
+public sealed class AnalysisExportWorkOrderCard
+{
+    /// <summary>卡片标题（「角1」「半边1」「交换」）。</summary>
+    public string Title { get; set; } = "";
+
+    /// <summary>种类文案：角卡 / 半边卡 / 交换卡。</summary>
+    public string KindText { get; set; } = "";
+
+    /// <summary>半边卡模式文案；其它卡为空。</summary>
+    public string ModeText { get; set; } = "";
+
+    /// <summary>真实回放是否通过。</summary>
+    public bool Verified { get; set; }
+
+    /// <summary>未验证时的失败原因 / 已验证时的依据；未验证时导出会画在红色警示框里。</summary>
+    public string Note { get; set; } = "";
+
+    /// <summary>是否角卡：为 true 时在输出下方画「Q1 目标角 / Q2 右柱 / Q4 左柱」小字。</summary>
+    public bool IsCorner { get; set; }
+
+    /// <summary>输出说明：Q1 目标角 + 双柱 / 目标半边 / 目标图形。</summary>
+    public string OutputCaption { get; set; } = "";
+
+    /// <summary>角卡的小字标注（n = 4 时为 Q1 目标角 / Q2 右柱 / Q4 左柱）。</summary>
+    public string CornerCaption { get; set; } = "";
+
+    /// <summary>输出形状；未验证的卡仍然有输出（Core 只清空 Inputs）。</summary>
+    public ShapeCanvasState? Output { get; set; }
+
+    /// <summary>
+    /// 输入链。未验证的卡这里恒为空；已验证时按「上一层的卡产物」顺序排列。
+    /// </summary>
+    public List<AnalysisExportWorkOrderCardInput> Inputs { get; set; } = new();
+
+    /// <summary>可见步骤（Hidden 的步骤在 C# 投影时已剔除）。</summary>
+    public List<AnalysisExportWorkOrderCardStep> Steps { get; set; } = new();
+}
+
+/// <summary>
+/// 工序卡片的一张输入。
+/// </summary>
+public sealed class AnalysisExportWorkOrderCardInput
+{
+    /// <summary>输入卡标题（例如「角1」「半边1」）。</summary>
+    public string Title { get; set; } = "";
+
+    public ShapeCanvasState? State { get; set; }
+}
+
+/// <summary>
+/// 工序卡片的一条可见步骤。
+/// </summary>
+public sealed class AnalysisExportWorkOrderCardStep
+{
+    /// <summary>步骤名：碎晶 / 交换 / 顶破 / 堆叠。</summary>
+    public string Operation { get; set; } = "";
+
+    public ShapeCanvasState? State { get; set; }
 }
 
 /// <summary>

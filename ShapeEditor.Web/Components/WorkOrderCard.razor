@@ -1,0 +1,130 @@
+@using System.Globalization
+@using ShapeEditor.Web.Services
+
+@*
+    三层工序卡片里的一张卡。
+
+    标题 + 验证标记 → 未验证时红色警示与 Note（不画输入链）→ 输入（上一层卡产物）
+    → 可见步骤（Hidden 的步骤在 C# 投影时已剔除）→ 输出（醒目边框）+ 角卡小字。
+
+    输入 / 步骤 / 输出都复用 PathNodePreview：固定 30px 单元格、1:1 不缩放。
+    步骤节点沿用 path-node / angle-node 的样式与配色，只是把绝对定位改成流式排列。
+*@
+<article class="work-order-card @KindClass @(Card.Verified ? "verified" : "unverified")">
+    <header class="work-order-card-head">
+        <h4>@Card.Title</h4>
+        <span class="work-order-kind">@Card.KindText</span>
+
+        @if (!string.IsNullOrEmpty(Card.ModeText))
+        {
+            <span class="work-order-mode">@Card.ModeText</span>
+        }
+
+        <span class="work-order-verified @(Card.Verified ? "ok" : "bad")">
+            @(Card.Verified ? "已验证" : "未验证")
+        </span>
+    </header>
+
+    @if (!Card.Verified)
+    {
+        @* 降级：未验证的卡不显示输入链，只显示红色警示和 Note。 *@
+        <div class="work-order-warning" role="alert">
+            <p class="work-order-warning-title">未通过真实回放</p>
+
+            @if (!string.IsNullOrWhiteSpace(Card.Note))
+            {
+                <p class="work-order-warning-note">@Card.Note</p>
+            }
+        </div>
+    }
+
+    @if (Card.Verified && Card.Inputs.Count > 0)
+    {
+        <section class="work-order-section">
+            <div class="work-order-section-title">输入（上一层卡产物）</div>
+
+            <div class="work-order-input-list">
+                @foreach (WorkOrderCardInput input in Card.Inputs)
+                {
+                    <figure class="work-order-input">
+                        <figcaption>@input.Title</figcaption>
+
+                        <div class="work-order-shape-box">
+                            <PathNodePreview Document="input.Shape" />
+                        </div>
+                    </figure>
+                }
+            </div>
+        </section>
+    }
+
+    @if (Card.Steps.Count > 0)
+    {
+        <section class="work-order-section">
+            <div class="work-order-section-title">可见步骤（@Card.Steps.Count 步）</div>
+
+            <div class="work-order-step-list">
+                @for (int index = 0; index < Card.Steps.Count; index++)
+                {
+                    WorkOrderCardStep step = Card.Steps[index];
+
+                    @if (index > 0)
+                    {
+                        <span class="work-order-step-arrow" aria-hidden="true">→</span>
+                    }
+
+                    <div class="graph-node path-node angle-node work-order-step @step.CssClass"
+                         style="width:@Px(step.Shape.PartCount * 30 + 16)px;height:@Px(step.Shape.LayerCount * 30 + 50)px">
+                        <div class="path-node-head" title="@step.Operation">@step.Operation</div>
+
+                        <div class="graph-node-body path-node-body">
+                            <PathNodePreview Document="step.Shape" />
+                        </div>
+                    </div>
+                }
+            </div>
+        </section>
+    }
+    else if (Card.Verified)
+    {
+        <p class="work-order-empty-steps">
+            没有可见步骤：旋转 / 废料 / 纯支撑交接等结构步骤已在 Core 中标记为隐藏。
+        </p>
+    }
+
+    <section class="work-order-section work-order-output-section">
+        <div class="work-order-section-title">
+            输出
+
+            @if (!string.IsNullOrEmpty(Card.OutputCaption))
+            {
+                <span class="work-order-output-caption">@Card.OutputCaption</span>
+            }
+        </div>
+
+        <div class="work-order-output-box">
+            <PathNodePreview Document="Card.Output" />
+        </div>
+
+        @if (!string.IsNullOrEmpty(Card.ColumnCaption))
+        {
+            @* 角卡：Q1 目标角 / Q2 右柱 / Q4 左柱（n = 4）。 *@
+            <p class="work-order-corner-caption">@Card.ColumnCaption</p>
+        }
+    </section>
+</article>
+
+@code {
+    /// <summary>页面与导出共用的卡片投影。</summary>
+    [Parameter]
+    public WorkOrderCardItem Card { get; set; } = null!;
+
+    /// <summary>按种类给卡片加样式类：work-order-card-corner / half / exchange。</summary>
+    private string KindClass =>
+        "work-order-card-" + Card.Kind.ToString().ToLowerInvariant();
+
+    /// <summary>把坐标格式化成不带千分位分隔符的像素值。</summary>
+    private static string Px(
+        double value) =>
+        value.ToString("0.##", CultureInfo.InvariantCulture);
+}
