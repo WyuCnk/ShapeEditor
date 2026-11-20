@@ -2822,3 +2822,140 @@ q1 = cT.T.cPT   q2 = TTTT.ccc   q3 = c.......   q4 = c.......
 3. 「一半只占最底层」是报告过的两个反例的直接推广；若下一例是「一半只有两层」，
    这个判据不会触发。是否继续扩大（例如 25.1% 的「存在贴地列」判据、或 61% 的
    「任一格越出」判据）需要产品口径。
+
+---
+
+### 7.34 「工序卡片层级」P0：NormalizeToQ1 + 三层卡片 + 真实回放校验（2026-11-20，第十四轮）
+
+**任务书**：`docs/work-order-card-hierarchy-plan.md`（实施方案，含 §3.5 的 R1/R2/R3）、
+`docs/work-order-card-hierarchy-design.md`（设计稿）。**只改 Core / Tests（+ TODO），不碰 UI / docs。**
+
+#### 用户裁定的四条硬规则（本轮的验收口径）
+
+1. **任何工序都要有真实回放校验**：卡片每个可见步骤（碎晶 / 交换 / 顶破 / 堆叠）都必须用真实
+   `ShapePhysics` 逐格验证；验证不过的卡**不允许画成完整输入链**（清空 `Inputs` + Note 说明）。
+2. **只有两类半边卡**：A 类 `FromCorners`（角 → 交换 → 半半边 → 半边，不需要碎晶）、
+   B 类 `WholeHalf`（得到半边后还要切割碎晶 = 旧的半边工序候选 3），卡片上能看出是哪一类。
+3. **多个合法交换方向时选一个**（确定性，不随机）：旋转量 / 轴号一律从 0 开始按字典序取第一个。
+4. **只给非空角画卡**。
+
+#### 新增文件
+
+| 文件 | 内容 |
+|---|---|
+| `Analysis/ShapeNormalization.cs` | `NormalizeToQ1(shape, column)`、`Q1Rotation(parts, column)`、`PillarsAreGrounded`、`ColumnHeight` |
+| `Analysis/WorkOrderCardView.cs` | `CardKind {Corner, Half, Exchange}`、`HalfMode {FromCorners, WholeHalf}`、`CardStep`、`WorkOrderCardView`、`WorkOrderCardSet` |
+| `Analysis/CardReplay.cs` | 卡片回放校验（`Verify` / `TryCut` / `IsCornerProduct` / `SameColumn`） |
+| `Analysis/CardBuilder.cs` | `Build(target[, recipe])` → `WorkOrderCardSet` |
+| `Tests/CardHierarchyTests.cs` | 7 条验收用例（见下） |
+| `Tests/CardCli.cs` | `--cards` / `--cards-col` / `SHAPE_CARDS` 手动入口（不是测试项） |
+
+#### NormalizeToQ1
+
+```
+k = (−column) mod n            （顺时针旋转量，与 ShapeOps.Rotate 一致）
+目标列 column → Q1；右柱 column+1 → Q2；左柱 column−1 → Qn（n = 4 时 Q4）
+```
+
+纯函数、层数 / 象限数不变；`PillarsAreGrounded` 逐格核对「右柱 Q2 / 左柱 Qn 连续接地、
+不高于目标列」，单测 n = 4 与 n = 6 各 2 例（含逐格旋转比对）。
+
+#### CardBuilder 的分组规则
+
+```
+target → （配方根是 Pin / Stack 时先取 core = Inputs[0].Shape，顶针 / 堆叠作为交换卡的卡内步骤）
+  ├ 角卡：for 每个非空列 c → AngleWorkOrderBuilder.Build(core, c, cap)
+  │        Output = NormalizeToQ1(左柱 + 目标列 + 右柱)；Inputs 恒空
+  │        B 类角（order.Half ≠ null）改用 HalfWorkOrder.Steps 的两列视图，碎晶步是真实两列切割
+  ├ 半边卡 ×2：轴取「最小可行列号」（先 0，两条轴都不行才记不可得）
+  │        先试 A 类：该半边两张角卡产物 → 真实 Exchange（旋转量 0…n−1 全试，命中即停）
+  │        不成立 → B 类 WholeHalf：Inputs = 空，步骤 = 半边工序（候选 3 的「碎晶」可见，
+  │                  候选 1 / 2 的「下落」隐藏），Note 写清 A 类为什么不可行
+  └ 交换卡 ×1：Inputs = 两张半边卡的 Output
+                步骤 = 交换（+ 隐藏「废料」）+ 配方带来的「顶破 / 堆叠」
+                Output = 目标图形
+```
+
+- **R1**：`Inputs` 一律是上一层卡片的 `Output`（角卡产物 / 半边卡产物），不是前态；
+- **R2**：前态只出现在卡内（`前态` 是隐藏第一步），跨卡传递的永远是产物；
+- **R3**：半半边不建卡，只作为半边卡内部的交换结果 / 前态出现。
+
+#### 真实回放校验（`CardReplay.Verify`）
+
+| 步骤 | 回放方式 |
+|---|---|
+| 碎晶 | 真实 `ShapePhysics.Cut`：先试给定旋转量，再在 0…n−1 里找最小可行量（顺转 → 切 → 转回，先西后东） |
+| 顶破 | 真实 `ShapePhysics.Pin` |
+| 交换 | 真实 `ShapeExchange.Exchange`，两路输出任意一路逐格等于该步产物即通过；废料必须是**同一次**交换的另一路 |
+| 堆叠 | 真实 `ShapePhysics.Stack`（块的形状随步骤保存） |
+| 下落 / 弱落 | 真实 `ShapePhysics.Collapse` |
+| 旋转 | 真实 `ShapeOps.Rotate` |
+| 前态 / 构造 A | 链的起点；构造 A 额外要求目标列是紧列、产物是三列形态 |
+| 构造 C / 纯支撑交接 / 收尾 | 结构校验：目标列逐格保持、产物只剩「左柱 + 目标列 + 右柱」、两柱连续接地 |
+| 结晶 | 结构校验：只允许「空位 / 顶针 → 晶体」，其余格子一格不动 |
+| 堆叠尾 | 结构校验：目标列在原有高度上恰好加一格，其余列不动 |
+
+**降级**：`CardReplay.Verify` 不过（或角工序 `IsComplete = false`）⇒ `Verified = false`、
+清空 `Inputs` / `InputTitles`、`Note = "未通过：第 N 步（操作）…"`。
+测试 `卡片:校验失败降级` 用非法角 `.PT`（顶针下方是空位）锁定这条行为。
+
+#### 手动入口（本轮不做渲染，Web 未动）
+
+```
+ShapeEditor.Tests.exe --cards "crCu----:CuCu----:--Cu----:CuCu----:--------:crcr----:P-cr----:Cucr----"
+ShapeEditor.Tests.exe --cards-col ".T.cTT.c" --parts 6
+$env:SHAPE_CARDS = "短代码"
+```
+
+逐卡打印 `Verified / Inputs / 输出（Q1 固定）→ Q1..Qn / 前态 / 可见步骤 / 隐藏步骤 / Note`，
+末行 `汇总：cards=… corner=… half=… exchange=… verified=…/…`。没有参数时**完全静默**。
+
+#### 两个用户样例的实测（`--cards`）
+
+```
+样例 1（只有第 1–2 象限）：corner=2 half=2 exchange=1 verified=5/5
+  角1 B 类角（S ✘，目标列由半边工序的一刀真实产出）
+  角2 S 角（碎晶：正规核心 + 托柱 + 保险丝，一刀）
+  半边1 WholeHalf 候选 3（碎晶）；半边2 WholeHalf 候选 1（空半边）
+  交换卡 输入 = [半边1, 半边2]，步骤 = 交换（废料隐藏），输出逐格 = 目标 ✔
+
+样例 2（两半都填）：corner=4 half=2 exchange=1 verified=7/7
+  角3 / 角4 = 构造 A 紧列（单颗底层晶体），无可见步骤；半边2 = 候选 1
+  n = 6 稠密样例 `CrCgCbCcCmCy`：corner=6 half=2 exchange=1 verified=9/9
+```
+
+#### 验收数字（Release）
+
+| 项 | 结果 |
+|---|---|
+| 全量测试 | **204/204** 通过（197 项原有 + 7 项新增；claw / 二择 2 项 XFAIL 保持），104 s |
+| 新增用例 | `卡片:NormalizeToQ1 n=4`、`卡片:NormalizeToQ1 n=6`、`卡片:角卡数量与真实回放`、`卡片:角卡产物固定 Q1`、`卡片:半边卡真实回放`、`卡片:n=6 六角两层`、`卡片:校验失败降级` |
+| 3–9 层 + n=6/8 全量失败数 | 未改求解器，`AUDIT` / `LAYERAUDIT` / `NINEAUDIT` 的 `failures=0` 保持 |
+| 旧结构 | `Recipe` / `ProductionGraph` / `ProductionPathParser` / `AngleWorkOrderBuilder` / `HalfWorkOrder` 一行未改 |
+
+#### 与 plan / 设计稿不一致的地方（不自行取舍，照原样报告）
+
+1. **A 类（`FromCorners`）在本模型里恒不成立——已实测穷举。**
+   角产物是「目标列 + 左右柱」三列（例：Q1 目标、Q2 / Q4 柱），它必然横跨 `n/2` 刀口两侧；
+   而 `Exchange` 的两路输出分别是「第一路的东侧 + 第二路的西侧」与「第一路的西侧 + 第二路的东侧」，
+   保留一侧的同时**必然**把另一侧的支撑柱一起带回来。所以 `Exchange(角1, 角2)` 得到的
+   永远不是纯 k 列半边（会多出 1–2 根柱），旋转量 0…n−1 全试也无解。
+   ⇒ 半边卡实际全部落在 B 类 `WholeHalf`；Note 里如实写明「A 类不可行：…」。
+   设计稿 §4 的「两个角交换 → 半边」示例是手写示意（文档自己也标注「非规范」），
+   按真实物理不可实现。**这是本轮唯一的硬性偏离**，需要产品口径裁决：
+   要么承认 A 类只是叙事、要么给「角产物如何去掉左右柱」补一个真实原语。
+2. **`Half.Mode` 只有两个值**（plan §3 Q3），所以候选 1 / 2（无碎晶、整半边一起做）
+   也记成 `WholeHalf`，靠 Note 区分「候选 3（半破）/ 候选 1（Q 自身）/ 候选 2（联合逆提升）」；
+   B 类的严格定义（候选 3）在 Note 里写「B 类（半破）」。
+3. **角卡的「构造 C / 收尾」是结构步骤**：真实物理无法「拆掉辅助列 + 装支撑柱」，
+   所以这两步隐藏，只做结构校验（目标列逐格保持 + 两柱连续接地 + 只留三列）。
+   设计稿 §2 第 4 条要求「纯旋转、纯支撑柱交接并入相邻步骤或省略」，本轮取「隐藏」。
+4. **角阶段的「堆叠」步一律隐藏**：`AngleWorkStepKind.Stack` 只记「接回尾部一层」的产物，
+   没有可堆叠块的形状，无法做真实 `Stack` 回放；交换卡的「堆叠」步有块，所以可见且真实回放。
+5. **弱落 / 结晶 / 轮间交换**没有真实原语：弱落按真实 `Collapse` 核对（不过就降级），
+   结晶按「只填空位 / 顶针」结构核对，轮间交换按「目标列保持」结构核对。
+   这类形态的角卡会如实地 `Verified = false`，不伪造通过。
+6. **n ≥ 6 的 A 类切分**（`角1 | 角2+角3` 等）未实现：`k ≠ 2` 时直接记「交给半边工序」，
+   因为第 1 条已证明角产物交换不可行，再枚举切分没有意义。
+7. **n = 2** 不进卡片层级（定理 5 的孤立列拼装没有半边层）：`CardBuilder.Build` 返回
+   只有 Note 的空卡片集。

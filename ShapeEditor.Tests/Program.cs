@@ -31,6 +31,16 @@ internal static class Program
         }
 
         /*
+         * 工序卡片的命令行入口（不是测试项）：
+         *   --cards "短代码" / --cards-col "列文本" --parts N / SHAPE_CARDS=短代码
+         * 只打印卡片树，不跑断言；没有参数时完全静默。
+         */
+        if (CardCli.TryRun(args, out int cardExitCode))
+        {
+            return cardExitCode;
+        }
+
+        /*
          * 单列诊断 / 审计入口（不是测试项）：
          *   --col ".T.cTT.c" --parts 6
          *   --audit --parts 6
@@ -307,7 +317,16 @@ internal static class Program
             ("语料12:管线半边装配诊断", ProductionPathAcceptanceTests.HalfAssemblyPipelineReportsDiagnosisOnChainFailure),
             ("语料13:空半边废料是真实交换副产物", ProductionPathAcceptanceTests.EmptyHalfWasteIsRealExchangeByproduct),
             ("语料14:贴地半边废料是真实交换副产物", ProductionPathAcceptanceTests.FlatHalfWasteIsRealExchangeByproduct),
-            ("语料14:铺满目标保持交换链", ProductionPathAcceptanceTests.DenseTargetsKeepExchangeChain)
+            ("语料14:铺满目标保持交换链", ProductionPathAcceptanceTests.DenseTargetsKeepExchangeChain),
+
+            // 工序卡片层级（docs/work-order-card-hierarchy-plan.md §3 / §3.5）。
+            ("卡片:NormalizeToQ1 n=4", CardHierarchyTests.NormalizeQ1FourQuadrants),
+            ("卡片:NormalizeToQ1 n=6", CardHierarchyTests.NormalizeQ1SixQuadrants),
+            ("卡片:角卡数量与真实回放", CardHierarchyTests.CardCountsAndReplayForUserExamples),
+            ("卡片:角卡产物固定 Q1", CardHierarchyTests.CornerCardOutputsAreFixedAtQ1),
+            ("卡片:半边卡真实回放", CardHierarchyTests.HalfCardsReplayWithRealPhysics),
+            ("卡片:n=6 六角两层", CardHierarchyTests.SixQuadrantCardsAreComplete),
+            ("卡片:校验失败降级", CardHierarchyTests.FailedCardsDropInputsAndExplain)
         };
 
         /*
