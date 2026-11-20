@@ -2584,4 +2584,40 @@ L4 的晶体下方 L3 是空 ⇒ 违反 P1。根因是构造 F 只对**最高**�
   只是构造 F 的前态现在也由正规核心生成；n = 6/8 的路线统计里已经**没有构造 H**。
 - 半边候选 1/2 的前态可能就是目标本身（那列已属于 S），P1 只对候选 3 的一刀前态生效。
 
+### 7.31 n ≥ 6 改为「算法 1 → 2 全填空 → 构造 F」并禁用 FillBreak（2026-11-19，第十一轮）
 
+**背景**：docs/n6-corner-algorithm.md §3 指出两处偏离：`.T.cTT.c` 的 col0 没填临时晶体、
+`cTT.cTT.c` 走 FillBreak 且 col2 为空。
+
+**改动**（`Analysis/AngleWorkOrder.cs`）：
+
+| 点 | 内容 |
+|---|---|
+| 算法 1 + 算法 2 合成前态 | `TryConstructFCandidate` 先在目标列上做 `FindCrystalLifts` 的全部提升，再把**最高晶体以下的空位全部填成临时晶体**（紧列、P1 自动成立） |
+| B 的桥锚 | B 除每段 `d..s−1` 晶体通道外，在每个临时晶体块的最上层再放一枚锚点晶体；A 的临时晶体块因此能被同一刀整段打碎 |
+| E 满高纯晶体柱 | E 每一层都是晶体，四列都有材料；不存在「某一列是空」的合法构造 F |
+| FillBreak 退场 | `TryBuildSixPlusOrder` 只调用 `TryBuildConstructF`；n ≥ 6 不再生成 FillBreak |
+| 分档 | 有提升窗口 ⇒ 算法 3（构造 F 送回）；没有提升窗口 ⇒ 算法 2（只破正规核心）；算法 1 是两者的第一步 |
+
+**样例**：
+
+```
+.T.cTT.c   前态 col0 = ccTcTcTc（紧列、P1 ✔）；B=TcTTTcTT，E=cccccccc，N=TTPTTTPT
+           Cut → .T.cTT.c ✔
+cTT.cTT.c  前态 col0 = cTcTcTcTc（紧列、P1 ✔）；B=TTcTTTcTT，E=ccccccccc，N=TTTPTTTPT
+           路线 = 构造 F（算法 3），Cut → cTT.cTT.c ✔
+```
+
+**审计**（`--audit`，Release）：
+
+| 项 | 结果 |
+|---|---|
+| n = 6（3–9 层） | S = 55829，failures = 0，P1 违规 = 0，FillBreak = 0 |
+| n = 8（3–9 层） | S = 55829，failures = 0，P1 违规 = 0，FillBreak = 0 |
+| n = 4（3–9 层） | 3–6 层 S = 2125 / 7 层 4320 / 8 层 12646 / 9 层 36508，failures = 0 |
+| 全量测试 | 194/194 通过（claw / 二择 XFAIL 保持） |
+
+**注**：docs §5 写的「`.T.cTT.c` 前态 col0 的 L3 是临时晶体」在物理上做不到：
+L3 正上方是原生晶体 L4，把 L3 改成晶体后二者竖直同簇，Cut 会把原生晶体一起打碎
+（实测 Cut 结果 `.T..TT..`）。所以按论文算法 1 把 L2 的普通格抬到 L3，临时晶体填在
+被让出的 L1、L2、L6；Cut 后普通格落回 L2、L6，col0 逐格等于目标。

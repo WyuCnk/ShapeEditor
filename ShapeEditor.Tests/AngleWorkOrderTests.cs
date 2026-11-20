@@ -437,8 +437,8 @@ internal static class AngleWorkOrderTests
     #region 角工序：构造 F（n ≥ 6）
 
     /// <summary>
-    /// 用户样例的两列碎晶角：第 1 列走首选的填充+暴破，第 2 列（多个缺口、
-    /// 缺口上方是保留晶体）填充+暴破做不了，退回构造 F。
+    /// 用户样例的两列碎晶角：n ≥ 6 不再生成 FillBreak，两列都走
+    /// 算法 1（提升）→ 算法 2（全填临时晶体）→ 构造 F 四列。
     /// </summary>
     public static void ConstructionFHandlesUserSample()
     {
@@ -446,7 +446,7 @@ internal static class AngleWorkOrderTests
 
         foreach ((int column, AngleConstruction expected) in new[]
                  {
-                     (0, AngleConstruction.FillBreak),
+                     (0, AngleConstruction.F),
                      (1, AngleConstruction.F)
                  })
         {
@@ -490,11 +490,11 @@ internal static class AngleWorkOrderTests
     /// <summary>
     /// 多层缺口案例（n = 6 与 n = 10）：目标列 <c>T..ccc</c>。
     ///
-    /// 缺口高两层，但「填充+暴破」是首选：前态把 T 抬到缺口顶端、
-    /// 底下两层填成晶体 <c>ccTccc</c>，一次 Cut 打碎底下两层晶体，
-    /// T 落回第 1 层，缺口就由碎晶造出来。
+    /// 缺口高两层：算法 1 把 T 抬到缺口顶端、算法 2 再把最高晶体以下的空位
+    /// 全部填成临时晶体 <c>ccTccc</c>，构造 F 一刀打碎临时晶体，
+    /// T 落回第 1 层，缺口就由碎晶造出来（不再走 FillBreak）。
     /// </summary>
-    public static void FillBreakHandlesMultiLayerGap()
+    public static void ConstructFHandlesMultiLayerGap()
     {
         foreach (int parts in new[] { 6, 10 })
         {
@@ -505,15 +505,16 @@ internal static class AngleWorkOrderTests
             Assert.Equal(AngleBuildKind.NeedsCrystalBreak, order.Kind);
             Assert.True(
                 order.IsComplete,
-                order.Note ?? $"n = {parts} 的多层缺口填充+暴破应验证通过");
-            Assert.Equal(AngleConstruction.FillBreak, order.Construction);
+                order.Note ?? $"n = {parts} 的多层缺口构造 F 应验证通过");
+            Assert.Equal(AngleConstruction.F, order.Construction);
+            Assert.Equal(AngleAlgorithm.Algorithm3, order.Algorithm);
 
             ShapeDocument preState = Step(order, AngleWorkStepKind.PreState).Shape!;
 
             Assert.Equal(
                 "ccTccc",
                 ShapeSignature.ColumnText(preState, 0),
-                "碎晶前的角应把 T 抬到缺口顶端并把底下两层填成晶体");
+                "算法 2 的正规核心应把 T 抬到缺口顶端并把最高晶体以下的空位填成临时晶体");
 
             ReplayAndVerifyColumn(order, target, 0);
         }
@@ -1001,18 +1002,19 @@ internal static class AngleWorkOrderTests
     }
 
     /// <summary>
-    /// 前态不稳定时（这里的目标列在第 1 层就有一枚悬空顶针），
-    /// 订单必须止步于「前态 + 说明」，不能伪造 Cut/Collapse 步骤。
+    /// 前态不稳定时（这里的目标列在最高晶体上方有一枚悬空顶针，
+    /// 算法 2 只填最高晶体以下的空位，辅助柱又粘不住顶针），
+    /// 订单元必须止步于「前态 + 说明」，不能伪造 Cut/Collapse 步骤。
     /// </summary>
     public static void UnstablePrestateKeepsVerifiedPrefix()
     {
-        ShapeDocument target = FromColumns(6, 6, (0, ".PT.c."));
+        ShapeDocument target = FromColumns(6, 7, (0, "T..c..P"));
 
         // 合成列（五项条件不过）：只验证「前态不稳定时保留已验证前缀」。
         AngleWorkOrder order = AngleWorkOrderBuilder.Build(
             target,
             0,
-            6,
+            7,
             enforceFiveConditions: false);
 
         Assert.False(order.IsComplete, "前态不稳定的订单不应标成完成");
@@ -2419,35 +2421,42 @@ internal static class AngleWorkOrderTests
     }
 
     /// <summary>
-    /// §6 的 n ≥ 6 分档：算法 1（提升）→ 算法 2（正规核心）→ 算法 3（构造 F 送回），
-    /// 以及 n = 4 其余的算法 4（递归提升 + 构造 G 环下落）。
+    /// §6 的 n ≥ 6 分档：算法 1（提升）与算法 2（正规核心）现在都是
+    /// <b>同一份构造 F 工序</b>的前两阶段——有提升窗口时标算法 3（构造 F 送回），
+    /// 没有提升窗口时标算法 2（只破除正规核心的临时晶体）；
+    /// n = 4 其余仍走算法 4（递归提升 + 构造 G 环下落）。
+    ///
+    /// <para>
+    /// n ≥ 6 不再生成 <see cref="AngleConstruction.FillBreak"/>：这是
+    /// docs/n6-corner-algorithm.md §4 的修正口径。
+    /// </para>
     /// </summary>
     public static void AlgorithmTiersSelectPaperBranch()
     {
-        // 算法 1（提升）：缺口下方有普通格，先抬到缺口顶端再碎晶。
+        // 算法 1 的提升阶段：缺口下方有普通格，先抬到缺口顶端、再全填临时晶体。
         AngleWorkOrder lift = AngleWorkOrderBuilder.Build(
             FromColumns(6, 6, (0, "T..ccc")),
             0,
             6);
 
-        Assert.Equal(AngleAlgorithm.Algorithm1, lift.Algorithm);
-        Assert.Equal(AngleConstruction.FillBreak, lift.Construction);
-        Assert.True(lift.IsComplete, lift.Note ?? "算法 1 应验证通过");
+        Assert.Equal(AngleAlgorithm.Algorithm3, lift.Algorithm);
+        Assert.Equal(AngleConstruction.F, lift.Construction);
+        Assert.True(lift.IsComplete, lift.Note ?? "带提升窗口的构造 F 应验证通过");
         Assert.Equal(
             "ccTccc",
             ShapeSignature.ColumnText(
                 Step(lift, AngleWorkStepKind.PreState).Shape!,
                 0),
-            "算法 1 的前态应把 T 抬到缺口顶端");
+            "算法 1 的前态应把 T 抬到缺口顶端、再把空位填成临时晶体");
 
-        // 算法 2（正规核心）：缺口只能直接填成紧核心（上下都挨着普通格）。
+        // 算法 2（正规核心）：没有提升窗口，只需要破除填出来的临时晶体。
         AngleWorkOrder core = AngleWorkOrderBuilder.Build(
             FromColumns(6, 8, (0, "cT..Tccc")),
             0,
             8);
 
         Assert.Equal(AngleAlgorithm.Algorithm2, core.Algorithm);
-        Assert.Equal(AngleConstruction.FillBreak, core.Construction);
+        Assert.Equal(AngleConstruction.F, core.Construction);
         Assert.True(core.IsComplete, core.Note ?? "算法 2 应验证通过");
         Assert.Equal(
             "cTccTccc",
@@ -3213,14 +3222,15 @@ internal static class AngleWorkOrderTests
     {
         var cases = new (int Parts, int Layers, string Text, AngleAlgorithm Algorithm, AngleConstruction Construction)[]
         {
-            // 算法 1（提升）：缺口在晶体塔下方，先把下方的普通格抬到缺口顶端。
-            (6, 6, "T..c..", AngleAlgorithm.Algorithm1, AngleConstruction.FillBreak),
+            // 算法 1（提升）+ 算法 2（正规核心）→ 构造 F：缺口在晶体塔下方，
+            // 先把下方的普通格抬到缺口顶端，再把最高晶体以下的空位全填成临时晶体。
+            (6, 6, "T..c..", AngleAlgorithm.Algorithm3, AngleConstruction.F),
 
-            // 算法 1（提升），缺口高两层。
-            (6, 6, "T...c.", AngleAlgorithm.Algorithm1, AngleConstruction.FillBreak),
+            // 同上，缺口高两层。
+            (6, 6, "T...c.", AngleAlgorithm.Algorithm3, AngleConstruction.F),
 
-            // 算法 2（正规核心）：缺口直接填成紧核心。
-            (6, 6, "cT..Tc", AngleAlgorithm.Algorithm2, AngleConstruction.FillBreak),
+            // 算法 2（正规核心）：没有提升窗口，只把缺口填成紧核对再碎晶。
+            (6, 6, "cT..Tc", AngleAlgorithm.Algorithm2, AngleConstruction.F),
 
             // 算法 3（构造 F）：缺口就在晶体段正下方，一次受控下落到 d 层。
             (6, 6, ".T..c.", AngleAlgorithm.Algorithm3, AngleConstruction.F),
@@ -3231,9 +3241,14 @@ internal static class AngleWorkOrderTests
             // 算法 3（构造 F），n = 8。
             (8, 8, "..T.c...", AngleAlgorithm.Algorithm3, AngleConstruction.F),
 
-            // 算法 3（构造 F）：两段晶体都在空位上方，初始前态必须为
-            // ..TcT.Tc（算法 1 提升后的正规核心，P1 ✔），一刀落回 .T.cTT.c。
-            (6, 8, ".T.cTT.c", AngleAlgorithm.Algorithm3, AngleConstruction.F)
+            // 算法 3（构造 F）：两段晶体都在空位上方，初始前态必须是
+            // ccTcTcTc（算法 1 提升 + 算法 2 全填临时晶体的正规核心，紧列、P1 ✔），
+            // 一刀落回 .T.cTT.c。
+            (6, 8, ".T.cTT.c", AngleAlgorithm.Algorithm3, AngleConstruction.F),
+
+            // n = 6、9 层的 cTT.cTT.c：不再走 FillBreak，改走构造 F 四列；
+            // col0 = cTcTcTcTc（紧列、P1 ✔），E 是满高纯晶体柱。
+            (6, 9, "cTT.cTT.c", AngleAlgorithm.Algorithm3, AngleConstruction.F)
         };
 
         foreach ((int parts, int layers, string text, AngleAlgorithm algorithm,
@@ -3283,10 +3298,71 @@ internal static class AngleWorkOrderTests
 
             if (text == ".T.cTT.c")
             {
+                string column = ShapeSignature.ColumnText(preState, 0);
+
                 Assert.Equal(
-                    "..TcT.Tc",
+                    "ccTcTcTc",
+                    column,
+                    "n=6 的 .T.cTT.c：前态 col0 必须是算法 1 提升 + 算法 2 全填后的 ccTcTcTc");
+
+                Assert.True(
+                    ShapeSignature.IsTightColumn(column),
+                    "前态 col0 必须是紧列：ccTcTcTc");
+
+                /*
+                 * 算法 2 填出的临时晶体：L1（目标也是空）以及两次提升让出的
+                 * L2 / L6（被提升的普通格在 L3 / L7）。L3、L7 是提升后的普通格，
+                 * 不能改成临时晶体——它们与原生晶体 L4 / L8 竖直相邻，
+                 * 改成晶体后会在 Cut 里被整簇打碎（实测 Cut 结果 .T..TT..）。
+                 */
+                foreach (int layer in new[] { 0, 1, 5 })
+                {
+                    Assert.Equal(
+                        CellType.Crystal,
+                        preState[layer, 0].Type,
+                        $"第 {layer + 1} 层应是临时晶体");
+                }
+
+                Assert.Equal(CellType.Shape, preState[2, 0].Type);
+                Assert.Equal(CellType.Shape, preState[6, 0].Type);
+            }
+
+            if (text == "cTT.cTT.c")
+            {
+                Assert.Equal(
+                    "cTcTcTcTc",
                     ShapeSignature.ColumnText(preState, 0),
-                    "n=6 的 .T.cTT.c：前态 col0 必须是算法 1 提升后的 ..TcT.Tc");
+                    "n=6 的 cTT.cTT.c 前态 col0 应是算法 1 + 算法 2 的紧列");
+
+                Assert.True(
+                    ShapeSignature.IsTightColumn(preState, 0),
+                    "前态 col0 必须是紧列：cTcTcTcTc");
+
+                Assert.NotEqual(AngleConstruction.FillBreak, order.Construction);
+
+                // 四连位 N | A | B | E：N 在 s 层放针，B 放晶体通道，E 满高纯晶体。
+                Assert.Equal(
+                    "TTTPTTTPT",
+                    ShapeSignature.ColumnText(preState, 5),
+                    "N 应在两次提升的源层（第 4、8 层）放顶针");
+
+                Assert.Equal(
+                    "TTcTTTcTT",
+                    ShapeSignature.ColumnText(preState, 1),
+                    "B 应在第 d..s−1 层放晶体通道（第 3、7 层）");
+
+                Assert.Equal(
+                    "ccccccccc",
+                    ShapeSignature.ColumnText(preState, 2),
+                    "E 必须是满高纯晶体柱");
+
+                foreach (int part in new[] { 0, 1, 2, 5 })
+                {
+                    Assert.True(
+                        ShapeSignature.ColumnText(preState, part)
+                            .Any(code => code != ShapeSignature.EmptyCode),
+                        $"第 {part + 1} 象限必须有材料");
+                }
             }
 
             // ── 验收二：前态的目标列 ≠ 目标列（§5 规则四，禁止循环）──
@@ -3390,7 +3466,7 @@ internal static class AngleWorkOrderTests
 
         AngleWorkOrder tall = AngleWorkOrderBuilder.Build(shortTarget, 0, 6);
 
-        Assert.Equal(AngleAlgorithm.Algorithm1, tall.Algorithm);
+        Assert.Equal(AngleAlgorithm.Algorithm3, tall.Algorithm);
         Assert.True(tall.IsComplete, tall.Note ?? "cap 高于目标层数也应完成");
         Assert.Equal(
             "T..c..",
@@ -3404,10 +3480,10 @@ internal static class AngleWorkOrderTests
     }
 
     /// <summary>
-    /// 构造 F 的四列布局（文档 §3）：沿环四个连续位置
-    /// <c>针槽柱 N | 目标 A | 辅助柱 B | 碎晶桥柱 E</c>，其余象限空；
-    /// N 的第 s 层是针、B 的第 d..s−1 层是晶体、E 只有第 d 层晶体、其余都是 T；
-    /// 目标列把 d 层那枚普通格抬到 s 层。
+    /// 构造 F 的四列布局（docs/n6-corner-algorithm.md §2 / §4）：沿环四个连续位置
+    /// <c>针槽柱 N | 目标 A | 辅助柱 B | 碎晶桥柱 E</c>，其余象限空，四列都有材料；
+    /// N 的第 s 层是针、B 的第 d..s−1 层是晶体（外加临时块锚点）、
+    /// E 是满高纯晶体柱，其余是 T；目标列先按算法 1 抬升、再按算法 2 全填空位。
     ///
     /// <para>
     /// <c>.T..c..</c>（n = 6，7 层）：最高晶体段只有第 5 层一枚晶体，
@@ -3439,17 +3515,21 @@ internal static class AngleWorkOrderTests
 
         ShapeDocument preState = Step(order, AngleWorkStepKind.PreState).Shape!;
 
-        // 目标列 A：d = 1 的普通格抬到 s = 3，第 2 层（0 起 1）让出。
-        Assert.Equal("...Tc..", ShapeSignature.ColumnText(preState, 0));
+        /*
+         * 目标列 A：d = 1 的普通格抬到 s = 3；算法 2 再把最高晶体（第 5 层）
+         * 以下的空位（第 1、2、3 层）全填成临时晶体。
+         */
+        Assert.Equal("cccTc..", ShapeSignature.ColumnText(preState, 0));
+        Assert.True(ShapeSignature.IsTightColumn(preState, 0), "前态目标列应是紧列");
 
         // N：第 s 层针，其余 T。
         Assert.Equal("TTTPTTT", ShapeSignature.ColumnText(preState, 5));
 
-        // B：第 d..s−1 层晶体通道，其余 T。
+        // B：第 d..s−1 层晶体通道，其余 T（临时块顶 = 2 已在通道里）。
         Assert.Equal("TccTTTT", ShapeSignature.ColumnText(preState, 1));
 
-        // E：只有第 d 层一枚晶体，其余 T。
-        Assert.Equal("TcTTTTT", ShapeSignature.ColumnText(preState, 2));
+        // E：满高纯晶体柱（§4 禁止把辅助列留空）。
+        Assert.Equal("ccccccc", ShapeSignature.ColumnText(preState, 2));
 
         // 其余象限留空。
         foreach (int part in new[] { 3, 4 })

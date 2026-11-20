@@ -189,7 +189,7 @@ internal static class Program
             ("角工序:构造 G 真实回放", AngleWorkOrderTests.ConstructionGReplaysToTarget),
             ("角工序:构造 G 规格例子", AngleWorkOrderTests.ConstructionGMatchesSpecExample),
             ("角工序:构造 F 用户样例两列", AngleWorkOrderTests.ConstructionFHandlesUserSample),
-            ("角工序:填充暴破多层缺口", AngleWorkOrderTests.FillBreakHandlesMultiLayerGap),
+            ("角工序:构造 F 多层缺口", AngleWorkOrderTests.ConstructFHandlesMultiLayerGap),
             ("角工序:用户前态切开目标列", AngleWorkOrderTests.UserPrestateCutsToTargetColumn),
             ("角工序:用户三个例子分档", AngleWorkOrderTests.FillBreakCoversUserExamples),
             ("角工序:分档优先级与回退", AngleWorkOrderTests.FillBreakIsPreferredOverLegacyConstructions),

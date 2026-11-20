@@ -14,7 +14,11 @@ namespace ShapeEditor.Tests;
 /// $env:SHAPE_DIAG_COLUMNS = ".T.cTT.c"
 /// $env:SHAPE_DIAG_PARTS   = "6"      # 新增；省略时默认 4
 /// </code>
-/// <para><b>审计</b>（任务 3）：n = 6 / n = 8 的全部 S 列（层 3–8）与 n = 4 的 3–9 层回归。</para>
+/// <para>
+/// <b>审计</b>（任务 3）：n = 6 / n = 8 的全部 S 列（层 3–9）与 n = 4 的 3–9 层回归；
+/// 每层都统计 failures / P1 违规 / <see cref="AngleConstruction.FillBreak"/> 例数
+/// （n ≥ 6 必须为 0）。
+/// </para>
 /// <code>
 /// ShapeEditor.Tests.exe --audit --parts 6
 /// ShapeEditor.Tests.exe --audit --parts 8
@@ -390,20 +394,25 @@ internal static class AngleDiagCli
     {
         int failures = 0;
         int p1 = 0;
+        int fillBreak = 0;
 
         foreach (int parts in new[] { 6, 8 })
         {
-            (int auditFailures, int auditP1) = AuditParts(parts, 3, 9);
+            (int auditFailures, int auditP1, int auditFillBreak) =
+                AuditParts(parts, 3, 9);
             failures += auditFailures;
             p1 += auditP1;
+            fillBreak += auditFillBreak;
         }
 
-        (int fourFailures, int fourP1) = AuditParts(4, 3, 9);
+        (int fourFailures, int fourP1, int fourFillBreak) = AuditParts(4, 3, 9);
         failures += fourFailures;
         p1 += fourP1;
+        fillBreak += fourFillBreak;
 
         Console.WriteLine(
             "AUDIT-ALL parts=4/6/8 failures=" + failures + " p1Violations=" + p1 +
+            " fillBreak=" + fillBreak +
             (failures == 0 && p1 == 0 ? " ✔" : " ✘"));
 
         return failures == 0 && p1 == 0 ? 0 : 1;
@@ -412,28 +421,30 @@ internal static class AngleDiagCli
     private static int RunAudit(
         int parts)
     {
-        (int failures, int p1) = AuditParts(
+        (int failures, int p1, int fillBreak) = AuditParts(
             parts,
             3,
             9);
 
         Console.WriteLine(
             "AUDIT-ALL parts=" + parts + " failures=" + failures +
-            " p1Violations=" + p1 +
+            " p1Violations=" + p1 + " fillBreak=" + fillBreak +
             (failures == 0 && p1 == 0 ? " ✔" : " ✘"));
 
         return failures == 0 && p1 == 0 ? 0 : 1;
     }
 
-    private static (int Failures, int P1) AuditParts(
+    private static (int Failures, int P1, int FillBreak) AuditParts(
         int parts,
         int minLayers,
         int maxLayers)
     {
         int totalFailures = 0;
         int totalP1 = 0;
+        int totalFillBreak = 0;
         int totalS = 0;
-        var summary = new List<(int Layers, int S, int Failures, int P1)>();
+        var summary =
+            new List<(int Layers, int S, int Failures, int P1, int FillBreak)>();
 
         for (int layers = minLayers; layers <= maxLayers; layers++)
         {
@@ -449,6 +460,7 @@ internal static class AngleDiagCli
             int s = 0;
             int failures = 0;
             int p1 = 0;
+            int fillBreak = 0;
             var failedSamples = new List<string>();
             var p1Samples = new List<string>();
 
@@ -487,6 +499,11 @@ internal static class AngleDiagCli
                     0,
                     layers);
 
+                if (order.Construction == AngleConstruction.FillBreak)
+                {
+                    fillBreak++;
+                }
+
                 if (!order.IsComplete)
                 {
                     failures++;
@@ -520,12 +537,14 @@ internal static class AngleDiagCli
 
             totalFailures += failures;
             totalP1 += p1;
+            totalFillBreak += fillBreak;
             totalS += s;
 
             Console.WriteLine(
                 "AUDIT n=" + parts + " layers=" + layers +
                 " legal=" + legal + " S=" + s +
-                " failures=" + failures + " p1Violations=" + p1);
+                " failures=" + failures + " p1Violations=" + p1 +
+                " fillBreak=" + fillBreak);
 
             foreach (string sample in failedSamples)
             {
@@ -537,7 +556,7 @@ internal static class AngleDiagCli
                 Console.WriteLine("  P1   " + sample);
             }
 
-            summary.Add((layers, s, failures, p1));
+            summary.Add((layers, s, failures, p1, fillBreak));
         }
 
         if (parts == 4)
@@ -553,21 +572,21 @@ internal static class AngleDiagCli
                 "AUDIT n=4 3–6 层：S=" + low + "（记录值 2125） failures=" +
                 lowFailures);
 
-            foreach ((int layers, int s, int failures, int p1) in summary
-                         .Where(entry => entry.Layers >= 7))
+            foreach ((int layers, int s, int failures, int p1, int fillBreak)
+                     in summary.Where(entry => entry.Layers >= 7))
             {
                 Console.WriteLine(
                     "AUDIT n=4 " + layers + " 层：S=" + s + " failures=" + failures +
-                    " p1Violations=" + p1);
+                    " p1Violations=" + p1 + " fillBreak=" + fillBreak);
             }
         }
 
         Console.WriteLine(
             "AUDIT n=" + parts + " 合计：S=" + totalS + " failures=" + totalFailures +
-            " p1Violations=" + totalP1 +
+            " p1Violations=" + totalP1 + " fillBreak=" + totalFillBreak +
             (totalFailures == 0 && totalP1 == 0 ? " ✔" : " ✘"));
 
-        return (totalFailures, totalP1);
+        return (totalFailures, totalP1, totalFillBreak);
     }
 
     #endregion
