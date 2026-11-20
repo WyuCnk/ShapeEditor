@@ -123,6 +123,32 @@ public static class ProductionPipeline
         notes.Add(splitNote);
         notes.Add($"cap = {cap}；目标文档 {target.LayerCount} 层；核心沿用 {core.LayerCount} 层。");
 
+        /*
+         * 目标有一整半全空、且没有尾部（最高晶体已在顶层）时，优先半边装配。
+         *
+         * 交换链在这种目标上仍会用「半边 + 另一侧的辅助柱」当末次交换的输入，
+         * 于是末次交换的另一路输出（废料）是两根辅助柱拼成的「全普通形状」——
+         * 它确实是那次交换的真实副产物，但显示的却是柱子，不是目标被舍弃的另一半。
+         * 半边装配把「半边1 + 空半边2」真正送进 Exchange：
+         * 两条输入 → 目标 + 空废料，废料逐格等于被舍弃的那一半。
+         * 见 TODO.md §7.32。
+         */
+        if (tail is null &&
+            HasEmptyHalf(core) &&
+            HalfAssembly.TryBuild(
+                core,
+                core.LayerCount,
+                out Recipe? emptyHalfRecipe,
+                out string emptyHalfNote) &&
+            emptyHalfRecipe is not null)
+        {
+            notes.Add(emptyHalfNote);
+            notes.Add(
+                $"rank = {emptyHalfRecipe.Rank}，节点数 = {emptyHalfRecipe.CountNodes()}。");
+
+            return PipelineResult.Producible(emptyHalfRecipe, notes);
+        }
+
         PipelineResult coreResult =
             SolveCore(core, maxRank, notes);
 
@@ -202,6 +228,55 @@ public static class ProductionPipeline
         return PipelineResult.Producible(
             Recipe.CreateExchange(target, steps),
             notes);
+    }
+
+    /// <summary>
+    /// 目标是否有一整半（连续 n/2 列）全空。
+    ///
+    /// <para>
+    /// 只有 n ≥ 4 才有「两半」可言；n = 2 已经走定理 5 的孤立列拼装。
+    /// 命中时，<see cref="ProductionPipeline"/> 在无尾部的顶层目标上优先
+    /// <see cref="HalfAssembly"/>：交换链的末次交换输入会带上两根辅助柱，
+    /// 废料因此显示成全是普通形状；半边装配把「半边1 + 空半边2」真送进
+    /// <see cref="ShapeExchange.Exchange"/>，废料才是空的另一半。
+    /// </para>
+    /// </summary>
+    private static bool HasEmptyHalf(
+        ShapeDocument shape)
+    {
+        int parts = shape.PartCount;
+        int half = parts / 2;
+
+        if (parts < 4 || half <= 0)
+        {
+            return false;
+        }
+
+        for (int side = 0; side < 2; side++)
+        {
+            bool empty = true;
+
+            for (int offset = 0; offset < half && empty; offset++)
+            {
+                int part = side == 0 ? offset : half + offset;
+
+                for (int layer = 0; layer < shape.LayerCount; layer++)
+                {
+                    if (shape[layer, part].Type != CellType.Empty)
+                    {
+                        empty = false;
+                        break;
+                    }
+                }
+            }
+
+            if (empty)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

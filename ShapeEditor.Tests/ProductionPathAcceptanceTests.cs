@@ -1716,6 +1716,112 @@ internal static class ProductionPathAcceptanceTests
             "未覆盖必须明确标注");
     }
 
+    /// <summary>
+    /// 空半边目标的废料必须是真实 Exchange 的副产物（2026-11-20 用户反馈）。
+    ///
+    /// <para>
+    /// 用户图形 8 层，只有半边1 有内容：q1 = <c>cT.T.cPT</c>、q2 = <c>TTTT.ccc</c>、
+    /// q3 / q4 全空。交换链虽然能做这个整图，但它的末次交换输入是
+    /// 「半边 + 另一侧的辅助柱」，另一路输出是两根辅助柱拼成的全普通形状；
+    /// 对用户来说，废料应是「被舍弃的另一半」，也就是空。
+    /// </para>
+    /// <para>
+    /// 现在管线在「无尾部 + 一整半为空」时改走半边装配：
+    /// 两条真实输入是 半边1 + 空半边2，末次 <see cref="ShapeExchange.Exchange"/>
+    /// 的另一路输出逐格为空；配方最后一步与解析器的废料节点都用这份真实结果。
+    /// </para>
+    /// </summary>
+    public static void EmptyHalfWasteIsRealExchangeByproduct()
+    {
+        ShapeDocument target = Parse(
+            "crCu----:CuCu----:--Cu----:CuCu----:--------:crcr----:P-cr----:Cucr----",
+            8,
+            4);
+
+        PipelineResult solved = ProductionPipeline.Solve(target, 8);
+
+        Assert.Equal(PipelineOutcome.Producible, solved.Outcome);
+        Assert.True(solved.Recipe is not null, "可制作时必须给出 Recipe");
+        Assert.Equal(RecipeKind.HalfAssembly, solved.Recipe!.Kind);
+
+        Recipe recipe = solved.Recipe;
+        RecipeStep wasteStep = recipe.Steps[^1];
+
+        Assert.Equal(4, recipe.Steps.Count);
+        Assert.Equal("废料", wasteStep.Title);
+        Assert.True(wasteStep.IsWaste, "最后一步必须标记为废料");
+
+        // 废料 = 被舍弃的另一半：第 3、4 象限与半边1 的这两列一致（全空）。
+        Assert.True(
+            ShapeOps.Same(wasteStep.Shape, new ShapeDocument(8, 4)),
+            "废料应逐格为空：" + string.Join(" | ", ColumnTexts(wasteStep.Shape)));
+
+        Assert.Equal("........", ShapeSignature.ColumnText(wasteStep.Shape, 2));
+        Assert.Equal("........", ShapeSignature.ColumnText(wasteStep.Shape, 3));
+
+        // 真实 Exchange 回放：两条输入 → 目标 + 废料，逐格核对。
+        HalfAssemblyDetails details = recipe.HalfAssembly!;
+
+        (ShapeDocument? first, ShapeDocument? second, string? error) =
+            ShapeExchange.Exchange(details.LeftInput, details.RightInput);
+
+        Assert.True(
+            first is not null && second is not null,
+            error ?? "末次交换失败");
+
+        int parts = target.PartCount;
+        int half = parts / 2;
+        int rotation = details.Direction == 0
+            ? ShapeOps.Wrap(-details.Axis, parts)
+            : ShapeOps.Wrap(half - details.Axis, parts);
+
+        ShapeDocument rawProduct = details.Direction == 0 ? second! : first!;
+        ShapeDocument rawWaste = details.Direction == 0 ? first! : second!;
+
+        ShapeDocument product = ShapeOps.Rotate(rawProduct, -rotation);
+        ShapeDocument realWaste = ShapeOps.Rotate(rawWaste, -rotation);
+
+        if (details.FinalRotation != 0)
+        {
+            product = ShapeOps.Rotate(product, details.FinalRotation);
+            realWaste = ShapeOps.Rotate(realWaste, details.FinalRotation);
+        }
+
+        Assert.True(
+            ShapeOps.Same(product, target),
+            "真实交换的所需输出应逐格等于目标");
+
+        Assert.True(
+            ShapeOps.Same(realWaste, wasteStep.Shape),
+            "配方废料必须逐格等于真实 Exchange 的另一路输出：" +
+            string.Join(" | ", ColumnTexts(realWaste)));
+
+        // 解析器的废料节点直接取 Steps[^1].Shape（见 ProductionPathParser）。
+        ProductionPathResult parsed = ProductionPathParser.FromRecipe(recipe);
+
+        Assert.True(parsed.IsProducible, parsed.Error ?? "节点链应可展示");
+
+        ProductionNode wasteNode = parsed.Path!.Nodes.Single(
+            node => node.Kind == ProductionNodeKind.Waste);
+
+        Assert.True(
+            ShapeOps.Same(wasteNode.Shape, wasteStep.Shape),
+            "解析器的废料节点应逐格等于配方最后一步");
+
+        /*
+         * 诚实记录：交换链本身也能做这个整图，只是它的另一路输出是辅助柱，
+         * 不是用户要的「舍弃的另一半」。这条断言让「改回交换链优先」时测试会失败。
+         */
+        Assert.True(
+            ExchangeChain.TryBuild(target, out Recipe? chain),
+            "该图形交换链本身可做（记录旧行为，不是本测试的通过条件）");
+
+        Assert.True(
+            chain is not null &&
+            chain.Steps[^1].Shape[0, 2].Type != CellType.Empty,
+            "旧交换链的废料第 3 象限是辅助柱；本测试锁定的正是它与空半边的差异");
+    }
+
     /// <summary>按固定种子找一个「每列合法 + 稳定 + 交换链失败 + 管线未覆盖」的样本。</summary>
     private static ShapeDocument FindChainFailingSample(
         int parts,

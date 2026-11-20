@@ -2621,3 +2621,80 @@ cTT.cTT.c  前态 col0 = cTcTcTcTc（紧列、P1 ✔）；B=TTcTTTcTT，E=cccccc
 L3 正上方是原生晶体 L4，把 L3 改成晶体后二者竖直同簇，Cut 会把原生晶体一起打碎
 （实测 Cut 结果 `.T..TT..`）。所以按论文算法 1 把 L2 的普通格抬到 L3，临时晶体填在
 被让出的 L1、L2、L6；Cut 后普通格落回 L2、L6，col0 逐格等于目标。
+
+### 7.32 空半边目标的废料：改走半边装配，废料 = 真实 Exchange 的另一半（2026-11-20，第十二轮）
+
+**用户反馈**（8 层、n = 4）：
+
+```
+crCu----:CuCu----:--Cu----:CuCu----:--------:crcr----:P-cr----:Cucr----
+q1 = cT.T.cPT   q2 = TTTT.ccc   q3 = ........   q4 = ........
+```
+
+只有半边1 有内容，「废料」节点却把第 3、4 象限显示成全是普通形状。
+
+**复现（修复前，`SHAPE_PROBE_MODE=figure`）**
+
+`ProductionPipeline.Solve` 先命中交换链（`RecipeKind.Exchange`，rank 0），
+8 步的最后一步是废料：
+
+```
+[2] 交换得到左半边   cT..TcPT | TTT.Tccc | TTTTTTTT | TTTTTTTT
+[5] 交换得到右半边   TTTTTTTT | TTTTTTTT | ........ | ........
+[6] 交换得到目标图形 cT.T.cPT | TTTT.ccc | ........ | ........
+[7][废料] 废料       TTTTTTTT | TTTTTTTT | TTTTTTTT | TTTTTTTT
+```
+
+**真实 Exchange 的输出（不是占位）**
+
+| 末次交换 | 两条输入 | 所需输出（second） | 另一路输出（first = 废料） |
+|---|---|---|---|
+| 交换链 | 左半边 + 右半边（两半都带对面辅助柱） | `cT.T.cPT \| TTTT.ccc \| 空 \| 空` | `TTTTTTTT × 4`（两根辅助柱） |
+| 半边装配 | 半边1 + 空半边2 | `cT.T.cPT \| TTTT.ccc \| 空 \| 空` | `空 × 4` |
+
+两种废料都是 `ShapeExchange.Exchange` 的真实结果，没有一处合成「全普通形状」；
+差别在于**末次交换的输入**：交换链的末次交换输入是「半边 + 另一侧的辅助柱」，
+所以另一路输出必然是两根柱子；半边装配把「半边1 + 空半边2」真正送进交换机，
+另一路输出才是被舍弃的另一半（空）。
+
+**修法（只动 Core / Tests）**
+
+| 文件 | 改动 |
+|---|---|
+| `Analysis/Production/ProductionPipeline.cs` | `Solve` 在拆 Core/Tail 之后加一条：**无尾部**（最高晶体在顶层）且目标有**一整半全空**时，优先 `HalfAssembly.TryBuild`；成功就返回 `RecipeKind.HalfAssembly`，失败再走原来的 `SolveCore`（交换链 → 半边装配 → 顶针逆 → 拆 hybrid） |
+| `Analysis/Production/ProductionPipeline.cs` | 新增 `HasEmptyHalf`（n ≥ 4，检查连续 n/2 列是否全空） |
+| `Tests/ProductionPathAcceptanceTests.cs` | 新增 `EmptyHalfWasteIsRealExchangeByproduct`：配方是半边装配、废料四列全空、真实 `Exchange(LeftInput, RightInput)` 的所需输出 = 目标、另一路 = 配方废料、解析器废料节点 = `Steps[^1].Shape`；并记录旧交换链的废料第 3 象限是辅助柱 |
+
+**修复后（同一图形的每个 Step）**
+
+```
+[0] 制作左半边（候选 3，第 1–2 象限）  cT.T.cPT | TTTT.ccc | ........ | ........
+[1] 制作右半边（候选 1，第 3–4 象限）  ........ | ........ | ........ | ........
+[2] 交换得到目标图形                  cT.T.cPT | TTTT.ccc | ........ | ........
+[3][废料] 废料                        ........ | ........ | ........ | ........
+```
+
+半边装配的 `Steps[^1]` 本来就是真实副产物（`ShapeExchange.Exchange(LeftInput, RightInput)`
+的另一路输出），所以这次没有改 `HalfAssembly` 的 Step 内容；改的是**管线选哪条配方**。
+`ProductionPathParser` 的 `HalfAssembly` 分支仍然直接用 `recipe.Steps[^1].Shape`，
+Web 端的半边粒度视图在拿到 `HalfAssembly` 路径后也走「制作半边1 / 制作半边2 / 交换 / 废料」，
+废料节点随之变空。
+
+**保持不变的边界**
+
+- 有尾部的目标（如 `cr------:Cu------`）仍走原来的「核心交换链 + 堆叠尾部」，
+  不因为「空半边」抢走 Stack 路径；
+- 交换链本身、`ExchangeDetails.Waste`、§7.13 的 `CuCuCuCu` 记录全部不变：
+  满半边目标的末次交换另一路输出仍然是辅助柱；
+- `HALFFENCE` 仍是 `claimed=0`（半边装配不接交换链失败的整图）。
+
+**验收数字（Release）**
+
+| 项 | 结果 |
+|---|---|
+| 全量测试 | **195/195** 通过（194 项原有 + 1 项新增；claw / 二择 2 项 XFAIL 保持） |
+| `AUDIT`（≤6 层 S） | `total=5440 legal=2126 s=2125 success=2125 legalNonS=1 failures=0 falsePositives=0` |
+| `LAYERAUDIT` | 7 层 `s=4320 success=4320 failures=0`；8 层 `s=12646 success=12646 failures=0` |
+| `NINEAUDIT` | `s=36508 success=36508 failures=0 falsePositives=0 fillBreak=0` |
+| `HALFAUDIT` | `legalNonS=229 halfTargets=2 halfComplete=8 notProducible=223 uncovered=0 problems=0`（未退化） |
+| `HALFFENCE` | 四行语料 `claimed=0` |
