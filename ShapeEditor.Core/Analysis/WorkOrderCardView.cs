@@ -23,14 +23,16 @@ public enum CardKind
 }
 
 /// <summary>
-/// 半边卡的两种子型（plan §3 Q3 / 用户裁定的「只有两类卡」）。
+/// 半边卡的三种子型（plan §3 Q3 + 2026-11-20 用户裁定）。
 ///
 /// <list type="bullet">
 /// <item><see cref="FromCorners"/>（A 类）：角工序做角 → 角交换成半半边 →
 /// 半半边交换成半边，<b>不需要碎晶</b>；<see cref="WorkOrderCardView.Inputs"/> 是角卡产物。</item>
-/// <item><see cref="WholeHalf"/>（B 类）：整半边一起做，得到半边后可能还要切割碎晶
-/// （旧的 <see cref="HalfWorkOrder"/> 候选 3：临时晶体 + 保险丝 + 一刀）；
-/// <see cref="WorkOrderCardView.Inputs"/> 为空（前态是卡内私有的，§3.5 R2）。</item>
+/// <item><see cref="FromTightColumns"/>（B 类·碎晶）：输入 = 该半边各列的
+/// <b>紧列</b>（角卡产物 = 紧列 + 双柱），卡内 = 1..N 个真实「碎晶」步
+/// （N = 半边工序里的真实 <c>Cut</c> 步数），输出 = 目标半边。</item>
+/// <item><see cref="WholeHalf"/>（整半边）：候选 1 / 2，不需要切割、没有输入，
+/// 前态是卡内私有的（§3.5 R2）。</item>
 /// </list>
 /// </summary>
 public enum HalfMode
@@ -38,7 +40,10 @@ public enum HalfMode
     /// <summary>A 类：从角卡产物交换而来的半边（不需要碎晶）。</summary>
     FromCorners,
 
-    /// <summary>B 类：整半边一起做（含候选 3 的「碎晶」一刀）。</summary>
+    /// <summary>B 类·碎晶：输入各列紧列（角卡产物），卡内按真实 Cut 步数碎晶。</summary>
+    FromTightColumns,
+
+    /// <summary>整半边一起做（候选 1 / 2：Q 自身 / 联合逆提升，不切割）。</summary>
     WholeHalf
 }
 
@@ -134,6 +139,19 @@ public sealed class WorkOrderCardView
 
     /// <summary>输入卡标题，与 <see cref="Inputs"/> 一一对应（只用于展示）。</summary>
     public IReadOnlyList<string> InputTitles = Array.Empty<string>();
+
+    /// <summary>
+    /// 「并半」步的输入列映射：<c>Inputs[i]</c> 的 Q1（紧列）要放到本卡的
+    /// 第 <c>InputColumns[i]</c> 个象限。只有 <see cref="HalfMode.FromTightColumns"/>
+    /// 的半边卡用它做真实回放（逐格核对输入紧列真的进了前态）。
+    /// </summary>
+    public IReadOnlyList<int> InputColumns = Array.Empty<int>();
+
+    /// <summary>
+    /// 角卡产物是否只是「该列在半边前态里的紧列 + 左右双柱」——
+    /// 即这个角属于一个需要碎晶的半边，碎晶归半边卡，本卡没有碎晶步。
+    /// </summary>
+    public bool TightColumnProduct;
 
     /// <summary>卡内步骤（含隐藏步骤，按执行顺序）。</summary>
     public IReadOnlyList<CardStep> Steps = Array.Empty<CardStep>();

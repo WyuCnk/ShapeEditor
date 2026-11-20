@@ -2959,3 +2959,106 @@ $env:SHAPE_CARDS = "短代码"
    因为第 1 条已证明角产物交换不可行，再枚举切分没有意义。
 7. **n = 2** 不进卡片层级（定理 5 的孤立列拼装没有半边层）：`CardBuilder.Build` 返回
    只有 Note 的空卡片集。
+
+---
+
+### 7.35 工序卡片层级 P0 修正：碎晶归半边卡、角卡产出半边前态的紧列（2026-11-20，第十五轮）
+
+**任务书**：用户实测后裁定「角卡 / 半边卡的职责划分错了」。**只改 Core / Tests（+ TODO），
+不碰 UI / docs，不动求解器（`AngleWorkOrderBuilder` / `HalfWorkOrder` / `ExchangeChain`）。**
+
+#### 用户裁定（本轮的验收口径）
+
+1. **碎晶是对整个图形的操作**，一刀贯穿所有列；不存在「只切某一列」。
+2. **半边卡**：输入 = 该半边各列的**紧列**（各带双柱）；卡内 = 碎晶 × N
+   （N = 真实刀数）；输出 = 目标半边。
+3. **角卡（属于一个需要碎晶的半边）**：产物 = 该列在**半边前态**里的紧列 + 左右双柱；
+   **不显示碎晶**（碎晶归半边卡）。提升算在角卡内完成。
+4. **独立角**（不参与任何需要碎晶的半边）保持原样：紧列 → 碎晶 / 顶破 → 目标角 + 双柱。
+5. 所有步骤仍须真实回放；不通过 `Verified = false` 且清空 `Inputs`。
+
+#### 修正后的分层规则
+
+```
+先解半边（只读 HalfWorkOrder）
+├ 角卡（列 c 属于一条「有真实 Cut 步」的半边）
+│    Output = NormalizeToQ1(该列在【半边前态】里的紧列 + 左右双柱)
+│    TightColumnProduct = true；无可见碎晶步
+├ 角卡（独立角）
+│    Output = NormalizeToQ1(目标列 + 左右双柱)；可见步骤仍来自角工序（碎晶 / 顶破）
+├ 半边卡（需要碎晶，HalfMode.FromTightColumns）
+│    Inputs = 该半边各列的紧列角卡产物（InputColumns 记录列号）
+│    卡内 = 并半（隐藏，真实核对输入紧列进了前态）→ 碎晶 × N（每个真实 Cut 一步）→ 收尾
+│    Output = 目标半边（k 列投影）
+├ 半边卡（候选 1 / 2，不需要碎晶）
+│    保持 WholeHalf：Inputs 为空，前态卡内私有
+└ 交换卡：不变（两张半边输出 → 真实 Exchange → 目标）
+```
+
+- 新增 `HalfMode.FromTightColumns`（碎晶半边）；`WorkOrderCardView.TightColumnProduct`、
+  `WorkOrderCardView.InputColumns` 只服务于卡片回放与展示，不改旧数据结构。
+- `CardReplay` 新增隐藏操作 **`并半`**：逐格核对 `Inputs[i]` 的 Q1 == 前态第
+  `InputColumns[i]` 列（新工具 `SameColumnShape`），证明输入链真的被用上。
+- **N 的取法**：直接数半边工序 `HalfWorkOrder.Steps` 里的真实 `Cut` 步数。
+  候选 3 是<b>一刀</b>（保险丝在每个临时晶体块顶层各放一颗，一刀同时打碎），所以
+  即使临时晶体块 K = 2，N 也是 1——卡片如实写「1 个真实 Cut 步（K = 2）」。
+  多刀半边按 N 步逐个显示（代码已按 N 泛化）。
+
+#### 实测卡片树（用户图形）
+
+```
+图形：crCu----:CuCu----:--Cu----:CuCu----:--------:crcr----:P-cr----:Cucr----
+角1  Output = crCu--Cu:CuCu--Cu:crCu--Cu:crCu--Cu:CuCu--Cu:crCu--Cu:P-Cu--Cu:CuCu--Cu
+     Q1 = cTccTcPT；可见步骤 = 无（隐藏 构造 A → 旋转）
+角2  Output = CuCu--Cu:CuCu--Cu:CuCu--Cu:crCu--Cu:CuCu--Cu:crCu--Cu:crCu--Cu:crCu--Cu
+     Q1 = TTTcTccc；可见步骤 = 无（隐藏 构造 A → 旋转）
+半边1 FromTightColumns  Inputs = [角1, 角2]  碎晶第 1 步（真实 Cut）  Output = 目标半边  Verified=true
+半边2 WholeHalf         Inputs = 0           无需切割                   Output = --------       Verified=true
+交换    Inputs = [半边1, 半边2]  交换（废料隐藏）  Output = 目标图形          Verified=true
+汇总：cards=5 corner=2 half=2 exchange=1 verified=5/5
+```
+
+与用户给出的两段角卡短代码**逐格一致**；角卡可见步骤里没有碎晶。
+
+#### `--cards` 输出同步
+
+- 角卡打印「产物 = 紧列 + 双柱（碎晶归半边卡）」时，不再列碎晶步；
+- 半边卡逐步打印「碎晶第 1/2/… 步（真实 Cut） = 短代码」；
+- 汇总行仍是 `cards=… verified=…`。
+
+#### 测试与审计（Release）
+
+| 项 | 结果 |
+|---|---|
+| 全量测试 | **208/208** 通过（204 项原有 + 4 项新增；claw / 二择 2 项 XFAIL 保持），98 s |
+| 新增用例 | `卡片:角卡归属需要碎晶的半边（紧列产物）`、`卡片:半边卡输入紧列与真实碎晶`、`卡片:独立角保留碎晶`、`卡片:只有碎晶半边的角改紧列` |
+| `AUDIT`（≤6 层 S） | `total=5440 legal=2126 s=2125 success=2125 legalNonS=1 failures=0 falsePositives=0` |
+| `LAYERAUDIT` | 7 层 `s=4320 success=4320 failures=0`；8 层 `s=12646 success=12646 failures=0` |
+| `NINEAUDIT` | `s=36508 success=36508 failures=0 falsePositives=0 fillBreak=0` |
+| `HALFAUDIT` | `legalNonS=229 halfTargets=2 halfComplete=8 notProducible=223 uncovered=0 problems=0` |
+| n=6/8 语料 | 语料 8 / 9 / 12 全部通过（`failures=0`） |
+
+#### 与任务书描述不一致 / 需要口径裁决的地方
+
+1. **`--cards-col ".T.c"` 的真实工序是构造 H（可见步骤是「顶破」），本来就没有碎晶**。
+   它也不属于任何需要碎晶的半边，本轮原样保留（`TightColumnProduct=false`）。
+   为了验证「独立角保留碎晶」，新增用例改用同样单列、但真实工序是碎晶的 `cT.T.ccc`。
+2. **多刀半边目前不可由求解器构造**：`BuildHalf` 只会返回候选 3（含 1 个 `Cut`）
+   或候选 1 / 2（0 个 `Cut`），所以没有可写的「N 刀半边」验收用例；
+   卡片实现已按 `HalfOrder.Steps` 里的真实 `Cut` 个数泛化（多刀时自动逐刀显示）。
+   `TryBuildMultiCutHalfBreak` 只服务单角 `Build`，且默认 `preferCrystalBreak=true`
+   时也很少命中，故没有在卡片层另写一套多刀求解。
+3. **角卡的可见步骤为空**：属于碎晶半边的角卡只有隐藏的结构 / 旋转步
+   （`构造 A` + `旋转`），没有可见步骤——这是「不显示碎晶」的直接结果；
+   产物本身（紧列 + 双柱）仍由 `CardReplay` 真实核对并通过。
+
+#### 改动文件
+
+| 文件 | 改动 |
+|---|---|
+| `Analysis/CardBuilder.cs` | 先解半边再分组角卡；新增 `HalfNeedsCut` / `ColumnInHalf` / `TryBuildTightCornerCard` / `BuildTightCornerProduct` / `BuildCutHalfCard` / `CountTemporaryBlocks` |
+| `Analysis/WorkOrderCardView.cs` | `HalfMode.FromTightColumns`、`TightColumnProduct`、`InputColumns` |
+| `Analysis/CardReplay.cs` | 隐藏操作 `并半`、`SameColumnShape`，输入使用判定加入 `并半` |
+| `Tests/CardCli.cs` | 角卡「产物 = 紧列 + 双柱」行、半边卡逐刀碎晶行 |
+| `Tests/CardHierarchyTests.cs` | 更新角卡 / 半边卡断言，新增 4 条用例 |
+| `Tests/Program.cs` | 注册 4 条新用例（208 项） |

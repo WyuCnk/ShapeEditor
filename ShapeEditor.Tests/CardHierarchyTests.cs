@@ -31,6 +31,20 @@ internal static class CardHierarchyTests
     /// <summary>n = 6 的稠密样例（语料 8 的交换链目标，每列都有材料）。</summary>
     private const string DenseSix = "CrCgCbCcCmCy";
 
+    /// <summary>
+    /// 用户给的角1产物短代码（2026-11-20 裁定）：
+    /// Q1 = <c>cTccTcPT</c> + 右柱 Q2 / 左柱 Q4，Q3 空。
+    /// </summary>
+    private const string UserCornerOneOutput =
+        "crCu--Cu:CuCu--Cu:crCu--Cu:crCu--Cu:CuCu--Cu:crCu--Cu:P-Cu--Cu:CuCu--Cu";
+
+    /// <summary>
+    /// 用户给的角2产物短代码（2026-11-20 裁定）：
+    /// Q1 = <c>TTTcTccc</c> + 右柱 Q2 / 左柱 Q4，Q3 空。
+    /// </summary>
+    private const string UserCornerTwoOutput =
+        "CuCu--Cu:CuCu--Cu:CuCu--Cu:crCu--Cu:CuCu--Cu:crCu--Cu:crCu--Cu:crCu--Cu";
+
     #region NormalizeToQ1
 
     /// <summary>n = 4：目标列在 Q3 / Q2 时都旋回 Q1，右柱 Q2、左柱 Q4。</summary>
@@ -262,10 +276,23 @@ internal static class CardHierarchyTests
 
                 Assert.Equal(parts, target.PartCount, "角卡象限数必须与目标一致");
 
-                Assert.Equal(
-                    ShapeSignature.ColumnText(target, card.Column),
-                    ShapeSignature.ColumnText(card.Output, 0),
-                    "角卡 Q1 必须是该角的目标列（" + card.Title + "）");
+                if (card.TightColumnProduct)
+                {
+                    /*
+                     * 属于需要碎晶的半边：产物 = 该列在半边前态里的【紧列】+ 双柱，
+                     * 不再是目标列本身（用户裁定 2026-11-20）。
+                     */
+                    Assert.True(
+                        ShapeSignature.IsTightColumn(card.Output, 0),
+                        card.Title + " 的 Q1 必须是半边前态里的紧列");
+                }
+                else
+                {
+                    Assert.Equal(
+                        ShapeSignature.ColumnText(target, card.Column),
+                        ShapeSignature.ColumnText(card.Output, 0),
+                        "独立角卡的 Q1 必须是该角的目标列（" + card.Title + "）");
+                }
 
                 Assert.True(
                     ShapeNormalization.PillarsAreGrounded(
@@ -310,7 +337,31 @@ internal static class CardHierarchyTests
                     continue;
                 }
 
-                Assert.Equal(0, card.Inputs.Count, "B 类半边卡不给输入（前态是卡内私有的）");
+                if (card.Mode == HalfMode.FromTightColumns)
+                {
+                    /* 输入 = 该半边各列的紧列（角卡产物），碎晶步必须逐刀真实。 */
+                    Assert.True(card.Inputs.Count > 0, "碎晶半边卡必须有紧列输入");
+                    Assert.Equal(
+                        card.Inputs.Count,
+                        card.InputColumns.Count,
+                        "输入与输入列映射数量必须一致");
+
+                    Assert.True(
+                        card.VisibleSteps.Count(step => step.Operation == "碎晶") >= 1,
+                        card.Title + " 必须至少有一个可见碎晶步");
+
+                    Assert.False(
+                        card.Steps.Any(step =>
+                            step.Operation == "碎晶" && step.Hidden),
+                        card.Title + " 的碎晶步不能隐藏");
+                }
+                else
+                {
+                    Assert.Equal(
+                        0,
+                        card.Inputs.Count,
+                        "整半边卡（候选 1 / 2）不给输入（前态是卡内私有的）");
+                }
 
                 ShapeDocument? previous = null;
 
@@ -351,6 +402,192 @@ internal static class CardHierarchyTests
                     ShapeOps.Same(previous, card.Output),
                     card.Title + " 的最后一步必须就是半边产物");
             }
+        }
+    }
+
+    /// <summary>
+    /// 用户裁定（2026-11-20）第一条：碎晶归半边卡。
+    /// 属于需要碎晶的半边（半边1）的角1 / 角2，产物必须是
+    /// 「该列在<b>半边前态</b>里的紧列 + 左右双柱」，且没有可见碎晶步。
+    /// </summary>
+    public static void HalfOwnedCornersUseHalfPreStateTightColumns()
+    {
+        ShapeDocument target = Parse(UserExampleHalfOnly);
+
+        WorkOrderCardSet set = CardBuilder.Build(target);
+
+        WorkOrderCardView corner1 = set.CornerCards.Single(card => card.Column == 0);
+        WorkOrderCardView corner2 = set.CornerCards.Single(card => card.Column == 1);
+
+        foreach (WorkOrderCardView corner in new[] { corner1, corner2 })
+        {
+            Assert.True(
+                corner.TightColumnProduct,
+                corner.Title + " 属于需要碎晶的半边，产物应是紧列 + 双柱");
+            Assert.True(corner.Verified, corner.Title + " 应通过真实回放：" + corner.Note);
+            Assert.True(
+                ShapeSignature.IsTightColumn(corner.Output, 0),
+                corner.Title + " 的 Q1 必须是紧列");
+            Assert.False(
+                corner.VisibleSteps.Any(step => step.Operation == "碎晶"),
+                corner.Title + " 的可见步骤里不能再有碎晶（碎晶归半边卡）");
+        }
+
+        /* 逐格：Q1 = 用户给的短代码，整张卡的短代码也逐格一致。 */
+        Assert.Equal(
+            "cTccTcPT",
+            ShapeSignature.ColumnText(corner1.Output, 0),
+            "角1 的 Q1 必须是半边前态里的紧列");
+
+        Assert.Equal(
+            "TTTcTccc",
+            ShapeSignature.ColumnText(corner2.Output, 0),
+            "角2 的 Q1 必须是半边前态里的紧列");
+
+        Assert.Equal(
+            UserCornerOneOutput,
+            new ShortCodeExporter().Export(corner1.Output),
+            "角1 产物短代码必须与用户给定的逐格一致");
+
+        Assert.Equal(
+            UserCornerTwoOutput,
+            new ShortCodeExporter().Export(corner2.Output),
+            "角2 产物短代码必须与用户给定的逐格一致");
+    }
+
+    /// <summary>
+    /// 半边1：输入 = 两张角卡的紧列产物；卡内 1 个真实 Cut 步（该半边单刀）；
+    /// 输出 = 目标半边（与目标的那 k 列逐格一致）。
+    /// </summary>
+    public static void HalfCardUsesTightColumnInputsAndRealCuts()
+    {
+        ShapeDocument target = Parse(UserExampleHalfOnly);
+
+        WorkOrderCardSet set = CardBuilder.Build(target);
+
+        WorkOrderCardView half1 = set.HalfCards[0];
+
+        Assert.Equal(HalfMode.FromTightColumns, half1.Mode, "半边1 应走碎晶半边卡");
+        Assert.True(half1.Verified, "半边1 应通过真实回放：" + half1.Note);
+
+        Assert.Equal(2, half1.Inputs.Count, "半边1 应有两张紧列输入");
+        Assert.Equal(2, half1.InputColumns.Count, "输入列映射数量必须一致");
+
+        Assert.Equal("角1", half1.InputTitles[0]);
+        Assert.Equal("角2", half1.InputTitles[1]);
+
+        WorkOrderCardView corner1 = set.CornerCards.Single(card => card.Column == 0);
+        WorkOrderCardView corner2 = set.CornerCards.Single(card => card.Column == 1);
+
+        Assert.True(
+            ShapeOps.Same(half1.Inputs[0], corner1.Output),
+            "输入[0] 必须就是角1 的产物");
+        Assert.True(
+            ShapeOps.Same(half1.Inputs[1], corner2.Output),
+            "输入[1] 必须就是角2 的产物");
+
+        CardStep assembly = half1.Steps.First(step => step.Operation == "并半");
+        CardStep[] cuts = half1.VisibleSteps
+            .Where(step => step.Operation == "碎晶")
+            .ToArray();
+
+        Assert.Equal(1, cuts.Length, "该半边是单刀：半边卡应有 1 个碎晶步");
+
+        Assert.True(
+            ReplayCutInTest(assembly.Output, cuts[0].Output),
+            "半边卡的碎晶步必须用真实 Cut 重算出来");
+
+        Assert.True(
+            ShapeOps.Same(cuts[0].Output, half1.Output),
+            "碎晶落定后必须就是半边卡输出");
+
+        ShapeDocument expected = ShapeOps.Project(target, 0, target.PartCount / 2);
+
+        Assert.True(
+            ShapeOps.Same(half1.Output, expected),
+            "半边1 输出必须等于目标的前 k 列");
+    }
+
+    /// <summary>
+    /// 独立角（不参与任何需要碎晶的半边）保持原样：
+    /// 角卡 = 紧列 → 碎晶 → 目标角 + 双柱，可见步骤里仍有真实碎晶。
+    ///
+    /// <para>
+    /// 注意：<c>.T.c</c> 这个单列本身是构造 H（可见步骤是「顶破」）——它没有碎晶，
+    /// 也不属于任何需要碎晶的半边，所以卡片原样保留。真正验证「独立角保留碎晶」
+    /// 用的是同样单列、但真实工序是碎晶的 <c>cT.T.ccc</c>。
+    /// </para>
+    /// </summary>
+    public static void IndependentCornersKeepCrystalBreak()
+    {
+        ShapeDocument target = BuildColumn("cT.T.ccc", parts: 4);
+
+        WorkOrderCardSet set = CardBuilder.Build(target);
+
+        WorkOrderCardView corner = set.CornerCards.Single();
+
+        Assert.False(corner.TightColumnProduct, "独立角不应被改成紧列产物");
+        Assert.True(corner.Verified, "独立角应通过真实回放：" + corner.Note);
+
+        CardStep[] cuts = corner.VisibleSteps
+            .Where(step => step.Operation == "碎晶")
+            .ToArray();
+
+        Assert.True(cuts.Length >= 1, "独立角必须保留碎晶步");
+
+        ShapeDocument? previous = null;
+
+        foreach (CardStep step in corner.Steps)
+        {
+            if (step.Operation == "碎晶")
+            {
+                Assert.True(previous is not null, "碎晶步必须有输入");
+                Assert.True(
+                    ReplayCutInTest(previous!, step.Output),
+                    "独立角的碎晶步必须用真实 Cut 重算出来");
+            }
+
+            previous = step.Output;
+        }
+
+        /* `.T.c`：独立角、构造 H（顶破），不属于任何需要碎晶的半边，卡片保持不变。 */
+        WorkOrderCardSet dotTc = CardBuilder.Build(BuildColumn(".T.c", parts: 4));
+
+        WorkOrderCardView dotCorner = dotTc.CornerCards.Single();
+
+        Assert.False(dotCorner.TightColumnProduct, ".T.c 不应被改成紧列产物");
+        Assert.True(dotCorner.Verified, ".T.c 角卡应通过真实回放：" + dotCorner.Note);
+        Assert.True(
+            dotCorner.VisibleSteps.Any(step => step.Operation == "顶破"),
+            ".T.c 的真实工序是构造 H（顶破），卡片应原样保留");
+    }
+
+    /// <summary>
+    /// 只有「需要碎晶的半边」里的角才改成紧列产物：
+    /// 两个半边都能做的样例里，另一半（Q3/Q4）的角卡保持独立角路径。
+    /// </summary>
+    public static void OnlyCutHalfCornersBecomeTight()
+    {
+        ShapeDocument target = Parse(UserExampleBothHalves);
+
+        WorkOrderCardSet set = CardBuilder.Build(target);
+
+        Assert.Equal(HalfMode.FromTightColumns, set.HalfCards[0].Mode, "半边1 需要碎晶");
+        Assert.Equal(HalfMode.WholeHalf, set.HalfCards[1].Mode, "半边2 不需要碎晶");
+
+        Assert.True(
+            set.CornerCards.Where(card => card.Column is 0 or 1)
+                .All(card => card.TightColumnProduct),
+            "半边1 的角卡应是紧列产物");
+
+        Assert.True(
+            set.CornerCards.Where(card => card.Column is 2 or 3)
+                .All(card => !card.TightColumnProduct),
+            "独立角（半边2 不需要碎晶）应保持原样");
+
+        foreach (WorkOrderCardView card in set.Cards)
+        {
+            Assert.True(card.Verified, card.Title + " 应通过真实回放：" + card.Note);
         }
     }
 
@@ -450,6 +687,27 @@ internal static class CardHierarchyTests
         }
 
         return false;
+    }
+
+    /// <summary>按「一列文本 + 象限数」造一个只有第 1 象限有材料的图形。</summary>
+    private static ShapeDocument BuildColumn(
+        string text,
+        int parts)
+    {
+        var document = new ShapeDocument(text.Length, parts);
+
+        for (int layer = 0; layer < text.Length; layer++)
+        {
+            document[layer, 0] = text[layer] switch
+            {
+                ShapeSignature.CrystalCode => ShapeCell.Crystal('r'),
+                ShapeSignature.PinCode => ShapeCell.Pin(),
+                ShapeSignature.SolidCode => ShapeCell.Shape('C', 'u'),
+                _ => ShapeCell.Empty()
+            };
+        }
+
+        return document;
     }
 
     private static int NonEmptyColumns(

@@ -46,6 +46,7 @@ public static class CardReplay
     public static readonly IReadOnlyList<string> KnownOperations = new[]
     {
         "前态",
+        "并半",
         "构造 A",
         "旋转",
         "碎晶",
@@ -123,6 +124,64 @@ public static class CardReplay
                     }
 
                     break;
+
+                case "并半":
+                {
+                    /*
+                     * 半边卡的起点：把各列的「紧列」（角卡产物）拼进半边前态。
+                     * 真实核对：每张输入的 Q1 必须逐格等于本步产物在 InputColumns[i]
+                     * 上的那一列——证明半边前态真的用了这些角卡产物，而不是另画一份。
+                     */
+                    if (index != 1)
+                    {
+                        collected.Add(label + "并半只能是卡片的第一步。");
+                        break;
+                    }
+
+                    if (step.InputIndex >= 0)
+                    {
+                        collected.Add(label + "并半不取单张输入（它要读完整个输入链）。");
+                        break;
+                    }
+
+                    if (card.Inputs.Count != card.InputColumns.Count)
+                    {
+                        collected.Add(
+                            label + "输入与输入列映射数量不一致（" +
+                            card.Inputs.Count + " vs " + card.InputColumns.Count + "）。");
+                        break;
+                    }
+
+                    bool assemblyOk = true;
+
+                    for (int inputIndex = 0; inputIndex < card.Inputs.Count; inputIndex++)
+                    {
+                        int column = card.InputColumns[inputIndex];
+
+                        if (column < 0 || column >= step.Output.PartCount)
+                        {
+                            collected.Add(
+                                label + $"第 {inputIndex + 1} 张输入的列号 {column} 越界。");
+                            assemblyOk = false;
+                            continue;
+                        }
+
+                        if (!SameColumnShape(card.Inputs[inputIndex], 0, step.Output, column))
+                        {
+                            collected.Add(
+                                label + $"第 {inputIndex + 1} 张输入的紧列没有逐格进入第 " +
+                                (column + 1) + " 象限的前态。");
+                            assemblyOk = false;
+                        }
+                    }
+
+                    if (assemblyOk && card.Inputs.Count == 0)
+                    {
+                        collected.Add(label + "并半没有任何输入。");
+                    }
+
+                    break;
+                }
 
                 case "构造 A":
                     if (step.InputIndex >= 0 || index != 1)
@@ -382,7 +441,8 @@ public static class CardReplay
         if (card.Inputs.Count > 0)
         {
             bool used = card.Steps.Any(step => step.InputIndex >= 0) ||
-                        card.Steps.Count > 0 && card.Steps[0].Operation == "交换";
+                        card.Steps.Count > 0 &&
+                        card.Steps[0].Operation is "交换" or "并半";
 
             if (!used)
             {
@@ -604,6 +664,50 @@ public static class CardReplay
         }
 
         reason = string.Empty;
+        return true;
+    }
+
+    /// <summary>
+    /// 两份形态的两列逐格相等：<paramref name="left"/> 的第
+    /// <paramref name="leftColumn"/> 列 vs <paramref name="right"/> 的第
+    /// <paramref name="rightColumn"/> 列（类型 / 形状码 / 颜色）。
+    /// 「并半」用它核对「输入的 Q1 紧列真的进了前态的那一列」。
+    /// </summary>
+    public static bool SameColumnShape(
+        ShapeDocument? left,
+        int leftColumn,
+        ShapeDocument? right,
+        int rightColumn)
+    {
+        if (left is null || right is null)
+        {
+            return false;
+        }
+
+        if (leftColumn < 0 || leftColumn >= left.PartCount ||
+            rightColumn < 0 || rightColumn >= right.PartCount)
+        {
+            return false;
+        }
+
+        int layers = Math.Max(left.LayerCount, right.LayerCount);
+
+        for (int layer = 0; layer < layers; layer++)
+        {
+            ShapeCell a = layer < left.LayerCount
+                ? left[layer, leftColumn]
+                : ShapeCell.Empty();
+
+            ShapeCell b = layer < right.LayerCount
+                ? right[layer, rightColumn]
+                : ShapeCell.Empty();
+
+            if (!ShapeOps.SameCell(a, b))
+            {
+                return false;
+            }
+        }
+
         return true;
     }
 

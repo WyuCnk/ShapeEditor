@@ -325,6 +325,10 @@ internal static class Program
             ("卡片:角卡数量与真实回放", CardHierarchyTests.CardCountsAndReplayForUserExamples),
             ("卡片:角卡产物固定 Q1", CardHierarchyTests.CornerCardOutputsAreFixedAtQ1),
             ("卡片:半边卡真实回放", CardHierarchyTests.HalfCardsReplayWithRealPhysics),
+            ("卡片:角卡归属需要碎晶的半边（紧列产物）", CardHierarchyTests.HalfOwnedCornersUseHalfPreStateTightColumns),
+            ("卡片:半边卡输入紧列与真实碎晶", CardHierarchyTests.HalfCardUsesTightColumnInputsAndRealCuts),
+            ("卡片:独立角保留碎晶", CardHierarchyTests.IndependentCornersKeepCrystalBreak),
+            ("卡片:只有碎晶半边的角改紧列", CardHierarchyTests.OnlyCutHalfCornersBecomeTight),
             ("卡片:n=6 六角两层", CardHierarchyTests.SixQuadrantCardsAreComplete),
             ("卡片:校验失败降级", CardHierarchyTests.FailedCardsDropInputsAndExplain)
         };

@@ -213,6 +213,12 @@ internal static class CardCli
                 "    " + label + " = " + ShapeSignature.ColumnText(card.Output, part));
         }
 
+        if (card.TightColumnProduct)
+        {
+            Console.WriteLine(
+                "  产物 = 紧列 + 双柱（该列在半边前态里的形态；碎晶归半边卡，本卡无碎晶步）");
+        }
+
         CardStep? preState = card.Steps.FirstOrDefault(
             step => step.Operation == "前态");
 
@@ -251,7 +257,21 @@ internal static class CardCli
             Console.WriteLine("  前态：" + new ShortCodeExporter().Export(preState.Output));
         }
 
-        Console.WriteLine("  步骤：" + DescribeSteps(card));
+        var cuts = card.VisibleSteps
+            .Where(step => step.Operation == "碎晶")
+            .ToArray();
+
+        Console.WriteLine("  步骤：" + (cuts.Length > 1
+            ? "碎晶 × " + cuts.Length
+            : DescribeSteps(card)));
+
+        for (int index = 0; index < cuts.Length; index++)
+        {
+            Console.WriteLine(
+                "  碎晶第 " + (index + 1) + " 步（真实 Cut） = " +
+                new ShortCodeExporter().Export(cuts[index].Output));
+        }
+
         PrintHidden(card);
         Console.WriteLine("  输出 = " + new ShortCodeExporter().Export(card.Output));
         PrintNote(card);
