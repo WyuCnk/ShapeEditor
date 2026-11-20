@@ -105,8 +105,9 @@ public sealed record ProductionPathGraphEdge(
 /// （没有上游、直接汇入目标的半边节点），为了让这个节点落在交换卡片正上方
 /// （箭头是短竖线，而不是从第一行斜着横跨整张图的长箭头），
 /// 该层改为「半边节点并排居中到目标列，其余节点按上游节点所在列摆放后向外推开」。
-/// 两侧都需要半边时两个半边节点因此左右对称地并排在同一层，
-/// 只有一侧需要时它正好压在目标列上。
+/// 两侧都需要半边时两个半边节点因此左右对称地并排在同一层，并按标题里的编号
+/// 从左到右排列（半边1 在左、半边2 在右）；只有一侧需要时它正好压在目标列上，
+/// 另一侧的半边节点按编号站到它左边或右边。
 /// </para>
 /// </summary>
 public sealed class ProductionPathGraph
@@ -388,8 +389,11 @@ public sealed class ProductionPathGraph
     /// </para>
     /// <list type="bullet">
     /// <item>半边节点先并排居中到目标列：一个半边时正好压在中线上（箭头是短竖线），
-    /// 两个半边时左右对称地并排在同一层；</item>
+    /// 两个半边时左右对称地并排在同一层；这一组内部按标题里的「半边N」编号
+    /// 从左到右排（半边1 在左、半边2 在右），不依赖 Core 给的 Steps 顺序；</item>
     /// <item>其余节点先按上游节点所在列摆放，再向远离中线的一侧推开，彼此至少留 <see cref="ColumnGap"/>。
+    /// 如果其余节点自己也是「半边N」（混合粒度下普通角工序一侧的末步），
+    /// 则按编号站队：编号小于半边组的一律在左、大于的一律在右，避免被上游列带到反侧。
     /// 于是普通角工序一侧的展开节点仍挂在原来的列下方，不会被半边节点挤到别处。</item>
     /// </list>
     /// </summary>
@@ -454,6 +458,20 @@ public sealed class ProductionPathGraph
 
         var lefts = new double[row.Count];
 
+        /*
+         * 第 0 步：半边节点按标题里的编号从左到右排（半边1 在左、半边2 在右）。
+         * Core 给出的 Steps 顺序理论上是「左半边、右半边」，但排版只能认标题里的编号：
+         * 一旦 Steps 顺序或编号与几何位置对不上，这里就按编号重排 X 位置。
+         */
+        starts.Sort((first, second) =>
+        {
+            int firstNumber = HalfNodeNumber(row[first]) ?? int.MaxValue;
+            int secondNumber = HalfNodeNumber(row[second]) ?? int.MaxValue;
+            int byNumber = firstNumber.CompareTo(secondNumber);
+
+            return byNumber != 0 ? byNumber : first.CompareTo(second);
+        });
+
         // 第 1 步：半边节点并排居中到目标列。
         double groupWidth = ColumnGap * (starts.Count - 1);
 
@@ -474,6 +492,10 @@ public sealed class ProductionPathGraph
         }
 
         double groupRight = groupLeft + groupWidth;
+
+        // 半边组按编号排序后的首尾编号：其余半边节点据此判断该站左边还是右边。
+        int? groupFirstNumber = HalfNodeNumber(row[starts[0]]);
+        int? groupLastNumber = HalfNodeNumber(row[starts[^1]]);
 
         // 第 2 步：其余节点先按上游节点所在列摆，再按「在中线哪一侧」向外推开。
         var leftSide = new List<int>();
@@ -501,7 +523,37 @@ public sealed class ProductionPathGraph
 
             lefts[index] = desiredCenter - row[index].Width / 2;
 
-            if (desiredCenter < 0)
+            /*
+             * 带「半边N」编号的节点按编号站队：编号比半边组小的一律放中线左侧，
+             * 比半边组大的一律放右侧。混合粒度下普通角工序一侧的末步叫「半边1/半边2」，
+             * 它的上游交换节点可能因为同层还有废料而整体偏到中线的另一侧；
+             * 只按父节点中心决定左右会把这个半边节点排到另一个半边节点前面，
+             * 也就是用户截图里的「左边半边2、右边半边1」。
+             */
+            int? halfNumber = HalfNodeNumber(row[index]);
+
+            if (halfNumber is { } number &&
+                groupFirstNumber is { } firstNumber &&
+                groupLastNumber is { } lastNumber)
+            {
+                if (number < firstNumber)
+                {
+                    leftSide.Add(index);
+                }
+                else if (number > lastNumber)
+                {
+                    rightSide.Add(index);
+                }
+                else if (desiredCenter < 0)
+                {
+                    leftSide.Add(index);
+                }
+                else
+                {
+                    rightSide.Add(index);
+                }
+            }
+            else if (desiredCenter < 0)
             {
                 leftSide.Add(index);
             }
@@ -552,6 +604,38 @@ public sealed class ProductionPathGraph
         }
 
         return lefts;
+    }
+
+    /// <summary>
+    /// 节点标题里的「半边N」编号（例如「制作半边1」「制作半边2」「半边1」「半边2」）；
+    /// 标题没有半边编号时返回 null，排布仍然按上游节点所在列决定左右。
+    /// </summary>
+    private static int? HalfNodeNumber(
+        ProductionPathGraphNode node)
+    {
+        const string Marker = "半边";
+
+        int index = node.Title.IndexOf(Marker, StringComparison.Ordinal);
+
+        if (index < 0)
+        {
+            return null;
+        }
+
+        index += Marker.Length;
+
+        int start = index;
+
+        while (index < node.Title.Length &&
+            char.IsAsciiDigit(node.Title[index]))
+        {
+            index++;
+        }
+
+        return index > start &&
+            int.TryParse(node.Title[start..index], out int number)
+            ? number
+            : null;
     }
 
     private static double RowHeight(
