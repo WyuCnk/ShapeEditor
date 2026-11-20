@@ -1822,6 +1822,205 @@ internal static class ProductionPathAcceptanceTests
             "旧交换链的废料第 3 象限是辅助柱；本测试锁定的正是它与空半边的差异");
     }
 
+    /// <summary>
+    /// 「一半只占最底层」的目标：废料必须是真实 Exchange 的副产物（2026-11-20 用户第二个反例）。
+    ///
+    /// <para>
+    /// 用户图形 8 层：q1 = <c>cT.T.cPT</c>、q2 = <c>TTTT.ccc</c>、
+    /// q3 = q4 = <c>c.......</c>（只有最底层一颗晶体，其余全空）。它不满足上一轮的
+    /// 「一整半全空」，所以管线仍先命中交换链；交换链的末次交换输入带辅助柱，
+    /// 废料是两根满高辅助柱拼成的「全普通形状」，在目标本来空着的 17 个格子上显示材料。
+    /// </para>
+    /// <para>
+    /// 现在的判据：没有尾部 + 目标有一半只占最底层 + 交换链废料确实越出目标 ⇒
+    /// 改走半边装配。两条输入就是目标的两个半边本身，
+    /// 废料 = <see cref="ShapeExchange.Exchange"/> 的第一路输出（逐格为空）。
+    /// </para>
+    /// <para>
+    /// <b>不是「两半都能 BuildHalf 就一律重排」</b>：判据还要求废料越出目标，
+    /// 所以铺满的目标（见 <see cref="DenseTargetsKeepExchangeChain"/>）保持交换链。
+    /// </para>
+    /// </summary>
+    public static void FlatHalfWasteIsRealExchangeByproduct()
+    {
+        ShapeDocument target = Parse(
+            "crCucrcr:CuCu----:--Cu----:CuCu----:--------:crcr----:P-cr----:Cucr----",
+            8,
+            4);
+
+        // 先锁死目标本身：解析结果必须与用户给出的四列逐格一致。
+        Assert.Equal("cT.T.cPT", ShapeSignature.ColumnText(target, 0));
+        Assert.Equal("TTTT.ccc", ShapeSignature.ColumnText(target, 1));
+        Assert.Equal("c.......", ShapeSignature.ColumnText(target, 2));
+        Assert.Equal("c.......", ShapeSignature.ColumnText(target, 3));
+
+        PipelineResult solved = ProductionPipeline.Solve(target, 8);
+
+        Assert.Equal(PipelineOutcome.Producible, solved.Outcome);
+        Assert.True(solved.Recipe is not null, "可制作时必须给出 Recipe");
+        Assert.Equal(RecipeKind.HalfAssembly, solved.Recipe!.Kind);
+
+        Recipe recipe = solved.Recipe;
+        RecipeStep wasteStep = recipe.Steps[^1];
+
+        Assert.Equal(4, recipe.Steps.Count);
+        Assert.Equal("废料", wasteStep.Title);
+        Assert.True(wasteStep.IsWaste, "最后一步必须标记为废料");
+
+        // 废料 = 被舍弃的另一半：四列全空（第 3、4 象限当然也为空）。
+        Assert.True(
+            ShapeOps.Same(wasteStep.Shape, new ShapeDocument(8, 4)),
+            "废料应逐格为空：" + string.Join(" | ", ColumnTexts(wasteStep.Shape)));
+
+        Assert.Equal("........", ShapeSignature.ColumnText(wasteStep.Shape, 2));
+        Assert.Equal("........", ShapeSignature.ColumnText(wasteStep.Shape, 3));
+
+        // 目标步 = 原图形（四列逐格）。
+        Assert.True(
+            ShapeOps.Same(recipe.Steps[^2].Shape, target),
+            "交换得到目标这一步必须逐格等于原图形");
+
+        // 真实 Exchange 回放：两条输入 → 目标 + 废料，逐格核对。
+        HalfAssemblyDetails details = recipe.HalfAssembly!;
+
+        (ShapeDocument? first, ShapeDocument? second, string? error) =
+            ShapeExchange.Exchange(details.LeftInput, details.RightInput);
+
+        Assert.True(
+            first is not null && second is not null,
+            error ?? "末次交换失败");
+
+        int parts = target.PartCount;
+        int half = parts / 2;
+        int rotation = details.Direction == 0
+            ? ShapeOps.Wrap(-details.Axis, parts)
+            : ShapeOps.Wrap(half - details.Axis, parts);
+
+        ShapeDocument rawProduct = details.Direction == 0 ? second! : first!;
+        ShapeDocument rawWaste = details.Direction == 0 ? first! : second!;
+
+        ShapeDocument product = ShapeOps.Rotate(rawProduct, -rotation);
+        ShapeDocument realWaste = ShapeOps.Rotate(rawWaste, -rotation);
+
+        if (details.FinalRotation != 0)
+        {
+            product = ShapeOps.Rotate(product, details.FinalRotation);
+            realWaste = ShapeOps.Rotate(realWaste, details.FinalRotation);
+        }
+
+        Assert.True(product.LayerCount == target.LayerCount &&
+                    ShapeOps.Same(product, target),
+                    "真实交换的所需输出应逐格等于目标");
+
+        Assert.True(
+            ShapeOps.Same(realWaste, wasteStep.Shape),
+            "配方废料必须逐格等于真实 Exchange 的另一路输出");
+
+        // 解析器的废料节点直接取 Steps[^1].Shape。
+        ProductionPathResult parsed = ProductionPathParser.FromRecipe(recipe);
+
+        Assert.True(parsed.IsProducible, parsed.Error ?? "节点链应可展示");
+
+        ProductionNode wasteNode = parsed.Path!.Nodes.Single(
+            node => node.Kind == ProductionNodeKind.Waste);
+
+        Assert.True(
+            ShapeOps.Same(wasteNode.Shape, wasteStep.Shape),
+            "解析器的废料节点应逐格等于配方最后一步");
+
+        /*
+         * 诚实记录：交换链本身也能做这个整图；它的废料是两根满高辅助柱，
+         * 与半边装配的「空废料」不同。旧行为（交换链优先）会让这条测试失败。
+         */
+        Assert.True(
+            ExchangeChain.TryBuild(target, out Recipe? chain),
+            "该图形交换链本身可做（记录旧行为，不是本测试的通过条件）");
+
+        Assert.True(
+            chain is not null &&
+            chain.Steps[^1].Shape[2, 2].Type != CellType.Empty,
+            "旧交换链的废料第 3 象限是辅助柱；本测试锁定的正是它与空半边的差异");
+
+        Assert.False(
+            ShapeOps.Same(chain!.Steps[^1].Shape, wasteStep.Shape),
+            "交换链废料与半边装配废料必须确实不同（否则这条用例没有区分度）");
+
+        /*
+         * 交换链的废料本身也是真实 Exchange 的另一路输出（不是占位）：
+         * 末次交换的两条输入就是 Chain.Exchange.Left.Result / Right.Result。
+         */
+        (ShapeDocument? chainFirst, ShapeDocument? chainSecond, string? chainError) =
+            ShapeExchange.Exchange(
+                chain.Exchange!.Left.Result,
+                chain.Exchange.Right.Result);
+
+        Assert.True(
+            chainFirst is not null && chainSecond is not null,
+            chainError ?? "交换链末次交换重算失败");
+
+        Assert.True(
+            ShapeOps.Same(chainFirst, chain.Steps[^1].Shape) ||
+            ShapeOps.Same(chainSecond, chain.Steps[^1].Shape),
+            "交换链废料必须逐格等于末次真实 Exchange 的某一输出");
+    }
+
+    /// <summary>
+    /// 反向围栏：铺满的目标即使两半都能 BuildHalf，也必须保持交换链。
+    ///
+    /// <para>
+    /// 2026-11-20 第二个反例的修法有一个容易过宽的方向：只要
+    /// <see cref="HalfAssembly.TryBuild"/> 成功就改走半边装配。那样单层 / 双层
+    /// 全铺满的图形都会被重排，现有解析器用例（交换链方向、16 节点图）也会全部失效。
+    /// 现在的判据额外要求「交换链废料在目标空位上有材料」，铺满目标不满足，所以不重排。
+    /// </para>
+    /// </summary>
+    public static void DenseTargetsKeepExchangeChain()
+    {
+        var cases = new (string Code, int Layers, int Parts)[]
+        {
+            // 单层满铺：两半都只有第 1 层，但目标没有空位，废料不越界。
+            ("CrCgCbCc", 1, 4),
+            ("CrCgCbCcCmCy", 1, 6),
+            // 双层满铺：两半都能由半边工序得到，但目标仍然没有空位。
+            ("CuCuCuCu:CuCuCuCu", 2, 4)
+        };
+
+        foreach ((string code, int layers, int parts) in cases)
+        {
+            ShapeDocument target = Parse(code, layers, parts);
+
+            Assert.True(
+                HalfAssembly.TryBuild(target, layers, out _, out string halfNote),
+                $"{code} 的两半应能由半边工序得到：" + halfNote);
+
+            PipelineResult solved = ProductionPipeline.Solve(target, layers);
+
+            Assert.Equal(PipelineOutcome.Producible, solved.Outcome);
+            Assert.True(solved.Recipe is not null);
+            Assert.Equal(RecipeKind.Exchange, solved.Recipe!.Kind);
+
+            // 铺满目标的交换链废料即使全是柱子，也一格都不越出目标。
+            RecipeStep waste = solved.Recipe.Steps[^1];
+
+            Assert.True(waste.IsWaste);
+
+            for (int layer = 0; layer < target.LayerCount; layer++)
+            {
+                for (int part = 0; part < target.PartCount; part++)
+                {
+                    if (waste.Shape[layer, part].Type == CellType.Empty)
+                    {
+                        continue;
+                    }
+
+                    Assert.True(
+                        target[layer, part].Type != CellType.Empty,
+                        $"{code} 的交换链废料不应越出铺满的目标（第 {layer + 1} 层第 {part + 1} 象限）");
+                }
+            }
+        }
+    }
+
     /// <summary>按固定种子找一个「每列合法 + 稳定 + 交换链失败 + 管线未覆盖」的样本。</summary>
     private static ShapeDocument FindChainFailingSample(
         int parts,

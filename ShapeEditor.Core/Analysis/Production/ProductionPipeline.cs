@@ -124,33 +124,68 @@ public static class ProductionPipeline
         notes.Add($"cap = {cap}；目标文档 {target.LayerCount} 层；核心沿用 {core.LayerCount} 层。");
 
         /*
-         * 目标有一整半全空、且没有尾部（最高晶体已在顶层）时，优先半边装配。
+         * 没有尾部（最高晶体已在顶层）时，先真实算一遍交换链，再决定用哪条配方。
          *
-         * 交换链在这种目标上仍会用「半边 + 另一侧的辅助柱」当末次交换的输入，
-         * 于是末次交换的另一路输出（废料）是两根辅助柱拼成的「全普通形状」——
-         * 它确实是那次交换的真实副产物，但显示的却是柱子，不是目标被舍弃的另一半。
-         * 半边装配把「半边1 + 空半边2」真正送进 Exchange：
-         * 两条输入 → 目标 + 空废料，废料逐格等于被舍弃的那一半。
-         * 见 TODO.md §7.32。
+         * 交换链的末次交换输入是「半边 + 另一侧的辅助柱」，所以另一路输出（废料）
+         * 是辅助柱拼成的「全普通形状」。这确实是那次 Exchange 的真实副产物，
+         * 但当目标有一半只占最底层（例如 q3 = q4 = `c.......`）时，废料会在
+         * 目标本来空着的格子上显示满柱，和用户看到的半边对不上。
+         *
+         * 判据（只影响「交换链能做、半边装配也能做」的目标）：
+         *   1. 两半都能由 BuildHalf 得到（HalfAssembly.TryBuild 成功）；
+         *   2. 目标有一半只占最底层（HasFlatHalf；上一轮的「整半全空」是它的特例）；
+         *   3. 交换链废料里确实有目标空位上的材料（WasteOutsideTarget > 0）。
+         * 满足时改走半边装配：两条输入就是目标的两个半边本身，
+         * 废料 = ShapeExchange.Exchange(LeftInput, RightInput) 的第一路输出，
+         * 也就是「被舍弃的另一半」（逐格为空），不是辅助柱占位。
+         * 见 TODO.md §7.33。
          */
-        if (tail is null &&
-            HasEmptyHalf(core) &&
-            HalfAssembly.TryBuild(
-                core,
-                core.LayerCount,
-                out Recipe? emptyHalfRecipe,
-                out string emptyHalfNote) &&
-            emptyHalfRecipe is not null)
-        {
-            notes.Add(emptyHalfNote);
-            notes.Add(
-                $"rank = {emptyHalfRecipe.Rank}，节点数 = {emptyHalfRecipe.CountNodes()}。");
+        bool chainAttempted = false;
 
-            return PipelineResult.Producible(emptyHalfRecipe, notes);
+        if (tail is null &&
+            HasFlatHalf(core) &&
+            HasEmptyCell(core))
+        {
+            chainAttempted = true;
+
+            if (ExchangeChain.TryBuild(core, out Recipe? chainRecipe) &&
+                chainRecipe is not null)
+            {
+                int wasteOutside = CountWasteOutsideTarget(chainRecipe, core);
+
+                if (wasteOutside > 0 &&
+                    HalfAssembly.TryBuild(
+                        core,
+                        core.LayerCount,
+                        out Recipe? halfRecipe,
+                        out _) &&
+                    halfRecipe is not null)
+                {
+                    HalfAssemblyDetails details = halfRecipe.HalfAssembly!;
+
+                    notes.Add(
+                        "交换链的废料在目标空位上有 " + wasteOutside +
+                        " 格辅助柱（末次交换的输入带辅助柱）；改走半边装配：" +
+                        $"第 {details.Axis} 条轴的两个 {details.HalfWidth} 列半边都可得" +
+                        $"（左 {details.Left.Candidate} / 右 {details.Right.Candidate}），" +
+                        "废料 = Exchange(左半边, 右半边) 的真实另一路输出。");
+                    notes.Add(
+                        $"rank = {halfRecipe.Rank}，节点数 = {halfRecipe.CountNodes()}。");
+
+                    return PipelineResult.Producible(halfRecipe, notes);
+                }
+
+                // 不满足上面的判据：交换链就是正确答案，直接返回，避免重算一次。
+                notes.Add("rank 0：交换链直接组装成功。");
+                notes.Add(
+                    $"rank = {chainRecipe.Rank}，节点数 = {chainRecipe.CountNodes()}。");
+
+                return PipelineResult.Producible(chainRecipe, notes);
+            }
         }
 
         PipelineResult coreResult =
-            SolveCore(core, maxRank, notes);
+            SolveCore(core, maxRank, notes, skipChain: chainAttempted);
 
         if (coreResult.Outcome != PipelineOutcome.Producible)
         {
@@ -231,17 +266,20 @@ public static class ProductionPipeline
     }
 
     /// <summary>
-    /// 目标是否有一整半（连续 n/2 列）全空。
+    /// 目标是否有一整半（连续 n/2 列）只占最底层：第 2 层及以上的格子全空。
     ///
     /// <para>
+    /// 这是上一轮「一整半全空」的直接推广：用户反馈的两个反例里，
+    /// 第 3、4 象限分别是「全空」与「只有底层的两颗晶体」，
+    /// 视觉上都是「这一半没有高度」。交换链在这种目标上会用一根满高辅助柱
+    /// 顶替这一半的位置，废料因此显示成全是普通形状；半边装配把两个半边
+    /// 真正送进 <see cref="ShapeExchange.Exchange"/>，废料才是真实副产物。
+    /// </para>
+    /// <para>
     /// 只有 n ≥ 4 才有「两半」可言；n = 2 已经走定理 5 的孤立列拼装。
-    /// 命中时，<see cref="ProductionPipeline"/> 在无尾部的顶层目标上优先
-    /// <see cref="HalfAssembly"/>：交换链的末次交换输入会带上两根辅助柱，
-    /// 废料因此显示成全是普通形状；半边装配把「半边1 + 空半边2」真送进
-    /// <see cref="ShapeExchange.Exchange"/>，废料才是空的另一半。
     /// </para>
     /// </summary>
-    private static bool HasEmptyHalf(
+    private static bool HasFlatHalf(
         ShapeDocument shape)
     {
         int parts = shape.PartCount;
@@ -254,29 +292,108 @@ public static class ProductionPipeline
 
         for (int side = 0; side < 2; side++)
         {
-            bool empty = true;
+            bool flat = true;
 
-            for (int offset = 0; offset < half && empty; offset++)
+            for (int offset = 0; offset < half && flat; offset++)
             {
                 int part = side == 0 ? offset : half + offset;
 
-                for (int layer = 0; layer < shape.LayerCount; layer++)
+                // 第 1 层（索引 0）允许有内容：底层的晶体 / 普通格都算「贴地」。
+                for (int layer = 1; layer < shape.LayerCount; layer++)
                 {
                     if (shape[layer, part].Type != CellType.Empty)
                     {
-                        empty = false;
+                        flat = false;
                         break;
                     }
                 }
             }
 
-            if (empty)
+            if (flat)
             {
                 return true;
             }
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// 目标是否有空位。没有空位时交换链废料不可能「越出目标」，
+    /// 不必为了废料再算一遍交换链（n = 20 的性能用例会走这条短路）。
+    /// </summary>
+    private static bool HasEmptyCell(ShapeDocument shape)
+    {
+        for (int layer = 0;
+             layer < shape.LayerCount;
+             layer++)
+        {
+            for (int part = 0;
+                 part < shape.PartCount;
+                 part++)
+            {
+                if (shape[layer, part].Type == CellType.Empty)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// 交换链废料里「目标本来空、废料却非空」的格子数。
+    ///
+    /// <para>
+    /// 这些格子就是辅助柱泄漏到目标空位上的部分，也是用户看到的
+    /// 「废料全都是普通形状」的来源。只有 &gt; 0 时才值得改走半边装配；
+    /// 目标本身铺满时废料即使全是柱子也不越界，保持交换链即可。
+    /// </para>
+    /// </summary>
+    private static int CountWasteOutsideTarget(
+        Recipe recipe,
+        ShapeDocument target)
+    {
+        ShapeDocument? waste = null;
+
+        foreach (RecipeStep step in recipe.Steps)
+        {
+            if (step.IsWaste)
+            {
+                waste = step.Shape;
+            }
+        }
+
+        if (waste is null)
+        {
+            return 0;
+        }
+
+        int layers = Math.Max(waste.LayerCount, target.LayerCount);
+        int parts = Math.Max(waste.PartCount, target.PartCount);
+        int count = 0;
+
+        for (int layer = 0; layer < layers; layer++)
+        {
+            for (int part = 0; part < parts; part++)
+            {
+                bool inWaste = layer < waste.LayerCount &&
+                               part < waste.PartCount &&
+                               waste[layer, part].Type != CellType.Empty;
+
+                bool inTarget = layer < target.LayerCount &&
+                                part < target.PartCount &&
+                                target[layer, part].Type != CellType.Empty;
+
+                if (inWaste && !inTarget)
+                {
+                    count++;
+                }
+            }
+        }
+
+        return count;
     }
 
     /// <summary>
@@ -363,13 +480,19 @@ public static class ProductionPipeline
 
     /// <summary>
     /// 核心求解：可交换 → 顶针逆 → 拆 hybrid。
+    ///
+    /// <paramref name="skipChain"/> 只用于 <see cref="Solve"/> 已经试过交换链
+    /// 且失败的情形，避免同一条链重算两遍（n 大、链失败时开销很高）。
+    /// 递归的顶针逆 / 拆 hybrid 仍然各自照常试交换链。
     /// </summary>
     private static PipelineResult SolveCore(
         ShapeDocument shape,
         int rankBudget,
-        List<string> notes)
+        List<string> notes,
+        bool skipChain = false)
     {
-        if (ExchangeChain.TryBuild(shape, out Recipe? exchange))
+        if (!skipChain &&
+            ExchangeChain.TryBuild(shape, out Recipe? exchange))
         {
             notes.Add($"rank {0}：交换链直接组装成功。");
             return PipelineResult.Producible(

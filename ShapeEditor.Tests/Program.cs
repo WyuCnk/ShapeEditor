@@ -305,7 +305,9 @@ internal static class Program
             ("语料12:方向 B 半圈回转（不同半边）", ProductionPathAcceptanceTests.HalfAssemblySwappedDirectionRotatesBackDistinctHalves),
             ("语料12:半边装配不越权", ProductionPathAcceptanceTests.HalfAssemblyFenceOnChainFailures),
             ("语料12:管线半边装配诊断", ProductionPathAcceptanceTests.HalfAssemblyPipelineReportsDiagnosisOnChainFailure),
-            ("语料13:空半边废料是真实交换副产物", ProductionPathAcceptanceTests.EmptyHalfWasteIsRealExchangeByproduct)
+            ("语料13:空半边废料是真实交换副产物", ProductionPathAcceptanceTests.EmptyHalfWasteIsRealExchangeByproduct),
+            ("语料14:贴地半边废料是真实交换副产物", ProductionPathAcceptanceTests.FlatHalfWasteIsRealExchangeByproduct),
+            ("语料14:铺满目标保持交换链", ProductionPathAcceptanceTests.DenseTargetsKeepExchangeChain)
         };
 
         /*

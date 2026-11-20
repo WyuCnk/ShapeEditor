@@ -2698,3 +2698,127 @@ Web 端的半边粒度视图在拿到 `HalfAssembly` 路径后也走「制作半
 | `NINEAUDIT` | `s=36508 success=36508 failures=0 falsePositives=0 fillBreak=0` |
 | `HALFAUDIT` | `legalNonS=229 halfTargets=2 halfComplete=8 notProducible=223 uncovered=0 problems=0`（未退化） |
 | `HALFFENCE` | 四行语料 `claimed=0` |
+
+### 7.33 「贴地半边」目标的废料：交换链废料越出目标时改走半边装配（2026-11-20，第十三轮）
+
+**用户反馈（第二个反例，8 层、n = 4）**
+
+```
+crCucrcr:CuCu----:--Cu----:CuCu----:--------:crcr----:P-cr----:Cucr----
+q1 = cT.T.cPT   q2 = TTTT.ccc   q3 = c.......   q4 = c.......
+```
+
+第 3、4 象限只有最底层一颗晶体（非空），不满足 §7.32 的「一整半全空」，
+所以管线仍先命中交换链；废料仍是两根满高辅助柱（全普通形状）。
+
+**修复前（`SHAPE_PROBE_MODE=figure`，`ProductionPipeline.Solve` = `Exchange`，8 步）**
+
+```
+[0] 制作左半边零件 1（含柱）   TTTTTTTT | cT..TcPT | ........ | ........
+[1] 制作左半边零件 2（含柱）   ........ | ........ | TTT.Tccc | TTTTTTTT
+[2] 交换得到左半边             cT..TcPT | TTT.Tccc | TTTTTTTT | TTTTTTTT
+[3] 制作右半边零件 1（含柱）   TTTTTTTT | c....... | ........ | ........
+[4] 制作右半边零件 2（含柱）   ........ | ........ | c....... | TTTTTTTT
+[5] 交换得到右半边             TTTTTTTT | TTTTTTTT | c....... | c.......
+[6] 交换得到目标图形           cT.T.cPT | TTTT.ccc | c....... | c.......
+[7][废料] 废料                 TTTTTTTT | TTTTTTTT | TTTTTTTT | TTTTTTTT
+```
+
+**修复后（同一图形，`RecipeKind.HalfAssembly`，4 步）**
+
+```
+[0] 制作左半边（候选 3：临时晶体 + 保险丝 + 一刀；第 1–2 象限）  cT.T.cPT | TTTT.ccc | ........ | ........
+[1] 制作右半边（候选 1：Q 自身；第 3–4 象限）                    ........ | ........ | c....... | c.......
+[2] 交换得到目标图形                                            cT.T.cPT | TTTT.ccc | c....... | c.......
+[3][废料] 废料                                                  ........ | ........ | ........ | ........
+```
+
+**废料的新来源**
+
+- `HalfAssembly.TryBuild` 要求两半都能由 `AngleWorkOrderBuilder.BuildHalf` 得到，
+  且两条输入各自稳定、能被交换链造出来（rank 0 子配方）；
+- 配方的 `Steps[^1]` 就是 `ShapeExchange.Exchange(details.LeftInput, details.RightInput)`
+  的另一路输出（`HalfAssembly.TryBuild` 内真实回放，`HalfAssembly.Verify` 再核一次）；
+- 本图的末次交换：`LeftInput = cT.T.cPT | TTTT.ccc | 空 | 空`、
+  `RightInput = 空 | 空 | c....... | c.......`；
+  所需输出（second）= 目标，另一路输出（first）= 四列全空；
+- 交换链那一支的废料同样来自真实 `Exchange(leftHalf, rightHalf)`，没有占位；
+  差别只在末次交换的输入带辅助柱。`ExchangeChain` 末次交换处补了注释钉住这一点，
+  新测试也断言「链废料 = 末次真实 Exchange 的某一输出」。
+
+**判据（为什么不直接用「两半都能 BuildHalf」）**
+
+固定种子随机语料：n = 4 的 3–9 层、n = 6 的 3–6 层、n = 8 的 3–5 层，
+每档 5000 个样本，字母表 `. T P c`（`SHAPE_PROBE_MODE=waste`）；
+稳定且每列合法 2961 个，其中交换链可解 2688 个。
+
+| 判据 | 会改写的配方数 | 占交换链可解样本 |
+|---|---:|---:|
+| 两半都能 `BuildHalf` | 1813 | 67.4% |
+| 交换链废料有任一格越出目标（辅助柱泄漏） | 1640 | 61.0% |
+| 越出 + 存在「只占最底层」的列 | 674 | 25.1% |
+| 越出 + 废料比该目标列的顶高至少 2 层 | 536 | 19.9% |
+| **越出 + 有一整半只占最底层（本轮采用）** | **19** | **0.7%** |
+
+采用最后一个：
+
+1. 它是 §7.32「一整半全空」的直接推广（空半边的占用格子数为 0，仍满足「第 2 层以上全空」），
+   两个用户反例都命中；
+2. 额外要求交换链废料确实越出目标，所以**铺满的目标**（单层 / 双层全铺，n = 4/6/8）
+   保持交换链，现有解析器用例的方向与 16 节点图不变（新测试
+   `DenseTargetsKeepExchangeChain` 专门守这条）；
+3. 定向语料「一半只占最底层」这一族里，交换链可解的 8809 个样本 **全部** 改走半边装配
+   （`WASTE-FLAT` 各行 `switch == chain`）；随机语料里只有 19 个，因为随机图形很少
+   有一整半贴地。也就是说改动集中在用户报告的这一族，而不是把大部分图形重排。
+
+**改动文件**
+
+| 文件 | 改动 |
+|---|---|
+| `Analysis/Production/ProductionPipeline.cs` | 无尾部分支先真实跑一次 `ExchangeChain`：`HasFlatHalf` + `HasEmptyCell` + `CountWasteOutsideTarget > 0` 且 `HalfAssembly.TryBuild` 成功时改走半边装配；否则直接返回交换链（不重算）。`SolveCore` 增加 `skipChain`，链失败时不重试。`HasEmptyHalf` 改名为 `HasFlatHalf`（第 1 层以上全空），新增 `HasEmptyCell`、`CountWasteOutsideTarget` |
+| `Analysis/Production/ExchangeChain.cs` | 末次交换处补注释：废料只取这一次真实 Exchange 的另一路输出，不另行合成 |
+| `Tests/ProductionPathAcceptanceTests.cs` | 新增 `FlatHalfWasteIsRealExchangeByproduct`（本反例：半边装配、废料四列全空、目标列不变、真实 Exchange 逐格核对、旧交换链废料第 3 象限是辅助柱、链废料 = 末次 Exchange 的某一输出）与 `DenseTargetsKeepExchangeChain`（铺满目标即使两半可 `BuildHalf` 也保持交换链） |
+| `Tests/Probes.cs` | 新增 `SHAPE_PROBE_MODE=waste` 统计入口（不是测试项）：随机语料 + 贴地半边的定向语料 |
+| `Tests/Program.cs` | 注册 2 条新用例（197 项） |
+
+**验收数字（Release）**
+
+| 项 | 结果 |
+|---|---|
+| 全量测试 | **197/197** 通过（195 项原有 + 2 项新增；claw / 二择 2 项 XFAIL 保持） |
+| `AUDIT`（≤6 层 S） | `total=5440 legal=2126 s=2125 success=2125 legalNonS=1 failures=0 falsePositives=0` |
+| `LAYERAUDIT` | 7 层 `s=4320 success=4320 failures=0`；8 层 `s=12646 success=12646 failures=0` |
+| `NINEAUDIT` | `s=36508 success=36508 failures=0 falsePositives=0 fillBreak=0` |
+| `HALFAUDIT` | `legalNonS=229 halfTargets=2 halfComplete=8 notProducible=223 uncovered=0 problems=0`（不下降） |
+| `HALFFENCE` | 四行语料 `claimed=0` |
+
+**配方改动统计（随机语料，n = 4/6/8）**
+
+- 19 / 2688 = **0.7%** 的交换链可解样本改变（全部是 n = 4、3 层；`RecipeKind` 与废料一起变）；
+- 前 10 例（列文本，左起第 1 象限；`L` 为层数）：
+
+| # | 图形 | 废料越出格数 |
+|---:|---|---:|
+| 1 | `cTP \| cTc \| ... \| c..`（L3） | 5 |
+| 2 | `T.. \| T.. \| PPT \| PTT`（L3） | 4 |
+| 3 | `... \| P.. \| PTc \| PTc`（L3） | 5 |
+| 4 | `T.. \| P.. \| PTT \| P..`（L3） | 6 |
+| 5 | `... \| PTc \| c.. \| T..`（L3） | 7 |
+| 6 | `... \| PT. \| P.. \| P..`（L3） | 8 |
+| 7 | `.T. \| ... \| cTc \| PcP`（L3） | 5 |
+| 8 | `PTc \| TTP \| c.. \| ...`（L3） | 5 |
+| 9 | `P.. \| P.. \| TTc \| TcP`（L3） | 4 |
+| 10 | `P.. \| PT. \| P.. \| T..`（L3） | 7 |
+
+**语义歧义（不自行取舍）**
+
+1. 任务书写「废料 = `Exchange(LeftHalf, RightHalf).First`」。交换链的废料本来就是
+   `Exchange(chainLeftHalf, chainRightHalf)` 的另一路输出，不是占位；差别在两条输入带辅助柱。
+   因此「`HalfAssembly` 失败时保持交换链」这一支没有可改的废料计算——它的废料仍是
+   真实 Exchange 结果，只是输入带柱。要让这一支也显示空废料，只能假装干净半边可造
+   （不成立），或改交换链的输入（会改动已验收的 6/8 象限逐格结果）。本轮选择不动这一支。
+2. 用户说「第 3、4 象限为空」：目标里 q3/q4 各有一颗底层晶体（属于产物），废料四列全空。
+   若要求废料逐格等于目标的另一半（`c.......`），那不是任何 Exchange 的输出，本轮没有采用。
+3. 「一半只占最底层」是报告过的两个反例的直接推广；若下一例是「一半只有两层」，
+   这个判据不会触发。是否继续扩大（例如 25.1% 的「存在贴地列」判据、或 61% 的
+   「任一格越出」判据）需要产品口径。

@@ -167,6 +167,13 @@ public static class ExchangeChain
             return false;
         }
 
+        /*
+         * 末次交换：两条输入就是链自己造出来的左 / 右半边（各自带对面辅助柱）。
+         * 废料只取这一次真实 ShapeExchange.Exchange 的另一路输出，
+         * 禁止用「辅助柱」之类的东西另行合成——它已经是真实副产物。
+         * 与用户期望的「舍弃的另一半」不一致时，由 ProductionPipeline 改走
+         * 半边装配（两条干净半边再 Exchange），见 TODO.md §7.33。
+         */
         (ShapeDocument? waste, ShapeDocument? output, _) =
             ShapeExchange.Exchange(leftHalf, rightHalf);
 
