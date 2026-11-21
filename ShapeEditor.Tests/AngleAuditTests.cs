@@ -807,6 +807,11 @@ internal static class AngleAuditTests
         int halfComplete = 0;
         int notProducible = 0;
         int uncovered = 0;
+        int v3Complete = 0;
+        int fallbackComplete = 0;
+        int v3NoLift = 0;
+        int v3ReplayRejected = 0;
+        int v3NotApplicable = 0;
         var halfColumns = new List<string>();
         var problems = new List<string>();
 
@@ -838,6 +843,28 @@ internal static class AngleAuditTests
 
                 ShapeDocument target = BuildColumn(text);
                 AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers);
+
+                // v3 诊断（不改变求解结果）：单列目标的第二列恒为空，
+                // v3 的「两列各自落回目标」不会成立，用来验证兜底是否仍在。
+                HalfCutReuseProbe probe = AngleWorkOrderBuilder.ProbeHalfCutReuse(
+                    target,
+                    0,
+                    layers);
+
+                switch (probe.Status)
+                {
+                    case HalfCutReuseStatus.NoLiftSource:
+                        v3NoLift++;
+                        break;
+                    case HalfCutReuseStatus.ReplayRejected:
+                        v3ReplayRejected++;
+                        break;
+                    case HalfCutReuseStatus.NotApplicable:
+                        v3NotApplicable++;
+                        break;
+                    default:
+                        break;
+                }
 
                 if (!order.IsComplete)
                 {
@@ -879,6 +906,15 @@ internal static class AngleAuditTests
 
                 halfComplete++;
                 halfColumns.Add(text);
+
+                if (order.Half is { CutReuseV3: true })
+                {
+                    v3Complete++;
+                }
+                else
+                {
+                    fallbackComplete++;
+                }
 
                 HalfWorkOrder? half = order.Half;
 
@@ -1004,15 +1040,56 @@ internal static class AngleAuditTests
                     target,
                     0,
                     target.LayerCount);
+                fallbackComplete++;
             }
             else
             {
-                order = AngleWorkOrderBuilder.Build(
+                /*
+                 * 2026-11-21 v3 主路径：这个论文例现在由 v3 命中。
+                 * 这里显式关闭 v3，继续核对旧候选 2 的兜底形态；
+                 * 同时单独确认默认入口仍是 v3（Cut 回放逐格）。
+                 */
+                order = null;
+
+                half = AngleWorkOrderBuilder.BuildHalf(
+                    target,
+                    0,
+                    target.LayerCount,
+                    preferCutReuseV3: false);
+
+                HalfWorkOrder? primary = AngleWorkOrderBuilder.BuildHalf(
                     target,
                     0,
                     target.LayerCount);
 
-                half = order.Half;
+                if (primary is null || !primary.CutReuseV3)
+                {
+                    problems.Add(label + "：默认入口应走 v3 主路径");
+                }
+                else
+                {
+                    v3Complete++;
+
+                    ShapeDocument primaryPre = primary.Steps[0].Shape!;
+                    CutResult primaryCut = ShapePhysics.Cut(
+                        ShapeOps.Rotate(primaryPre, primary.Rotation));
+
+                    if (!primaryCut.Success || primaryCut.West is null)
+                    {
+                        problems.Add(label + "：v3 真实 Cut 失败");
+                    }
+                    else
+                    {
+                        ShapeDocument primaryReplay = ShapeOps.Rotate(
+                            primaryCut.West,
+                            -primary.Rotation);
+
+                        if (!ShapeOps.Same(primaryReplay, primary.Steps[^1].Shape))
+                        {
+                            problems.Add(label + "：v3 半破结果与半边目标不符");
+                        }
+                    }
+                }
             }
 
             if (half is null || !half.IsComplete)
@@ -1182,6 +1259,10 @@ internal static class AngleAuditTests
             $"  HALFAUDIT legalNonS={legalNonS} halfTargets={halfTargetCases} " +
             $"halfComplete={halfComplete} notProducible={notProducible} " +
             $"uncovered={uncovered} problems={problems.Count}");
+        Console.WriteLine(
+            $"  HALFAUDIT-V3 v3Complete={v3Complete} fallbackComplete={fallbackComplete} " +
+            $"singleColumnNoLift={v3NoLift} singleColumnReplayRejected={v3ReplayRejected} " +
+            $"singleColumnNotApplicable={v3NotApplicable}");
 
         if (halfColumns.Count > 0)
         {
@@ -1193,6 +1274,17 @@ internal static class AngleAuditTests
             Console.WriteLine("  半边审计问题：" + string.Join(" | ", problems));
         }
 
+        Assert.Equal(
+            halfComplete,
+            v3Complete + fallbackComplete,
+            "v3 主路径 + 旧候选兜底的命中数应等于半边完成数");
+        Assert.True(
+            v3Complete >= 1,
+            "v3 主路径应至少覆盖论文候选 2 的那个两列半边");
+        Assert.Equal(
+            legalNonS,
+            v3NoLift + v3ReplayRejected + v3NotApplicable,
+            "229 个单列目标的 v3 诊断应覆盖全部（每个都给出一个状态）");
         Assert.True(
             problems.Count == 0,
             $"半边工序审计发现 {problems.Count} 个问题：" +

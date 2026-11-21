@@ -36,9 +36,43 @@ public enum HalfCandidate
     /// 候选 3：临时晶体 + 保险丝 + 一刀。
     /// 目标列把 (s−2, s) 之间的普通格提到 s−1、洞填临时晶体；
     /// 环伙伴在顶部三层与目标列咬合；保险丝柱在临时晶体每一块的顶层各放一颗晶体跨刀口。
+    ///
+    /// <para>
+    /// v3（<c>docs/half-side-v3-cut-reuse.md</c>）是这一族的主路径推广：
+    /// 半边两列各自只按「晶下间隙 → 抬升 + 临时晶体」造角产物，
+    /// 每处临时晶体段的锚层在对角爆破柱上放一颗晶体，一刀同时碎掉。
+    /// 旧候选 3 的环伙伴 / 保险丝固定形态降级为 v3 的回放失败兜底。
+    /// </para>
     /// </summary>
     TempCrystalFuse
 }
+
+/// <summary>
+/// v3 半边构造（角产物 + 对角爆破柱 + 一刀）的探测结果。
+/// 只用于诊断 / 审计报告，不改变求解语义。
+/// </summary>
+public enum HalfCutReuseStatus
+{
+    /// <summary>不适用：不是 n = 4、尺寸不符、目标列不合法，或两列都没有「晶体正下方为空」。</summary>
+    NotApplicable,
+
+    /// <summary>
+    /// 兜底触发：某处「晶体正下方为空」在下方找不到可抬的普通格
+    /// （下方本来为空，或先撞上针 / 晶体），抬升后无法自停。
+    /// </summary>
+    NoLiftSource,
+
+    /// <summary>角产物与爆破柱造出来了，但真实半破后两列没有逐格回到目标（含前态不合法 / 不稳定）。</summary>
+    ReplayRejected,
+
+    /// <summary>v3 产出并通过真实半破逐格验收。</summary>
+    Covered
+}
+
+/// <summary>v3 半边构造的探测结果（<see cref="HalfCutReuseStatus"/> + 人读原因）。</summary>
+public sealed record HalfCutReuseProbe(
+    HalfCutReuseStatus Status,
+    string? Detail);
 
 /// <summary>
 /// 半边工序的目标：一段<b>连续 n/2 列</b>（对齐交换链的轴划分）。
@@ -102,6 +136,18 @@ public sealed record HalfWorkOrder(
     /// </para>
     /// </summary>
     public int Rotation { get; init; }
+
+    /// <summary>
+    /// 这条工序是否由 <b>v3（角产物 + 对角爆破柱 + 一刀）</b> 产生
+    /// （<c>docs/half-side-v3-cut-reuse.md</c>）。
+    ///
+    /// <para>
+    /// v3 与旧候选 3 共用 <see cref="HalfCandidate.TempCrystalFuse"/> 的语义
+    /// （都是「终止前态 + 一次真实半破」，<see cref="OperationText"/> 都是「半破」），
+    /// 这个标记只用于区分主路径与兜底、以及审计报告里的命中数。
+    /// </para>
+    /// </summary>
+    public bool CutReuseV3 { get; init; }
 
     /// <summary>
     /// 这条半边工序从「前态」到「目标半边」实际做的操作，供卡片箭头 / 标题使用：
@@ -235,7 +281,8 @@ public static partial class AngleWorkOrderBuilder
         int column,
         int cap,
         AngleBuildKind kind,
-        bool requireTargetHalf = false)
+        bool requireTargetHalf = false,
+        bool preferCutReuseV3 = true)
     {
         if (target.PartCount < HalfMinParts ||
             target.PartCount % 2 != 0 ||
@@ -297,7 +344,28 @@ public static partial class AngleWorkOrderBuilder
             }
         }
 
-        // 第 ① 顺位：候选 3（终止前态 + 一次半破）。
+        /*
+         * 第 ① 顺位（v3 主路径）：角产物 + 对角爆破柱 + 一刀。
+         * 两列各自只做「抬升 + 临时晶体」，每处临时晶体段的锚层配一根对角爆破柱，
+         * 一刀半破后两列各自落回目标。v3 不适用（无间隙 / 某处抬升后不能自停）
+         * 或回放没过时，才降级到旧候选 3 / §2 / 候选 1 / 候选 2 兜底。
+         */
+        AngleWorkOrder? cutReuse = preferCutReuseV3
+            ? TryBuildCutReuseV3(
+                target,
+                column,
+                cap,
+                kind,
+                out _,
+                out _)
+            : null;
+
+        if (cutReuse is { IsComplete: true })
+        {
+            return cutReuse;
+        }
+
+        // 第 ② 顺位（兜底）：旧候选 3（终止前态 + 一次半破）。
         // 用户口径不变：能做成「填充晶体 + 一刀」的就先用它，所以它仍排在 §2 之前。
         AngleWorkOrder? fuse = TryBuildTempCrystalFuse(
             target,
@@ -502,7 +570,8 @@ public static partial class AngleWorkOrderBuilder
     public static HalfWorkOrder? BuildHalf(
         ShapeDocument target,
         int column,
-        int cap)
+        int cap,
+        bool preferCutReuseV3 = true)
     {
         if (target is null)
         {
@@ -519,7 +588,8 @@ public static partial class AngleWorkOrderBuilder
             column,
             cap,
             AngleClassifier.Classify(target, column),
-            requireTargetHalf: true);
+            requireTargetHalf: true,
+            preferCutReuseV3: preferCutReuseV3);
 
         if (order is not { IsComplete: true } || order.Half is null)
         {
@@ -1062,6 +1132,470 @@ public static partial class AngleWorkOrderBuilder
             collapsed,
             columns,
             limitations);
+    }
+
+    #endregion
+
+    #region v3：角产物 + 对角爆破柱 + 一刀（主路径）
+
+    /// <summary>
+    /// 单列的「角产物」构造计划。
+    ///
+    /// <para>
+    /// <see cref="Codes"/> 是补齐到 cap 的列代码；
+    /// <see cref="TemporaryLayers"/> 是比目标列多出来的临时晶体层；
+    /// <see cref="LiftSource"/> 是「抬升落点 → 原始普通格层」的映射（写单元格时保留形状码 / 颜色）；
+    /// <see cref="Blocks"/> 是临时晶体的纵向连通块（复用算法 4 的
+    /// <c>FindTemporaryBlocks</c>），锚层 = 每块的顶层。
+    /// </para>
+    /// </summary>
+    private sealed record CutReuseColumnPlan(
+        char[] Codes,
+        HashSet<int> TemporaryLayers,
+        Dictionary<int, int> LiftSource,
+        List<(int Bottom, int Top)> Blocks);
+
+    /// <summary>
+    /// v3 主路径：<b>角产物 → 拼半边 → 找间隙 → 抬升 + 对角爆破柱 → 一刀 → 验收</b>
+    /// （<c>docs/half-side-v3-cut-reuse.md</c> §2）。
+    ///
+    /// <para><b>与旧候选 3 的关系</b>：v3 是「候选 3 的多柱推广」，只处理 n = 4（k = 2）。
+    /// 每列各自找出所有「晶体正下方为空」的位置，把该列下方最近的普通格抬到晶体正下方、
+    /// 让出的层填临时晶体；每列的临时晶体块按锚层（块顶层）在对角象限的爆破柱上
+    /// 各放一颗晶体（Q1 的柱在 Q4、Q2 的柱在 Q3）。真实半破后两列逐格验收。</para>
+    ///
+    /// <para><b>兜底</b>：任意一处间隙下方找不到可抬的普通格（下方本来为空、或先撞上
+    /// 针 / 晶体）⇒ 返回 null，由 <see cref="TryBuildHalfOrder"/> 继续退旧候选 3 /
+    /// §2 / 候选 1 / 候选 2。回放不过也返回 null（只加覆盖，不把旧结论改成假阳性）。</para>
+    /// </summary>
+    private static AngleWorkOrder? TryBuildCutReuseV3(
+        ShapeDocument target,
+        int column,
+        int cap,
+        AngleBuildKind kind,
+        out HalfCutReuseStatus status,
+        out string? detail)
+    {
+        status = HalfCutReuseStatus.NotApplicable;
+        detail = null;
+
+        if (target.PartCount != 4 || cap < target.LayerCount)
+        {
+            detail = "v3 只处理 n = 4 且 cap ≥ 目标层数";
+            return null;
+        }
+
+        int parts = target.PartCount;
+        int[] columns = HalfColumns(column, parts);
+
+        if (columns.Length != 2)
+        {
+            return null;
+        }
+
+        var plans = new CutReuseColumnPlan?[2];
+        var blastTexts = new string?[2];
+        bool hasGap = false;
+
+        for (int index = 0; index < columns.Length; index++)
+        {
+            int part = columns[index];
+            string text = ShapeSignature.ColumnText(target, part);
+
+            // 角产物的前提：这一列自己是合法角（五项 ✔）。
+            if (!ShapeSignature.CheckColumn(text).IsLegal)
+            {
+                status = HalfCutReuseStatus.NotApplicable;
+                detail = "第 " + (part + 1) + " 象限五项不成立，不能作为角产物";
+                return null;
+            }
+
+            CutReuseColumnPlan? plan = BuildCutReuseColumn(
+                text,
+                cap,
+                part,
+                out status,
+                out detail);
+
+            if (plan is null)
+            {
+                return null;
+            }
+
+            plans[index] = plan;
+
+            if (plan.Blocks.Count > 0)
+            {
+                // 爆破柱：满高普通格 + 每个临时晶体块锚层一颗晶体。
+                // 直接复用候选 3 的 BuildFuseColumn。
+                blastTexts[index] = BuildFuseColumn(plan.Blocks, cap);
+                hasGap = true;
+            }
+        }
+
+        if (!hasGap)
+        {
+            // 没有晶下间隙 ⇒ 候选 1（Q 自身）/ 旧路径处理，v3 不适用。
+            status = HalfCutReuseStatus.NotApplicable;
+            detail = "两列都没有「晶体正下方为空」";
+            return null;
+        }
+
+        char colorU = CrystalColor(target, columns[0]);
+        char colorV = CrystalColor(target, columns[1]);
+
+        var preState = new ShapeDocument(cap, parts);
+
+        for (int index = 0; index < columns.Length; index++)
+        {
+            int part = columns[index];
+            CutReuseColumnPlan plan = plans[index]!;
+            char color = index == 0 ? colorU : colorV;
+
+            for (int layer = 0; layer < cap; layer++)
+            {
+                if (plan.LiftSource.TryGetValue(layer, out int source) &&
+                    source < target.LayerCount)
+                {
+                    // 抬升的普通格：形状码 / 颜色逐格沿用原位置。
+                    preState[layer, part] = target[source, part].Clone();
+                }
+                else if (plan.TemporaryLayers.Contains(layer))
+                {
+                    preState[layer, part] = ShapeCell.Crystal(color);
+                }
+                else if (layer < target.LayerCount)
+                {
+                    preState[layer, part] = target[layer, part].Clone();
+                }
+            }
+        }
+
+        // 对角爆破柱：Q1 → Q4、Q2 → Q3（n = 4）。不合并。
+        for (int index = 0; index < columns.Length; index++)
+        {
+            if (blastTexts[index] is not { } blast)
+            {
+                continue;
+            }
+
+            int blastColumn = Wrap(column + parts - 1 - index, parts);
+            char color = index == 0 ? colorU : colorV;
+
+            WriteColumn(preState, blastColumn, blast, color);
+        }
+
+        string uText = ShapeSignature.ColumnText(target, columns[0]);
+        string vText = ShapeSignature.ColumnText(target, columns[1]);
+
+        if (ShapeSignature.ColumnText(preState, column) == uText)
+        {
+            status = HalfCutReuseStatus.ReplayRejected;
+            detail = "v3 前态的目标列与目标相同（循环）";
+            return null;
+        }
+
+        if (!ShapeSignature.AllColumnsLegal(preState, out int badColumn))
+        {
+            status = HalfCutReuseStatus.ReplayRejected;
+            detail = "v3 前态第 " + (badColumn + 1) + " 象限不合法";
+            return null;
+        }
+
+        if (!ShapeOps.IsStable(preState))
+        {
+            status = HalfCutReuseStatus.ReplayRejected;
+            detail = "v3 前态不稳定";
+            return null;
+        }
+
+        // P1（§0.1）：初始前态的每颗晶体都必须直接坐在材料上（两列 + 爆破柱都查）。
+        if (AngleWorkOrderBuilder.P1Violation(preState, out int p1Part, out int p1Layer))
+        {
+            status = HalfCutReuseStatus.ReplayRejected;
+            detail = "v3 前态违反 P1：第 " + (p1Part + 1) + " 象限第 " +
+                     (p1Layer + 1) + " 层晶体下方为空";
+            return null;
+        }
+
+        int rotation = Wrap(-column, parts);
+        CutResult cut = ShapePhysics.Cut(ShapeOps.Rotate(preState, rotation));
+
+        if (!cut.Success || cut.West is null)
+        {
+            status = HalfCutReuseStatus.ReplayRejected;
+            detail = "v3 真实 Cut 失败：" + (cut.Error ?? "未知原因");
+            return null;
+        }
+
+        ShapeDocument replayed = ShapeOps.Rotate(cut.West, -rotation);
+
+        if (!ShapeOps.IsStable(replayed) ||
+            !ShapeSignature.AllColumnsLegal(replayed, out _))
+        {
+            status = HalfCutReuseStatus.ReplayRejected;
+            detail = "v3 半破后的西半边不稳定或含非法列";
+            return null;
+        }
+
+        if (!SameHalfColumns(replayed, target, columns, parts))
+        {
+            status = HalfCutReuseStatus.ReplayRejected;
+            detail = "v3 半破后 k 列没有逐格等于目标半边：" +
+                     "u = " + Trim(ShapeSignature.ColumnText(replayed, columns[0])) +
+                     "，v = " + Trim(ShapeSignature.ColumnText(replayed, columns[1]));
+            return null;
+        }
+
+        status = HalfCutReuseStatus.Covered;
+        detail = "v3 覆盖";
+
+        var blastColumns = new List<int>();
+
+        for (int index = 0; index < columns.Length; index++)
+        {
+            if (blastTexts[index] is not null)
+            {
+                blastColumns.Add(Wrap(column + parts - 1 - index, parts));
+            }
+        }
+
+        var limitations = BaseLimitations(
+            "半边工序（v3：角产物 + 对角爆破柱 + 一刀）：两列各自按「晶体正下方为空」" +
+            "抬升 + 填临时晶体（角产物），每处临时晶体段在锚层（块顶层）配一根对角爆破柱" +
+            "（满高普通格 + 锚层晶体），一刀半破后两列逐格回到目标。" +
+            "旧候选 3 的环伙伴 / 保险丝形态只作为 v3 失败时的兜底。");
+
+        limitations.Add(
+            "扫描结果：第 " + (columns[0] + 1) + " 象限 = " + Trim(uText) +
+            "，第 " + (columns[1] + 1) + " 象限 = " + Trim(vText) +
+            "；角产物 = " + DescribeColumns(preState, columns, parts, string.Empty));
+
+        limitations.Add(
+            "爆破柱（对角配对，不合并）：" +
+            (blastColumns.Count == 0
+                ? "无"
+                : string.Join(
+                    "，",
+                    blastColumns.Select(part =>
+                        "第 " + (part + 1) + " 象限 = " +
+                        Trim(ShapeSignature.ColumnText(preState, part))))) +
+            "；每根柱 = 满高普通格 + 该列临时晶体块锚层各一颗晶体。");
+
+        limitations.Add(
+            "一刀：顺转 " + rotation + " 个象限后沿 n/2 刀口切开，" +
+            "临时晶体整段碎掉；两列各自落回目标半边（逐格核对类型 / 形状码 / 颜色）。");
+
+        var halfSteps = new List<AngleWorkStep>
+        {
+            new(
+                "半边工序前态（v3：两列角产物 + 对角爆破柱）：" +
+                DescribeColumns(preState, columns, parts),
+                preState,
+                AngleWorkStepKind.PreState),
+
+            new(
+                "一刀半破（v3）：刀口跨过每根爆破柱的锚层晶体与对应列的临时晶体，" +
+                "临时晶体整段碎掉，抬升的普通格落回目标层",
+                replayed,
+                AngleWorkStepKind.Cut),
+
+            new(
+                "半边目标（v3）：k 列逐格等于目标半边",
+                replayed,
+                AngleWorkStepKind.Target)
+        };
+
+        var half = new HalfWorkOrder(
+            new WorkOrderTarget(columns, column),
+            HalfCandidate.TempCrystalFuse,
+            halfSteps,
+            true,
+            null,
+            limitations,
+            0)
+        {
+            TargetColumnsHaveSubRecipe = false,
+            Rotation = rotation,
+            CutReuseV3 = true
+        };
+
+        var steps = new List<AngleWorkStep>
+        {
+            new(
+                "半边工序（v3）前态：两列各自抬升 + 填临时晶体，对角爆破柱跨刀口",
+                preState,
+                AngleWorkStepKind.PreState),
+
+            new(
+                "一刀半破（v3）：临时晶体整段碎掉，" +
+                $"半破后第 {columns[0] + 1}、{columns[1] + 1} 象限逐格等于目标",
+                replayed,
+                AngleWorkStepKind.Cut),
+
+            new(
+                "清除辅助象限，得到目标角",
+                target,
+                AngleWorkStepKind.Target)
+        };
+
+        return new AngleWorkOrder(
+            column,
+            kind,
+            steps,
+            null)
+        {
+            IsComplete = true,
+            TargetColumnHasSubRecipe = true,
+            Construction = AngleConstruction.Half,
+            Algorithm = AngleAlgorithm.None,
+            Rotation = rotation,
+            AuxiliaryColumns = blastColumns.ToArray(),
+            Rank = 0,
+            Half = half,
+            Limitations = limitations
+        };
+    }
+
+    /// <summary>
+    /// v3 的单列角产物：从列文本（长度 = 目标层数）出发，
+    /// 对每个「晶体正下方为空」的段，把下方最近的普通格抬到晶体正下方，
+    /// 并把抬升路径上让出的空层填成临时晶体。
+    ///
+    /// <para>所有层号由扫描得出，没有打表；抬升源来自 <see cref="NearestSolidBelow"/>
+    /// （与候选 3 共用同一条「下方最近的普通格」规则）。临时晶体段只覆盖
+    /// 「抬升源 → 晶体正下方」这一段；更深的空层保持原样（它们不是本处间隙
+    /// 造成的，填进去会多出无法被对角柱碎掉的临时晶体）。</para>
+    /// </summary>
+    private static CutReuseColumnPlan? BuildCutReuseColumn(
+        string text,
+        int cap,
+        int part,
+        out HalfCutReuseStatus status,
+        out string? detail)
+    {
+        status = HalfCutReuseStatus.NotApplicable;
+        detail = null;
+
+        var core = new char[cap];
+
+        Array.Fill(core, ShapeSignature.EmptyCode);
+
+        for (int layer = 0; layer < text.Length && layer < cap; layer++)
+        {
+            core[layer] = text[layer];
+        }
+
+        var temporary = new HashSet<int>();
+        var liftSource = new Dictionary<int, int>();
+
+        for (int crystal = 0; crystal < text.Length; crystal++)
+        {
+            if (text[crystal] != ShapeSignature.CrystalCode ||
+                crystal == 0 ||
+                text[crystal - 1] != ShapeSignature.EmptyCode)
+            {
+                continue;
+            }
+
+            string working = new(core);
+            int liftFrom = NearestSolidBelow(working, crystal);
+
+            if (liftFrom < 0 ||
+                core[liftFrom] != ShapeSignature.SolidCode)
+            {
+                status = HalfCutReuseStatus.NoLiftSource;
+                detail = "第 " + (part + 1) + " 象限第 " + (crystal + 1) +
+                         " 层晶体下方没有可抬的普通格（抬升后不能自停）";
+                return null;
+            }
+
+            if (liftSource.ContainsValue(liftFrom) ||
+                core[crystal - 1] != ShapeSignature.EmptyCode)
+            {
+                status = HalfCutReuseStatus.NoLiftSource;
+                detail = "第 " + (part + 1) + " 象限的抬升源冲突（同一枚普通格被两处间隙使用）";
+                return null;
+            }
+
+            core[liftFrom] = ShapeSignature.EmptyCode;
+
+            // 抬升路径上（普通格原位置到晶体正下方）全部空出来，
+            // 由下面的「填临时晶体」补成紧列。
+            for (int layer = liftFrom + 1; layer <= crystal - 1; layer++)
+            {
+                core[layer] = ShapeSignature.EmptyCode;
+            }
+
+            core[crystal - 1] = ShapeSignature.SolidCode;
+            liftSource[crystal - 1] = liftFrom;
+
+            // 从抬升源往下找最近的非空格：普通格 / 针可以当临时晶体段的底；
+            // 直接压在原生晶体上会纵向融合，碎晶时把原生晶体一起炸掉 ⇒ 兜底。
+            int below = -1;
+
+            for (int layer = liftFrom - 1; layer >= 0; layer--)
+            {
+                if (core[layer] != ShapeSignature.EmptyCode)
+                {
+                    below = layer;
+                    break;
+                }
+            }
+
+            if (below >= 0 && core[below] == ShapeSignature.CrystalCode)
+            {
+                status = HalfCutReuseStatus.NoLiftSource;
+                detail = "第 " + (part + 1) + " 象限第 " + (crystal + 1) +
+                         " 层晶体下方的临时晶体段会与原生晶体纵向融合";
+                return null;
+            }
+
+            for (int layer = below + 1; layer <= liftFrom; layer++)
+            {
+                core[layer] = ShapeSignature.CrystalCode;
+                temporary.Add(layer);
+            }
+        }
+
+        // 复用算法 4 的临时晶体块扫描（目标列里不是晶体、角产物里是晶体的连通块）。
+        string paddedTarget = text.Length >= cap
+            ? text[..cap]
+            : text.PadRight(cap, ShapeSignature.EmptyCode);
+
+        var blocks = FindTemporaryBlocks(paddedTarget, core);
+
+        return new CutReuseColumnPlan(core, temporary, liftSource, blocks);
+    }
+
+    /// <summary>
+    /// 公开诊断入口：只跑 v3 的「角产物 + 对角爆破柱 + 一刀」并报告状态，
+    /// 不改变求解路由。供 <c>--half</c> 审计 / 测试统计 v3 命中与兜底次数。
+    /// </summary>
+    public static HalfCutReuseProbe ProbeHalfCutReuse(
+        ShapeDocument target,
+        int column,
+        int cap)
+    {
+        if (target is null)
+        {
+            throw new ArgumentNullException(nameof(target));
+        }
+
+        if (column < 0 || column >= target.PartCount)
+        {
+            throw new ArgumentOutOfRangeException(nameof(column));
+        }
+
+        _ = TryBuildCutReuseV3(
+            target,
+            column,
+            cap,
+            AngleClassifier.Classify(target, column),
+            out HalfCutReuseStatus status,
+            out string? detail);
+
+        return new HalfCutReuseProbe(status, detail);
     }
 
     #endregion

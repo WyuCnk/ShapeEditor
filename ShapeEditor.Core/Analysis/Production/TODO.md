@@ -3062,3 +3062,93 @@ $env:SHAPE_CARDS = "短代码"
 | `Tests/CardCli.cs` | 角卡「产物 = 紧列 + 双柱」行、半边卡逐刀碎晶行 |
 | `Tests/CardHierarchyTests.cs` | 更新角卡 / 半边卡断言，新增 4 条用例 |
 | `Tests/Program.cs` | 注册 4 条新用例（208 项） |
+
+### 7.36 半边工序 v3：角产物 + 对角爆破柱 + 一刀（2026-11-21，第十六轮）
+
+**任务书**：`docs/prompt-for-main-agent-half-v3.md`；
+**规格**：`docs/half-side-v3-cut-reuse.md`（§2 六步 / §3 逐步对账 / §7 三条已定）。
+**只改** `ShapeEditor.Core/` 与 `ShapeEditor.Tests/`（+ 本 TODO），未改 `docs/`、未碰 UI。
+
+#### 改动
+
+| 项 | 位置 | 内容 |
+|---|---|---|
+| v3 主路径 | `Analysis/AngleWorkOrderHalfSide.cs` | 新增 `TryBuildCutReuseV3`：两列各求「角产物」（`BuildCutReuseColumn`：逐列扫「晶体正下方为空」→ 用 `NearestSolidBelow` 把下方最近普通格抬到晶体正下方 → 让出的层填临时晶体 → 保持紧列）；每列临时晶体块按锚层（块顶层）在对角象限配爆破柱（Q1→Q4、Q2→Q3，`BuildFuseColumn` = 满高普通格 + 锚层晶体，不合并）；真实 `ShapePhysics.Cut` 后两列逐格回退目标才接受 |
+| 复用 | 同上 | 找间隙 / 抬升源复用候选 3 的 `NearestSolidBelow`；临时晶体块复用算法 4 的 `FindTemporaryBlocks`；爆破柱复用候选 3 的 `BuildFuseColumn`；半破 + 落定 + 逐格验收复用候选 3 的同一条回放闸门 |
+| 候选降级 | 同上 | `TryBuildHalfOrder` 顺序改为 **v3 → 旧候选 3 → §2 TT 双格 → 候选 1 → 候选 2**。v3 不适用（无间隙 / 某处抬升后不能自停 / 回放不过）时旧三候选原样兜底；单列目标（第二列恒空）没有第二列的刹车 / 环，v3 必然回放失败 ⇒ 仍由旧候选 3 构造环伙伴 |
+| 对外标记 | `HalfWorkOrder.CutReuseV3` | v3 与旧候选 3 共用 `TempCrystalFuse`（都是「终止前态 + 一次半破」，`OperationText = 半破`），新增 `CutReuseV3` 区分主路径 / 兜底 |
+| 诊断 | `AngleWorkOrderBuilder.ProbeHalfCutReuse` | 返回 `HalfCutReuseStatus`（`NotApplicable` / `NoLiftSource` / `ReplayRejected` / `Covered`），供审计统计「v3 命中 / 抬升后不能自停 / 回放失败」 |
+| 兜底开关 | `AngleWorkOrderBuilder.BuildHalf(..., preferCutReuseV3 = true)` | 默认走 v3；测试可显式关闭，继续核对旧候选 2 / 3 的兜底形态（生产路径不变） |
+
+#### 两个回放样例（`--half`，本机 Release，逐格 PASS）
+
+| 目标（u \| v） | v3 前态 Q1 / Q2 / Q3 / Q4 | 操作 | 结果 |
+|---|---|---|---|
+| `T.cT.T.cPT \| PPTTTT.ccc`（10 层） | `cTcTccTcPT` / `PPTTTcTccc` / `TTTTTc....` / `cTTTTc....` | 半破 | PASS（= 规格 §3.3/§3.4 的拼半边 + 两象限爆破柱） |
+| `cT.T.cPT \| TTTT.ccc`（8 层） | `cTccTcPT` / `TTTcTccc` / `TTTc....` / `TTTc....` | 半破 | PASS |
+| `cT.T.cTcccTc \| TTTT.cccPT..`（12 层） | `cTccTcTcccTc` / `TTTcTcccPT..` / `TTTc........` / `TTTc........` | 半破 | PASS |
+| `cT.T.cT.Tccc \| TTTT.cccccPT`（12 层） | `cTccTcT.Tccc` / `TTTcTcccccPT` / `TTTc........` / `TTTc........` | 半破 | PASS（论文候选 2 的例子现在由 v3 命中；关掉 v3 仍由候选 2 兜底） |
+
+#### 验收数字
+
+| 项 | 结果 |
+|---|---|
+| 全量测试 | **210/210** 通过（208 项原有 + 2 项新增；claw / 二择 2 项 XFAIL 保持），约 84 s |
+| 新增用例 | `角工序:半边 v3 角产物 + 对角爆破柱`（10 层样例，前态四列逐格 / 紧列 / P1 / 真实 Cut / 晶体数）、`角工序:半边 v3 单列目标退回旧候选`（单列目标 v3 回放失败 ⇒ 旧候选 3 兜底，不伪造 v3 命中） |
+| `HALFAUDIT`（7–9 层非 S） | `legalNonS=229 halfTargets=2 halfComplete=8 notProducible=223 uncovered=0 problems=0`（未下降） |
+| `HALFAUDIT-V3` | `v3Complete=1 fallbackComplete=7 singleColumnNoLift=0 singleColumnReplayRejected=229 singleColumnNotApplicable=0` |
+| `AUDIT` / `LAYERAUDIT` / `NINEAUDIT` | `s=2125 / 4320+12646 / 36508` 全部 `failures=0`、`falsePositives=0`（3–9 层回归不变） |
+| n = 6/8 | 语料 8 / 9 / 12 全部通过；`HALFFENCE claimed=0` 不退 |
+| 耗时 | `HALFAUDIT` 所在的半边测试组 26 项合计 **1.7 s**（含 229 例 v3 探测，≤ 8 s）；10 层样例单次 < 1 ms |
+| 测试断言改动 | 候选 2 的论文例 / 候选 3 的跨层环锚 / 用户 8 层图形现在默认走 v3（前态多一根对角爆破柱 Q3），相应断言按 v3 更新；旧候选 2 / 3 的兜底形态通过 `preferCutReuseV3: false` 继续覆盖 |
+
+#### 两列语料（v3 的适用域）
+
+v3 的验收口径是「**两列**各自落回目标半边」。两列语料分两部分度量：
+
+**(a) 验收回放样例（定向语料，4 例）**
+
+| 目标（u \| v） | v3 | 旧候选（关 v3 后） | 兜底 |
+|---|---|---|---|
+| `T.cT.T.cPT \| PPTTTT.ccc`（10 层） | ✔ | ✔（§2） | 0 |
+| `cT.T.cPT \| TTTT.ccc`（8 层） | ✔ | ✔（§2 / 候选 3） | 0 |
+| `cT.T.cTcccTc \| TTTT.cccPT..`（12 层） | ✔ | ✔（候选 3） | 0 |
+| `cT.T.cT.Tccc \| TTTT.cccccPT`（12 层） | ✔ | ✔（候选 2） | 0 |
+
+⇒ 4/4 由 v3 命中；关掉 v3 后 4/4 仍由旧候选兜底 ⇒ **超集成立**（v3 只改前态形态，不抢掉旧覆盖）。
+
+**(b) 随机两列语料（n = 4，层数 4–9，固定种子 20261121，每层 4k–12k 个样本，共 640,000 对）**
+
+| 项 | 数 | 占可行半边 |
+|---|---:|---:|
+| 旧候选可行的半边（`BuildHalf(preferCutReuseV3:false) != null`） | 320,945 | 100% |
+| **v3 命中**（`CutReuseV3`） | **2,070** | **0.6%** |
+| 旧候选兜底命中（v3 不适用 / 回放失败） | 318,875 | 99.4% |
+| v3 `NoLiftSource`（抬升后不能自停） | **0** | 0% |
+| v3 `ReplayRejected`（造出来但半破后两列不符） | 36,580 | 11.4% |
+| v3 `NotApplicable`（无晶下间隙 / 单列等，旧候选接手） | 282,295 | 88.0% |
+
+- 只看 v3 真正尝试的 38,650 例（有晶下间隙）：v3 命中 2,070 = **5.4%**，
+  其余 36,580 回放失败后退旧候选；
+- **「抬升后不能自停」= 0 次**（所有测过的语料里 `NoLiftSource` 都是 0）；
+  兜底主要是「没有晶下间隙（NotApplicable）」与「两列结构不咬合（ReplayRejected）」；
+- 结论：v3 是一个**更通用的前态构造**（两列各自抬升 + 对角爆破柱），
+  但在随机语料里适用的比例不高；旧三候选仍是绝大多数半边的主力，符合「旧候选降级为兜底、
+  不是删除」的定位。
+
+#### 229 个单列目标：v3 不适用，保持 8（已裁决按 (a) 收尾）
+
+`HALFAUDIT` 的 229 个非 S 合法角是**单列目标**（第二列恒为空）：没有第二列的刹车 / 环支撑，
+抬升后的普通格会多落一层、原生晶体也会失去支撑 ⇒ v3 的 229 次探测全部是 `ReplayRejected`，
+覆盖仍由旧候选 3 兜底：
+
+- 229 例 `halfComplete=8`（旧文档写 6；实际代码基线就是 8：6 个单列 + 2 个论文两列例），
+  其中 v3 直接命中 0 个单列 + 1 个论文两列例，旧候选兜底 7 个；
+- 这是 v3 的**适用域问题**，不是实现 bug：v3 的规格是「两列各自由爆破柱落回目标」，
+  单列目标本来就不在域内；没有为了凑数去放宽 v3 的验收或伪造单列前态；
+- **待办（另行子任务，不与 v3 混在一起）**：为单列目标合成环伙伴 / 刹车
+  （`docs/half-side-algorithm-summary.md` §6 的「分段半边」方向）。
+  需要的输入：单列目标 + 其缺口锚层；输出：一根能提供刹车与支撑环的辅助列
+  （candidate 3 的 `Constructed` 伙伴只覆盖 `c-P-T` 顶部，需要推广到任意顶部形态）。
+  在完成之前，单列目标的覆盖仍以旧候选 3 为准。
+

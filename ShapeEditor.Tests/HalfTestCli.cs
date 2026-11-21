@@ -298,7 +298,7 @@ internal static class HalfTestCli
         Console.WriteLine();
         Console.WriteLine(
             "[操作] " + (half.OperationText ?? "—") +
-            "（" + CandidateName(half.Candidate) + "；顺转 " +
+            "（" + RouteName(half) + "；顺转 " +
             half.Rotation + " 个象限）");
 
         ShapeDocument? replayed = ReplayHalf(half);
@@ -906,13 +906,18 @@ internal static class HalfTestCli
                 : "FAIL（" + outcome.Reason + "）"));
     }
 
-    /// <summary>这条半边走的是哪条路线（§2 / 候选 3 / 候选 1 / 候选 2）。</summary>
+    /// <summary>这条半边走的是哪条路线（v3 / §2 / 候选 3 / 候选 1 / 候选 2）。</summary>
     private static string RouteName(
         HalfWorkOrder? half)
     {
         if (half is null)
         {
             return "—";
+        }
+
+        if (half.CutReuseV3)
+        {
+            return "v3：角产物 + 对角爆破柱 + 一刀";
         }
 
         if (half.Limitations.Any(line => line.StartsWith(

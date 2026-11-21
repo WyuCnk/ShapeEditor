@@ -247,6 +247,8 @@ internal static class Program
             ("角工序:半边候选 3 多保险丝", AngleWorkOrderTests.HalfSideFuseHandlesMultipleTemporaryBlocks),
             ("角工序:半边候选 3 跨层抬升", AngleWorkOrderTests.HalfSideCrossLayerLiftBuildsFilledPreState),
             ("角工序:半边候选 3 跨层环锚与尾部保留", AngleWorkOrderTests.HalfSideCrossLayerKeepsLongPartnerTail),
+            ("角工序:半边 v3 角产物 + 对角爆破柱", AngleWorkOrderTests.HalfSideV3CutReuseMatchesUserReplay),
+            ("角工序:半边 v3 单列目标退回旧候选", AngleWorkOrderTests.HalfSideV3LeavesIsolatedColumnToFallback),
 
             // 2026-11-18 第七轮：候选优先级改为「终止前态 + 一次半破」优先。
             ("角工序:半边优先候选 3（用户图形）", AngleWorkOrderTests.HalfSidePrefersTempCrystalFuseOverUplift),
