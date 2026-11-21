@@ -180,6 +180,12 @@ public sealed class WorkOrderCardView
     /// </summary>
     public bool TightColumnProduct;
 
+    /// <summary>
+    /// v4 半边里的角卡：产物 = <b>逆提升后</b>的目标列 + 左右支撑柱（Q1），
+    /// 角卡自己的碎晶 / 顶针仍然可见；半边卡只做交换 / 拆柱 / 跌落。
+    /// </summary>
+    public bool LiftCornerProduct;
+
     /// <summary>卡内步骤（含隐藏步骤，按执行顺序）。</summary>
     public IReadOnlyList<CardStep> Steps = Array.Empty<CardStep>();
 

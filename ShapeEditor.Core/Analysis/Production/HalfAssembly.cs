@@ -777,28 +777,23 @@ public static class HalfAssembly
                 break;
             }
 
-            case HalfCandidate.TempCrystalFuse:
+            case HalfCandidate.LiftCornerDrop:
             {
-                CutResult cut = ShapePhysics.Cut(
-                    ShapeOps.Rotate(preState, order.Rotation));
+                ShapeDocument? collapsed = ShapePhysics.Collapse(preState).Document;
 
-                if (!cut.Success || cut.West is null)
+                if (!ShapeOps.Same(collapsed, expected))
                 {
-                    error = "候选 3 的真实 Cut 失败。";
-                    return false;
-                }
-
-                ShapeDocument replayed = ShapeOps.Rotate(
-                    cut.West,
-                    -order.Rotation);
-
-                if (!ShapeOps.Same(replayed, expected))
-                {
-                    error = "候选 3 半破后的 k 列与半边目标不符。";
+                    error = "v4 的逆提升前态一次跌落没有回到目标半边。";
                     return false;
                 }
 
                 break;
+            }
+
+            case HalfCandidate.TempCrystalFuse:
+            {
+                error = "v3 的碎晶候选已废弃，不再回放。";
+                return false;
             }
 
             default:
@@ -910,7 +905,8 @@ public static class HalfAssembly
         {
             HalfCandidate.Algo8Self => "候选 1：Q 自身",
             HalfCandidate.Algo8Uplift => "候选 2：联合逆提升",
-            _ => "候选 3：临时晶体 + 保险丝 + 一刀"
+            HalfCandidate.LiftCornerDrop => "v4：逆提升 + 各自做角 + 拆柱跌落",
+            _ => "候选 3：临时晶体 + 保险丝 + 一刀（已废弃）"
         };
     }
 }

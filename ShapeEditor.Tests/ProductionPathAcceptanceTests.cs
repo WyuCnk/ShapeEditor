@@ -1210,20 +1210,16 @@ internal static class ProductionPathAcceptanceTests
             Assert.True(right is not null, $"n = {parts} 的右半边应可得");
 
             /*
-             * 2026-11-18 用户口径：半边工序优先候选 3（临时晶体 + 保险丝 + 一刀），
-             * 候选 3 不成立时才退候选 1 / 2。
-             *
-             * n = 6：两条轴的主列都是 cT.T.cPT ⇒ 候选 3 命中。
-             * n = 8：两条轴的主列（第 1 / 第 5 象限）都是空列，候选 3 的形态谓词
-             *        （s = 最高晶体层、顶部三层 c-P-T）不成立 ⇒ 退回候选 1（Q 自身），
-             *        正是「候选 3 做不出来再退 1 / 2」的那条分支。
+             * n = 6 / 8 的 k 列半边仍走论文候选 1 / 2（v4 只替换 n = 4）：
+             * 主列都在 S、Q 稳定时是候选 1（Q 自身），否则候选 2（联合逆提升）。
              */
-            HalfCandidate expectedCandidate = parts == 6
-                ? HalfCandidate.TempCrystalFuse
-                : HalfCandidate.Algo8Self;
-
-            Assert.Equal(expectedCandidate, left!.Candidate);
-            Assert.Equal(expectedCandidate, right!.Candidate);
+            Assert.True(
+                left!.Candidate is HalfCandidate.Algo8Self or HalfCandidate.Algo8Uplift,
+                "n ≥ 6 的半边应走论文候选 1 / 2，实际 " + left.Candidate);
+            Assert.True(
+                right!.Candidate is HalfCandidate.Algo8Self or HalfCandidate.Algo8Uplift,
+                "n ≥ 6 的半边应走论文候选 1 / 2，实际 " + right.Candidate);
+            Assert.Equal(left.Candidate, right.Candidate);
             Assert.Equal(width, left.Target.Columns.Count);
             Assert.Equal(width, right.Target.Columns.Count);
 
@@ -1380,14 +1376,14 @@ internal static class ProductionPathAcceptanceTests
             ShapeSignature.AllColumnsLegal(target, out _),
             "示例图形的每一列都应合法");
 
-        // 两个半边完全相同 ⇒ 两边都走半边工序（候选 3：临时晶体 + 保险丝 + 一刀）。
+        // 两个半边完全相同 ⇒ 两边都走 v4 半边工序。
         HalfWorkOrder? left = AngleWorkOrderBuilder.BuildHalf(target, 0, 8);
         HalfWorkOrder? right = AngleWorkOrderBuilder.BuildHalf(target, 2, 8);
 
         Assert.True(left is not null, "示例左半边应可得");
         Assert.True(right is not null, "示例右半边应可得");
-        Assert.Equal(HalfCandidate.TempCrystalFuse, left!.Candidate);
-        Assert.Equal(HalfCandidate.TempCrystalFuse, right!.Candidate);
+        Assert.Equal(HalfCandidate.LiftCornerDrop, left!.Candidate);
+        Assert.Equal(HalfCandidate.LiftCornerDrop, right!.Candidate);
 
         // 整图管线：示例本身可制作（当前由交换链先命中，行为不变）。
         PipelineResult solved = ProductionPipeline.Solve(target, 8);

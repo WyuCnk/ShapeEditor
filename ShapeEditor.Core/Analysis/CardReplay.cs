@@ -38,6 +38,8 @@ public static class CardReplay
     {
         "碎晶",
         "交换",
+        "拆柱",
+        "跌落",
         "顶破",
         "堆叠"
     };
@@ -51,6 +53,8 @@ public static class CardReplay
         "旋转",
         "碎晶",
         "交换",
+        "拆柱",
+        "跌落",
         "顶破",
         "堆叠",
         "堆叠尾",
@@ -254,6 +258,7 @@ public static class CardReplay
 
                 case "下落":
                 case "弱落":
+                case "跌落":
                     if (input is null)
                     {
                         collected.Add(label + "没有可下落的输入。");
@@ -264,6 +269,18 @@ public static class CardReplay
                     {
                         collected.Add(
                             label + "真实 Collapse 的结果与该步产物不逐格相等");
+                    }
+
+                    break;
+
+                case "拆柱":
+                    if (input is null)
+                    {
+                        collected.Add(label + "没有可拆柱的输入。");
+                    }
+                    else if (!RemovesSupportPillars(input, step.Output, out string pillarReason))
+                    {
+                        collected.Add(label + pillarReason);
                     }
 
                     break;
@@ -496,6 +513,17 @@ public static class CardReplay
         if (card.Steps.Count == 0 ||
             !ShapeOps.Same(card.PreState, card.Steps[0].Output))
         {
+            /*
+             * A 类半边卡（FromCorners）的前态字段是「拆柱后、跌落前」——
+             * 它是回放链的中间一步，不是起点；只要求它确实是链上某一步的产物。
+             */
+            if (card.Mode == HalfMode.FromCorners &&
+                card.Steps.Any(step => ShapeOps.Same(card.PreState, step.Output)))
+            {
+                reason = string.Empty;
+                return true;
+            }
+
             reason = "卡片前态不是回放链的起点（第一步产物与前态不逐格相等）。";
             return false;
         }
@@ -755,6 +783,110 @@ public static class CardReplay
                     return false;
                 }
             }
+        }
+
+        reason = string.Empty;
+        return true;
+    }
+
+    /// <summary>
+    /// 「拆柱」的结构校验：输出只允许把<b>恰好两根</b>支撑柱整列清空，
+    /// 其余列逐格保持不变；被清空的两列在输入里必须是「连续接地的普通格柱」。
+    /// </summary>
+    public static bool RemovesSupportPillars(
+        ShapeDocument before,
+        ShapeDocument after,
+        out string reason)
+    {
+        if (before.LayerCount != after.LayerCount ||
+            before.PartCount != after.PartCount)
+        {
+            reason = "拆柱前后的尺寸不一致。";
+            return false;
+        }
+
+        var removed = new List<int>();
+
+        for (int part = 0; part < before.PartCount; part++)
+        {
+            bool beforeEmpty = true;
+            bool afterEmpty = true;
+
+            for (int layer = 0; layer < before.LayerCount; layer++)
+            {
+                if (before[layer, part].Type != CellType.Empty)
+                {
+                    beforeEmpty = false;
+                }
+
+                if (after[layer, part].Type != CellType.Empty)
+                {
+                    afterEmpty = false;
+                }
+            }
+
+            if (afterEmpty && !beforeEmpty)
+            {
+                removed.Add(part);
+                continue;
+            }
+
+            for (int layer = 0; layer < before.LayerCount; layer++)
+            {
+                if (!ShapeOps.SameCell(before[layer, part], after[layer, part]))
+                {
+                    reason = $"第 {part + 1} 象限在拆柱时被改动了。";
+                    return false;
+                }
+            }
+        }
+
+        if (removed.Count != 2)
+        {
+            reason = "拆柱应恰好清空两根支撑柱，实际清空了 " + removed.Count + " 列。";
+            return false;
+        }
+
+        foreach (int part in removed)
+        {
+            bool emptySeen = false;
+
+            for (int layer = 0; layer < before.LayerCount; layer++)
+            {
+                ShapeCell cell = before[layer, part];
+
+                if (cell.Type == CellType.Empty)
+                {
+                    emptySeen = true;
+                    continue;
+                }
+
+                if (emptySeen || cell.Type != CellType.Shape)
+                {
+                    reason = $"第 {part + 1} 象限不是连续接地的普通格柱。";
+                    return false;
+                }
+            }
+        }
+
+        int remaining = 0;
+
+        for (int part = 0; part < after.PartCount; part++)
+        {
+            for (int layer = 0; layer < after.LayerCount; layer++)
+            {
+                if (after[layer, part].Type != CellType.Empty)
+                {
+                    remaining++;
+                    break;
+                }
+            }
+        }
+
+        if (remaining < 2)
+        {
+            reason = "拆柱后剩下的列不足两列，无法核对半边。";
+            return false;
         }
 
         reason = string.Empty;

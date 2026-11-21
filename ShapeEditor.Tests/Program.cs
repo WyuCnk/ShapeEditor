@@ -18,7 +18,6 @@ internal static class Program
         {
             return 0;
         }
-
         /*
          * 半边工序的手动测试入口（不是测试项）：
          *   --half "u" "v" / --half-shape "短代码" / --half-file 路径
@@ -242,23 +241,22 @@ internal static class Program
             ("角工序:算法 5 底格是针", AngleWorkOrderTests.Algorithm5BuildsBottomPinAngle),
             ("角工序:不合法角不可制作", AngleWorkOrderTests.IllegalAngleIsNotProducible),
             ("角工序:合法非 S 判不可制作", AngleWorkOrderTests.PillarHolderDoesNotClaimNonSCriterion),
-            ("角工序:半边工序候选 3 触发例", AngleWorkOrderTests.HalfSideTempCrystalFuseBuildsAnchor),
-            ("角工序:半边工序候选 3 同族变体", AngleWorkOrderTests.HalfSideTempCrystalFuseCoversVariants),
-            ("角工序:半边工序不误报形态外", AngleWorkOrderTests.HalfSideDoesNotClaimOutOfScopeCorners),
-            ("角工序:半边工序切割轴旋转", AngleWorkOrderTests.HalfSideHandlesRotation),
-            ("角工序:半边候选 1（Q 自身）", AngleWorkOrderTests.HalfSideAlgo8SelfBuildsStableHalf),
-            ("角工序:半边候选 2（联合逆提升）", AngleWorkOrderTests.HalfSideAlgo8UpliftBuildsPaperExample),
+            // 2026-11-21 第二十一轮：半边工序 v4（删减 v3 / 三候选）。
+            ("角工序:半边 v4 经典例", AngleWorkOrderTests.HalfSideV4BuildsAnchor),
+            ("角工序:半边 v4 回归族 2–5", AngleWorkOrderTests.HalfSideV4CoversRegressionFamily),
+            ("角工序:半边 v4 反例 A", AngleWorkOrderTests.HalfSideV4ReproducesCounterexampleA),
+            ("角工序:半边 v4 反例 B", AngleWorkOrderTests.HalfSideV4ReproducesCounterexampleB),
+            ("角工序:半边 v4 第 6 条不可制作", AngleWorkOrderTests.HalfSideV4RejectsSixthRegression),
+            ("角工序:半边 v4 非法列不冒领", AngleWorkOrderTests.HalfSideV4DoesNotClaimIllegalColumns),
+            ("角工序:半边 v4 对齐右半边", AngleWorkOrderTests.HalfSideV4AlignsRightHalf),
+            ("角工序:半边 v4 单列目标不可制作", AngleWorkOrderTests.HalfSideV4SingleColumnTargetIsNotProducible),
+            ("角工序:半边 v4 前态 P1", AngleWorkOrderTests.HalfSideV4PreStateIsLiftedAndP1Clean),
+            ("角工序:半边 v4 交换两根柱", AngleWorkOrderTests.HalfSideV4ExchangeHasTwoSupportPillars),
+            ("角工序:k 列半边候选 1", AngleWorkOrderTests.HalfSideAlgo8SelfBuildsStableHalf),
             ("角工序:k 列半边（n=6/8）", AngleWorkOrderTests.HalfSideGeneralizesToKColumns),
             ("角工序:k 列半边不做假阳性", AngleWorkOrderTests.HalfSideKColumnsDoesNotFakeUnstableHalf),
-            ("角工序:半边候选 3 多保险丝", AngleWorkOrderTests.HalfSideFuseHandlesMultipleTemporaryBlocks),
-            ("角工序:半边候选 3 跨层抬升", AngleWorkOrderTests.HalfSideCrossLayerLiftBuildsFilledPreState),
-            ("角工序:半边候选 3 跨层环锚与尾部保留", AngleWorkOrderTests.HalfSideCrossLayerKeepsLongPartnerTail),
-            ("角工序:半边 v3 角产物 + 对角爆破柱", AngleWorkOrderTests.HalfSideV3CutReuseMatchesUserReplay),
-            ("角工序:半边 v3 单列目标退回旧候选", AngleWorkOrderTests.HalfSideV3LeavesIsolatedColumnToFallback),
-
-            // 2026-11-18 第七轮：候选优先级改为「终止前态 + 一次半破」优先。
-            ("角工序:半边优先候选 3（用户图形）", AngleWorkOrderTests.HalfSidePrefersTempCrystalFuseOverUplift),
-            ("角工序:候选 2 只写下落不写半破", AngleWorkOrderTests.HalfSideUpliftChainSaysFallNotHalfBreak),
+            ("角工序:半边 v4 失败不写未覆盖", AngleWorkOrderTests.HalfSideV4NotesAreNotUncovered),
+            ("角工序:半边 v4 五步中间态顺序", AngleWorkOrderTests.HalfSideV4WireFormatMatchesCliSequence),
             ("角工序:P1 审计（§R1）", ConstructedHGeneralTests.P1AuditIsClean),
             ("角工序:§R9 三个样例（通用 H）", ConstructedHGeneralTests.ThreePaperSamplesUseGeneralH),
             ("角工序:§0.4 覆盖深间隙与 §17 三族", ConstructedHGeneralTests.Rule17CoversDeepGapFamily),
@@ -333,10 +331,10 @@ internal static class Program
             ("卡片:角卡数量与真实回放", CardHierarchyTests.CardCountsAndReplayForUserExamples),
             ("卡片:角卡产物固定 Q1", CardHierarchyTests.CornerCardOutputsAreFixedAtQ1),
             ("卡片:半边卡真实回放", CardHierarchyTests.HalfCardsReplayWithRealPhysics),
-            ("卡片:角卡归属需要碎晶的半边（紧列产物）", CardHierarchyTests.HalfOwnedCornersUseHalfPreStateTightColumns),
-            ("卡片:半边卡输入紧列与真实碎晶", CardHierarchyTests.HalfCardUsesTightColumnInputsAndRealCuts),
+            ("卡片:角卡归属 v4 半边（角产物）", CardHierarchyTests.HalfOwnedCornersUseV4CornerProducts),
+            ("卡片:半边卡角输入与拆柱跌落", CardHierarchyTests.HalfCardUsesCornerInputsAndDropsPillars),
             ("卡片:独立角保留碎晶", CardHierarchyTests.IndependentCornersKeepCrystalBreak),
-            ("卡片:只有碎晶半边的角改紧列", CardHierarchyTests.OnlyCutHalfCornersBecomeTight),
+            ("卡片:只有 v4 半边的角用角产物", CardHierarchyTests.OnlyV4HalfCornersUseCornerProducts),
             ("卡片:n=6 六角两层", CardHierarchyTests.SixQuadrantCardsAreComplete),
             ("卡片:校验失败降级", CardHierarchyTests.FailedCardsDropInputsAndExplain)
         };

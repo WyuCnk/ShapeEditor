@@ -268,11 +268,11 @@ internal static class CardCli
             ? "碎晶 × " + cuts.Length
             : DescribeSteps(card)));
 
-        for (int index = 0; index < cuts.Length; index++)
+        foreach (CardStep step in card.VisibleSteps)
         {
             Console.WriteLine(
-                "  碎晶第 " + (index + 1) + " 步（真实 Cut） = " +
-                new ShortCodeExporter().Export(cuts[index].Output));
+                "  " + step.Operation + " = " +
+                new ShortCodeExporter().Export(step.Output));
         }
 
         PrintHidden(card);

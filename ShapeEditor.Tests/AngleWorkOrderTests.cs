@@ -4083,54 +4083,29 @@ internal static class AngleWorkOrderTests
 
     #endregion
 
-    #region 半边工序（候选 3：临时晶体 + 保险丝 + 一刀）
+    #region 半边工序（v4：逆提升 → 各自做角 → 交换 → 拆柱 → 跌落）
 
     /// <summary>
-    /// 触发例 <c>cT.T.cPT</c>（8 层）：五项 ✔、D ✘、F ✘ ⇒ 不属于 n = 4 的 S，
-    /// 单角做不出来，但半边（两列一起做）可以。
-    ///
-    /// <para>
-    /// 候选 3 的前态（docs/half-side-work-order.md §2）：
-    /// </para>
-    /// <code>
-    /// Q1 cTccTcPT   ← 把 (s−2) 的 T 提到 s−1，洞全填临时晶体
-    /// Q2 TTTcTccc   ← 顶部三层 ccc 与 Q1 的 c-P-T 咬合；闸门层（s−2）放晶体
-    /// Q3 空
-    /// Q4 TTTc....   ← 只在临时晶体那一层（s−2）放一颗保险丝晶体
-    /// </code>
-    /// <para>
-    /// 一刀之后 Q1 = <c>cT.T.cPT</c>、Q2 = <c>TTTT.ccc</c>，两列逐格（类型 /
-    /// 形状码 / 颜色）都必须对上；辅助列全程紧列（§17.7）。
-    /// </para>
+    /// 经典例 <c>cT.T.cPT | TTTT.ccc</c>：Build 走 v4，外层与 Half 的步骤链、
+    /// 中间态、逐格回放都必须成立。
     /// </summary>
-    public static void HalfSideTempCrystalFuseBuildsAnchor()
+    public static void HalfSideV4BuildsAnchor()
     {
         const int cap = 8;
-        const string text = "cT.T.cPT";
 
-        ShapeDocument target = FromColumns(4, cap, (0, text));
+        ShapeDocument target = FromColumns(
+            4,
+            cap,
+            (0, "cT.T.cPT"),
+            (1, "TTTT.ccc"));
 
-        Assert.True(
-            ShapeSignature.IsLegalColumn(target, 0),
-            "cT.T.cPT 应是合法列");
-        Assert.False(
-            PillarSCriterion.IsPillarColumn(target, 0),
-            "cT.T.cPT 不属于 n = 4 的 S（D 与 F 都不成立）");
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(
+            target,
+            0,
+            cap,
+            preferCrystalBreak: false);
 
-        // 预热后再计时：候选 3 走 Build 的非 S 分支，首调用含 JIT。
-        _ = AngleWorkOrderBuilder.Build(target, 0, cap, preferCrystalBreak: false);
-
-        var watch = Stopwatch.StartNew();
-
-        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap, preferCrystalBreak: false);
-
-        watch.Stop();
-
-        Console.WriteLine(
-            $"  候选 3（TempCrystalFuse）单次 {watch.Elapsed.TotalMilliseconds:F2} ms");
-
-        Assert.True(order.IsComplete, order.Note ?? "cT.T.cPT 的半边工序应验证通过");
-        Assert.True(order.Note is null, order.Note ?? "通过时不应有说明");
+        Assert.True(order.IsComplete, order.Note ?? "cT.T.cPT 的半边应可做");
         Assert.Equal(AngleConstruction.Half, order.Construction);
         Assert.Equal(AngleAlgorithm.None, order.Algorithm);
         Assert.Equal(0, order.Rank);
@@ -4139,595 +4114,387 @@ internal static class AngleWorkOrderTests
         AssertStepKinds(
             order,
             AngleWorkStepKind.PreState,
-            AngleWorkStepKind.Cut,
             AngleWorkStepKind.Target);
 
         HalfWorkOrder half = order.Half
             ?? throw new InvalidOperationException("半边工序必须带 Half 字段");
 
         Assert.True(half.IsComplete, half.Note ?? "半边应验证通过");
-        Assert.True(half.Note is null);
-        Assert.Equal(HalfCandidate.TempCrystalFuse, half.Candidate);
-        Assert.Equal(0, half.Rank);
+        Assert.Equal(HalfCandidate.LiftCornerDrop, half.Candidate);
+        Assert.Equal("交换 + 拆柱 + 跌落", half.OperationText);
         Assert.Equal(0, half.Target.PrimaryColumn);
         Assert.Equal(2, half.Target.Columns.Count);
         Assert.Equal(0, half.Target.Columns[0]);
         Assert.Equal(1, half.Target.Columns[1]);
-        Assert.Equal(3, half.Steps.Count);
+
+        Assert.Equal(4, half.Steps.Count);
         Assert.Equal(AngleWorkStepKind.PreState, half.Steps[0].Kind);
-        Assert.Equal(AngleWorkStepKind.Cut, half.Steps[1].Kind);
+        Assert.Equal(AngleWorkStepKind.Exchange, half.Steps[1].Kind);
+        Assert.Equal(AngleWorkStepKind.Support, half.Steps[2].Kind);
         Assert.Equal(AngleWorkStepKind.Target, half.Steps[^1].Kind);
-        Assert.True(
-            order.Limitations.Any(line => line.Contains("半边工序")),
-            "限制说明应写明这是半边工序");
-
-        ShapeDocument preState = Step(order, AngleWorkStepKind.PreState).Shape!;
-
-        Assert.Equal(
-            "cTccTcPT",
-            ShapeSignature.ColumnText(preState, 0),
-            "Q1 应是「抬升 + 洞填临时晶体」的紧列");
-        Assert.Equal(
-            "TTTcTccc",
-            ShapeSignature.ColumnText(preState, 1),
-            "Q2 应顶部三层 ccc、闸门层（s−2）放晶体");
-        Assert.Equal(
-            "........",
-            ShapeSignature.ColumnText(preState, 2),
-            "Q3 应留空");
-        Assert.Equal(
-            "TTTc....",
-            ShapeSignature.ColumnText(preState, 3),
-            "Q4 只在临时晶体那一层放一颗保险丝晶体");
-
-        // §17.7：前态每一列都必须是紧列（辅助列尤其如此）。
-        for (int part = 0; part < 4; part++)
-        {
-            Assert.True(
-                ShapeSignature.IsTightColumn(preState, part),
-                $"第 {part + 1} 象限的前态列必须是紧列");
-        }
-
-        // §6 第 1、2 条：前态每列合法、前态目标列 ≠ 目标。
-        Assert.NotEqual(text, ShapeSignature.ColumnText(preState, 0));
-        Assert.True(
-            ShapeSignature.AllColumnsLegal(preState, out int badColumn),
-            $"前态第 {badColumn + 1} 象限不是合法列");
-        Assert.True(ShapeOps.IsStable(preState), "前态必须稳定");
         Assert.False(
-            order.HasIllegalPreState(out _, out _),
-            "半边前态不应违反 §6 第 7 条的洞闸门");
+            half.Steps.Any(step => step.Kind == AngleWorkStepKind.Cut),
+            "v4 半边里不能再有 Cut 步");
 
-        // ── 真实回放：旋转 → 真实 Cut → 转回 ──
-        ShapeDocument rotated = ShapeOps.Rotate(preState, order.Rotation);
+        // ① 逆提升：两列都抬一格，变成角工序能做的 S 列。
+        ShapeDocument lifted = half.Steps[0].Shape!;
+        Assert.Equal("cT..TcPT", ShapeSignature.ColumnText(lifted, 0));
+        Assert.Equal("TTT.Tccc", ShapeSignature.ColumnText(lifted, 1));
+        Assert.True(
+            PillarSCriterion.IsPillarColumn(lifted, 0) &&
+            PillarSCriterion.IsPillarColumn(lifted, 1),
+            "逆提升后两列都必须属于 S");
+        Assert.False(
+            AngleWorkOrderBuilder.P1Violation(lifted, out _, out _),
+            "逆提升后的前态必须满足 P1（每颗晶体坐在材料上）");
+        Assert.Equal(2, half.LiftNotes.Count);
 
-        CutResult cut = ShapePhysics.Cut(rotated);
+        // ② 两张角卡产物（目标列 + 左右柱，归一化 Q1）
+        Assert.Equal(2, half.CornerProducts.Count);
+        Assert.Equal(2, half.CornerOrders.Count);
+        Assert.True(half.CornerOrders[0].IsComplete);
+        Assert.True(half.CornerOrders[1].IsComplete);
+        Assert.Equal("cT..TcPT", ShapeSignature.ColumnText(half.CornerProducts[0], 0));
+        Assert.Equal("TTT.Tccc", ShapeSignature.ColumnText(half.CornerProducts[1], 0));
 
-        Assert.True(cut.Success, cut.Error ?? "切割失败");
+        // ③ 交换：两根支撑柱各来自一张角卡，中间两列是逆提升后的两列。
+        ShapeDocument exchanged = half.ExchangedShape!;
+        Assert.Equal("cT..TcPT", ShapeSignature.ColumnText(exchanged, 1));
+        Assert.Equal("TTT.Tccc", ShapeSignature.ColumnText(exchanged, 2));
+        Assert.True(IsPillarOnly(exchanged, 0), "交换后第 1 象限应是支撑柱");
+        Assert.True(IsPillarOnly(exchanged, 3), "交换后第 4 象限应是支撑柱");
 
-        ShapeDocument replayed = ShapeOps.Rotate(cut.West!, -order.Rotation);
+        // ④ 拆柱：只清空这两根柱。
+        ShapeDocument stripped = half.StrippedShape!;
+        Assert.True(IsEmptyColumn(stripped, 0) && IsEmptyColumn(stripped, 3));
+        Assert.Equal("cT..TcPT", ShapeSignature.ColumnText(stripped, 1));
+        Assert.Equal("TTT.Tccc", ShapeSignature.ColumnText(stripped, 2));
 
+        // ⑤ 跌落：一次真实 Collapse，两列逐格回到目标。
+        ShapeDocument preSettle = half.PreSettleShape!;
+        ShapeDocument settled = ShapePhysics.Collapse(preSettle).Document!;
+
+        Assert.True(
+            ShapeOps.Same(settled, half.Steps[^1].Shape),
+            "Target 步必须等于真实 Collapse 的落定结果");
+        Assert.Equal("cT.T.cPT", ShapeSignature.ColumnText(settled, 0));
+        Assert.Equal("TTTT.ccc", ShapeSignature.ColumnText(settled, 1));
         Assert.True(
             ShapeOps.Same(
-                replayed,
-                Step(order, AngleWorkStepKind.Cut).Shape),
-            "Cut 步必须等于真实 Cut 出来的西半边");
+                half.Steps[^1].Shape,
+                ShapeOps.Project(target, 0, 2)),
+            "半边目标必须逐格等于目标的那两列");
 
-        Assert.Equal(
-            "cT.T.cPT",
-            ShapeSignature.ColumnText(replayed, 0),
-            "半破后第 1 列应逐格等于目标列");
-        Assert.Equal(
-            "TTTT.ccc",
-            ShapeSignature.ColumnText(replayed, 1),
-            "半破后第 2 列应等于半边伙伴的目标形态");
-
-        // 两列逐格核对：类型 / 形状码 / 颜色。
         Assert.True(
-            ShapeOps.Same(replayed, half.Steps[^1].Shape),
-            "两列都应逐格等于半边目标（含形状码与颜色）");
-
-        // 不变量：只碎辅助晶体，目标列原生晶体一颗不少。
-        Assert.Equal(
-            4,
-            CountCrystals(preState, 0),
-            "前态目标列 = 2 颗原生晶体 + 2 颗临时晶体");
-        Assert.Equal(2, CountCrystals(replayed, 0));
-        Assert.Equal(0, CountCrystals(replayed, 3));
-        Assert.Equal(3, CountCrystals(replayed, 1));
-        Assert.Equal(
-            'r',
-            replayed[5, 0].ColorCode,
-            "目标列原生晶体的颜色必须保留");
-
-        // 末步清除环伙伴象限，得到单列目标角。
-        Assert.True(
-                AngleTestHelpers.TargetColumnMatches(order, target),
-                "末步应得到目标角");
+            half.Limitations.Any(line => line.Contains("v4", StringComparison.Ordinal)),
+            "限制说明应写明这是 v4 半边工序");
     }
 
-    /// <summary>
-    /// 同族的另外两格（9 / 10 层）：<c>cT..T.cPT</c>、<c>cT...T.cPT</c>。
-    /// 结构相同（只有 s−2 与更下方的洞数不同），候选 3 的层号全部由扫描得出，
-    /// 因此同样必须通过。
-    /// </summary>
-    public static void HalfSideTempCrystalFuseCoversVariants()
+    /// <summary>回归 2–5：同族的四个目标半边都必须通过 v4。</summary>
+    public static void HalfSideV4CoversRegressionFamily()
     {
-        var cases = new (string Text, string PreState, string Partner, string Fuse)[]
+        var cases = new (string U, string V)[]
         {
-            ("cT..T.cPT", "cTcccTcPT", "TTTTcTccc", "TTTTc...."),
-            ("cT...T.cPT", "cTccccTcPT", "TTTTTcTccc", "TTTTTc....")
+            ("cT.T..cPT", "TTTT..ccc"),
+            ("cT..T.cPT", "TTTTT.ccc"),
+            ("cT.T.cPPT", "TTTT.cccc"),
+            ("T.cT.T.cPT", "PPTTTT.ccc")
         };
 
-        foreach ((string text, string preStateText, string partnerText, string fuseText) in cases)
+        foreach ((string u, string v) in cases)
         {
-            int cap = text.Length;
+            HalfWorkOrder half = AssertV4Pass(u, v);
 
-            ShapeDocument target = FromColumns(4, cap, (0, text));
-
-            Assert.True(
-                ShapeSignature.IsLegalColumn(target, 0),
-                text + " 应是合法列");
-            Assert.False(
-                PillarSCriterion.IsPillarColumn(target, 0),
-                text + " 不应属于 n = 4 的 S");
-
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap, preferCrystalBreak: false);
-
-            Assert.True(
-                order.IsComplete,
-                order.Note ?? text + " 的半边工序应验证通过");
-            Assert.True(order.Note is null);
-            Assert.Equal(AngleConstruction.Half, order.Construction);
-
-            HalfWorkOrder half = order.Half
-                ?? throw new InvalidOperationException(text + " 必须带 Half 字段");
-
-            Assert.True(half.IsComplete);
-            Assert.Equal(HalfCandidate.TempCrystalFuse, half.Candidate);
+            Assert.Equal(2, half.LiftNotes.Count);
+            Assert.Equal(2, half.CornerProducts.Count);
             Assert.Equal(
-                "0,1",
-                string.Join(",", half.Target.Columns),
-                text + " 的半边应覆盖第 1、2 象限");
-
-            ShapeDocument preState = Step(order, AngleWorkStepKind.PreState).Shape!;
-
-            Assert.Equal(preStateText, ShapeSignature.ColumnText(preState, 0));
-            Assert.Equal(partnerText, ShapeSignature.ColumnText(preState, 1));
+                ShapeSignature.ColumnText(half.Steps[^1].Shape!, 0),
+                u.TrimEnd('.'));
             Assert.Equal(
-                new string('.', cap),
-                ShapeSignature.ColumnText(preState, 2));
-            Assert.Equal(fuseText, ShapeSignature.ColumnText(preState, 3));
-
-            for (int part = 0; part < 4; part++)
-            {
-                Assert.True(
-                    ShapeSignature.IsTightColumn(preState, part),
-                    $"{text} 的前态第 {part + 1} 象限必须是紧列");
-            }
-
-            Assert.True(ShapeOps.IsStable(preState), $"{text} 的前态应稳定");
-            Assert.True(
-                ShapeSignature.AllColumnsLegal(preState, out int badColumn),
-                $"{text} 的前态第 {badColumn + 1} 象限不合法");
-            Assert.False(order.HasIllegalPreState(out _, out _));
-
-            CutResult cut = ShapePhysics.Cut(
-                ShapeOps.Rotate(preState, order.Rotation));
-
-            Assert.True(cut.Success, cut.Error ?? text + " 切割失败");
-
-            ShapeDocument replayed = ShapeOps.Rotate(
-                cut.West!,
-                -order.Rotation);
-
-            Assert.Equal(
-                text,
-                ShapeSignature.ColumnText(replayed, 0),
-                text + " 半破后第 1 列应逐格等于目标列");
-            Assert.True(
-                ShapeOps.Same(replayed, half.Steps[^1].Shape),
-                text + " 的两列都应逐格等于半边目标");
-
-            Assert.True(
-                AngleTestHelpers.TargetColumnMatches(order, target),
-                text + " 的末步应得到目标角");
+                ShapeSignature.ColumnText(half.Steps[^1].Shape!, 1),
+                v.TrimEnd('.'));
         }
     }
 
     /// <summary>
-    /// 半边工序的候选 3 只覆盖「顶部 c-P-T + s−1 是洞 + s−2 是普通格」这一族：
-    /// 形态对不上时仍按原语义报「不可制作」，不能把「候选不适用」写成完成，
-    /// 也不能伪造 <see cref="HalfWorkOrder"/>。
+    /// 用户反例 A（前态，真实 Cut 后得到目标半边）：v4 必须复现同一个半边。
     /// </summary>
-    public static void HalfSideDoesNotClaimOutOfScopeCorners()
+    public static void HalfSideV4ReproducesCounterexampleA()
     {
-        foreach ((string text, int cap) in new[]
-                 {
-                     ("cT.T.c", 6),
-                     ("cT.T.cT", 7)
-                 })
-        {
-            ShapeDocument target = FromColumns(4, cap, (0, text));
+        const int layers = 13;
 
-            Assert.True(
-                ShapeSignature.IsLegalColumn(target, 0),
-                text + " 应是合法列");
-            Assert.False(
-                PillarSCriterion.IsPillarColumn(target, 0),
-                text + " 不应属于 n = 4 的 S");
+        ShapeDocument preState = Parse(
+            "crcrCu--:CucrCu--:CucrCu--:--crCu--:crcrCu--:crCuCu--:CuCuCu--:" +
+            "crCuCu--:crcrcr--:CuCu----:crcr----:P-cr----:Cucr----",
+            layers,
+            4);
 
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap, preferCrystalBreak: false);
+        CutResult cut = ShapePhysics.Cut(preState);
+        Assert.True(cut.Success, cut.Error ?? "反例 A 的真实 Cut 应成功");
 
-            Assert.False(order.IsComplete, text + " 的单角形态不能被半边候选误报完成");
-            Assert.True(order.Note is not null);
-            Assert.True(
-                order.Note!.StartsWith(
-                    AngleWorkOrderBuilder.NotProduciblePrefix,
-                    StringComparison.Ordinal),
-                text + " 的 Note 应以「不可制作：」开头：" + order.Note);
-            Assert.True(order.Half is null, text + " 不应伪造 Half 字段");
-        }
-    }
+        HalfWorkOrder? half = AngleWorkOrderBuilder.BuildHalf(cut.West!, 0, layers);
 
-    /// <summary>
-    /// 目标角放在非第 1 象限时，切割轴仍要选在「目标列 + 环伙伴」的西侧：
-    /// 顺转 1 个象限即可。两列结果按原始象限索引给出。
-    /// </summary>
-    public static void HalfSideHandlesRotation()
-    {
-        const int cap = 8;
-        const string text = "cT.T.cPT";
-
-        // 目标放在第 4 象限（索引 3）⇒ 半边 = 第 4、1 象限（连续 2 列）。
-        ShapeDocument target = FromColumns(4, cap, (3, text));
-
-        AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 3, cap);
-
-        Assert.True(order.IsComplete, order.Note ?? "旋转后的半边工序应验证通过");
-        Assert.Equal(1, order.Rotation);
-        Assert.Equal(AngleConstruction.Half, order.Construction);
-
-        HalfWorkOrder half = order.Half
-            ?? throw new InvalidOperationException("半边工序必须带 Half 字段");
-
-        Assert.Equal(3, half.Target.PrimaryColumn);
-        Assert.Equal("3,0", string.Join(",", half.Target.Columns));
-
-        ShapeDocument preState = Step(order, AngleWorkStepKind.PreState).Shape!;
-
-        Assert.Equal("cTccTcPT", ShapeSignature.ColumnText(preState, 3));
-        Assert.Equal("TTTcTccc", ShapeSignature.ColumnText(preState, 0));
-        Assert.Equal("........", ShapeSignature.ColumnText(preState, 1));
-        Assert.Equal("TTTc....", ShapeSignature.ColumnText(preState, 2));
-
-        CutResult cut = ShapePhysics.Cut(
-            ShapeOps.Rotate(preState, order.Rotation));
-
-        Assert.True(cut.Success, cut.Error ?? "切割失败");
-
-        ShapeDocument replayed = ShapeOps.Rotate(cut.West!, -order.Rotation);
-
-        Assert.Equal(text, ShapeSignature.ColumnText(replayed, 3));
-        Assert.Equal("TTTT.ccc", ShapeSignature.ColumnText(replayed, 0));
-        Assert.True(
-            ShapeOps.Same(replayed, half.Steps[^1].Shape),
-            "旋转后两列仍应逐格等于半边目标");
-    }
-
-    #endregion
-
-    #region 半边工序（候选 1 / 2：论文算法 8）
-
-    /// <summary>
-    /// 候选 1（算法 8 第一候选：Q 自身）。
-    ///
-    /// <para>
-    /// 两列都取 <c>cTcccccc</c>：都通过 n = 4 的 S 判据（五项 ∧ (D∨F)），
-    /// 且 Q 稳定（一次下落后逐格仍是 Q）。条件全满足 ⇒ 前态就是 Q 本身，
-    /// 步骤链只有 <c>PreState → Target</c>，不切割、不下落。
-    /// </para>
-    /// <para>
-    /// 注意路由：目标列本身是 S 时 <see cref="AngleWorkOrderBuilder.Build"/> 走单角工序，
-    /// 不会进入半边分支；候选 1 由独立入口
-    /// <see cref="AngleWorkOrderBuilder.BuildHalf"/> 触发（定理 6 直接讨论半边）。
-    /// </para>
-    /// </summary>
-    public static void HalfSideAlgo8SelfBuildsStableHalf()
-    {
-        const int cap = 8;
-        const string text = "cTcccccc";
-
-        ShapeDocument target = FromColumns(
-            4,
-            cap,
-            (0, text),
-            (1, text));
-
-        Assert.True(
-            PillarSCriterion.IsPillarColumn(text),
-            text + " 应属于 n = 4 的 S");
-
-        ShapeDocument q = ShapeOps.Project(target, 0, 2);
-
-        Assert.True(ShapeOps.IsStable(q), "候选 1 要求 Q 稳定");
-
-        // 预热后再计时：BuildHalf 不在 AUDIT 的热路径里，首调用含 JIT。
-        _ = AngleWorkOrderBuilder.BuildHalf(target, 0, cap);
-
-        var watch = Stopwatch.StartNew();
-
-        HalfWorkOrder? half = AngleWorkOrderBuilder.BuildHalf(target, 0, cap);
-
-        watch.Stop();
-
-        Console.WriteLine(
-            $"  候选 1（Algo8Self）单次 {watch.Elapsed.TotalMilliseconds:F2} ms");
-
-        Assert.True(half is not null, "两列都在 S 且 Q 稳定的半边应由候选 1 命中");
-        Assert.True(half!.IsComplete);
-        Assert.Equal(HalfCandidate.Algo8Self, half.Candidate);
-        Assert.Equal(0, half.Rank);
-        Assert.Equal(0, half.Target.PrimaryColumn);
-        Assert.Equal("0,1", string.Join(",", half.Target.Columns));
-        Assert.True(
-            half.TargetColumnsHaveSubRecipe,
-            "候选 1 的两列都是带子配方的 S 列");
-
-        Assert.Equal(2, half.Steps.Count);
-        Assert.Equal(AngleWorkStepKind.PreState, half.Steps[0].Kind);
-        Assert.Equal(AngleWorkStepKind.Target, half.Steps[^1].Kind);
-
-        ShapeDocument preState = half.Steps[0].Shape
-            ?? throw new InvalidOperationException("候选 1 必须给出前态");
-
-        // 前态 = Q 本身；两列逐格等于目标半边（类型 / 形状码 / 颜色）。
-        Assert.True(ShapeOps.Same(preState, q), "候选 1 的前态应就是 Q 本身");
-        Assert.True(
-            ShapeOps.Same(half.Steps[^1].Shape, q),
-            "候选 1 的两列应逐格等于目标半边");
-        Assert.Equal(text, ShapeSignature.ColumnText(preState, 0));
-        Assert.Equal(text, ShapeSignature.ColumnText(preState, 1));
-
-        // 真实物理回放：一次下落仍是 Q（候选 1 的条件 2）。
+        Assert.True(half is not null, "反例 A 的目标半边应能被 v4 复现");
+        Assert.Equal(HalfCandidate.LiftCornerDrop, half!.Candidate);
         Assert.True(
             ShapeOps.Same(
-                ShapePhysics.Collapse(preState).Document,
-                preState),
-            "Q 一次下落后应仍逐格等于 Q");
-
-        // 走 Build 时目标列是 S ⇒ 单角算法，不是半边候选（防止路由回归）。
-        AngleWorkOrder single = AngleWorkOrderBuilder.Build(target, 0, cap, preferCrystalBreak: false);
-
-        Assert.True(single.IsComplete, single.Note ?? "S 列应能单角制作");
-        Assert.NotEqual(AngleConstruction.Half, single.Construction);
-        Assert.True(single.Half is null, "S 列不应被误路由到半边工序");
+                half.Steps[^1].Shape,
+                ShapeOps.Project(cut.West!, 0, 2)),
+            "反例 A 的 v4 产物应逐格等于真实 Cut 出来的半边");
+        Assert.Equal(
+            "cTT.ccT.T.cPT",
+            ShapeSignature.ColumnText(half.Steps[^1].Shape!, 0));
+        Assert.Equal(
+            "cccccTTTT.ccc",
+            ShapeSignature.ColumnText(half.Steps[^1].Shape!, 1));
     }
 
     /// <summary>
-    /// 候选 2（算法 8 第二候选：联合逆提升），用规格 §6.4 的实例：
-    /// 左列 <c>cT.T.cT.Tccc</c> 不在 S、右列 <c>TTTT.cccccPT</c> 在 S。
-    /// 两列最高晶体不等高（左第 12 层、右第 10 层）；取右列第 10 层晶体的最大粘连组，
-    /// 最低层 b = 第 6 层；b 以下最高非空层 a = 第 4 层（两列都是普通格），
-    /// 把这对 <c>TT</c> 从第 4 层提到第 5 层（b−1）⇒ 前态 Q′。
-    /// Q′ 两列都在 S，真实一次下落恰好得到 Q。
+    /// 用户反例 B（抬升块上方的晶下间隙不在针环下方）：v4 必须复现同一个半边。
     /// </summary>
-    public static void HalfSideAlgo8UpliftBuildsPaperExample()
+    public static void HalfSideV4ReproducesCounterexampleB()
     {
-        const int cap = 12;
-        const string leftQ = "cT.T.cT.Tccc";
-        const string rightQ = "TTTT.cccccPT";
-        const string leftPre = "cT..TcT.Tccc";
-        const string rightPre = "TTT.TcccccPT";
+        const int layers = 12;
+
+        ShapeDocument preState = Parse(
+            "crCuCu--:CuCuCu--:crCuCu--:crcrcr--:CuCuCu--:crcrCu--:P-crCu--:" +
+            "CucrCu--:CuCuCu--:Cucrcr--:P-Cu----:Cucr----",
+            layers,
+            4);
+
+        CutResult cut = ShapePhysics.Cut(preState);
+        Assert.True(cut.Success, cut.Error ?? "反例 B 的真实 Cut 应成功");
+
+        HalfWorkOrder? half = AngleWorkOrderBuilder.BuildHalf(cut.West!, 0, layers);
+
+        Assert.True(half is not null, "反例 B 的目标半边应能被 v4 复现");
+        Assert.Equal(HalfCandidate.LiftCornerDrop, half!.Candidate);
+        Assert.True(
+            ShapeOps.Same(
+                half.Steps[^1].Shape,
+                ShapeOps.Project(cut.West!, 0, 2)),
+            "反例 B 的 v4 产物应逐格等于真实 Cut 出来的半边");
+        Assert.Equal(
+            "cT.T.cPTTTPT",
+            ShapeSignature.ColumnText(half.Steps[^1].Shape!, 0));
+        Assert.Equal(
+            "TTTT.cccTT.c",
+            ShapeSignature.ColumnText(half.Steps[^1].Shape!, 1));
+    }
+
+    /// <summary>
+    /// 第 6 条：五项 ✔、S ✘，但两列拼起来拆柱跌落 ≠ 目标 ⇒ NotProducible
+    /// （不是「未覆盖」，也不回退碎晶 / 候选）。
+    /// </summary>
+    public static void HalfSideV4RejectsSixthRegression()
+    {
+        const int layers = 10;
 
         ShapeDocument target = FromColumns(
             4,
-            cap,
-            (0, leftQ),
-            (1, rightQ));
-
-        Assert.False(
-            PillarSCriterion.IsPillarColumn(leftQ),
-            "Q 的左列不在 S（候选 1 必须失败）");
-        Assert.True(
-            PillarSCriterion.IsPillarColumn(rightQ),
-            "Q 的右列应在 S");
-        Assert.True(PillarSCriterion.IsPillarColumn(leftPre), "Q′ 左列应在 S");
-        Assert.True(PillarSCriterion.IsPillarColumn(rightPre), "Q′ 右列应在 S");
-
-        // ── ① 默认主路径：v3（两列角产物 + 对角爆破柱 + 一刀）──
-        _ = AngleWorkOrderBuilder.Build(target, 0, cap, preferCrystalBreak: false);
+            layers,
+            (0, "cT.T.cT.T.c"),
+            (1, "TTTTTTTTTT"));
 
         AngleWorkOrder order = AngleWorkOrderBuilder.Build(
             target,
             0,
+            layers,
+            preferCrystalBreak: false);
+
+        Assert.False(order.IsComplete, "cT.T.cT.T.c 配实心邻列应判不可制作");
+        Assert.True(order.Note is not null, "不可制作必须写 Note");
+        Assert.True(
+            order.Note!.StartsWith(
+                AngleWorkOrderBuilder.NotProduciblePrefix,
+                StringComparison.Ordinal),
+            "失败必须是 NotProducible，不能是未覆盖：" + order.Note);
+        Assert.True(
+            order.Note.Contains("拆柱跌落与目标不符", StringComparison.Ordinal),
+            "失败原因应指出是第 ⑤ 步跌落不符：" + order.Note);
+        Assert.True(order.Half is null, "不可制作时不应伪造完整的 Half");
+
+        Assert.True(
+            AngleWorkOrderBuilder.BuildHalf(target, 0, layers) is null,
+            "BuildHalf 对不可制作的半边应返回 null");
+    }
+
+    /// <summary>非法列（五项 ✘）不走半边：仍然报不可制作。</summary>
+    public static void HalfSideV4DoesNotClaimIllegalColumns()
+    {
+        const int layers = 8;
+
+        ShapeDocument target = FromColumns(4, layers, (0, ".c"));
+
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(
+            target,
+            0,
+            layers,
+            preferCrystalBreak: false);
+
+        Assert.False(order.IsComplete);
+        Assert.True(order.Half is null, "非法列不能伪造 Half");
+        Assert.True(
+            order.Note!.StartsWith(
+                AngleWorkOrderBuilder.NotProduciblePrefix,
+                StringComparison.Ordinal),
+            "非法列应报不可制作：" + order.Note);
+    }
+
+    /// <summary>半边从第 3 象限起（环形）：v4 的产物要对齐到原始列。</summary>
+    public static void HalfSideV4AlignsRightHalf()
+    {
+        const int cap = 8;
+
+        ShapeDocument target = FromColumns(
+            4,
+            cap,
+            (2, "cT.T.cPT"),
+            (3, "TTTT.ccc"));
+
+        HalfWorkOrder? half = AngleWorkOrderBuilder.BuildHalf(target, 2, cap);
+
+        Assert.True(half is not null, "第 3、4 象限的半边应可做");
+        Assert.Equal(2, half!.Target.Columns[0]);
+        Assert.Equal(3, half.Target.Columns[1]);
+        Assert.True(
+            ShapeOps.Same(
+                half.Steps[^1].Shape,
+                ShapeOps.Project(target, 2, 2)),
+            "右半边应逐格等于目标第 3、4 象限");
+
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(
+            target,
+            2,
             cap,
             preferCrystalBreak: false);
 
-        Assert.True(order.IsComplete, order.Note ?? "论文例 3 的半边应验证通过");
-        Assert.True(order.Note is null);
-        Assert.Equal(AngleConstruction.Half, order.Construction);
-        Assert.Equal(0, order.Rotation);
-        Assert.Equal(0, order.Rank);
-        Assert.Equal(
-            2,
-            order.AuxiliaryColumns.Count,
-            "v3 的两根辅助列 = 两条对角爆破柱");
-        Assert.False(
-            order.HasIllegalPreState(out _, out _),
-            "v3 前态不应违反五项 / 第 7 条闸门");
-
-        HalfWorkOrder v3 = order.Half
-            ?? throw new InvalidOperationException("v3 必须带 Half 字段");
-
-        Assert.True(v3.IsComplete);
-        Assert.True(v3.CutReuseV3, "默认应走 v3 主路径");
-        Assert.Equal(HalfCandidate.TempCrystalFuse, v3.Candidate);
-        Assert.Equal(3, v3.Steps.Count);
-        Assert.Equal(AngleWorkStepKind.PreState, v3.Steps[0].Kind);
-        Assert.Equal(AngleWorkStepKind.Cut, v3.Steps[1].Kind);
-        Assert.Equal(AngleWorkStepKind.Target, v3.Steps[^1].Kind);
-
-        ShapeDocument v3PreState = v3.Steps[0].Shape!;
-
-        Assert.Equal("cTccTcT.Tccc", ShapeSignature.ColumnText(v3PreState, 0));
-        Assert.Equal("TTTcTcccccPT", ShapeSignature.ColumnText(v3PreState, 1));
-        Assert.Equal("TTTc........", ShapeSignature.ColumnText(v3PreState, 2));
-        Assert.Equal("TTTc........", ShapeSignature.ColumnText(v3PreState, 3));
-
-        CutResult v3Cut = ShapePhysics.Cut(v3PreState);
-
-        Assert.True(v3Cut.Success, v3Cut.Error ?? "v3 切割失败");
-
-        ShapeDocument v3Replayed = ShapeOps.Rotate(v3Cut.West!, 0);
-
-        Assert.Equal(leftQ, ShapeSignature.ColumnText(v3Replayed, 0));
-        Assert.Equal(rightQ, ShapeSignature.ColumnText(v3Replayed, 1));
-        Assert.True(
-            ShapeOps.Same(v3Replayed, v3.Steps[^1].Shape),
-            "v3 的半破结果应逐格等于半边目标");
-        Assert.True(
-            AngleTestHelpers.TargetColumnMatches(order, target),
-            "v3 的末步应逐格等于目标角");
-
-        // ── ② 兜底：关掉 v3 后，旧候选 2（联合逆提升）仍然可用 ──
-        var watch = Stopwatch.StartNew();
-
-        HalfWorkOrder? half = AngleWorkOrderBuilder.BuildHalf(
-            target,
-            0,
-            cap,
-            preferCutReuseV3: false);
-
-        watch.Stop();
-
-        Console.WriteLine(
-            $"  候选 2（Algo8Uplift 兜底）单次 {watch.Elapsed.TotalMilliseconds:F2} ms");
-
-        Assert.True(half is not null, "关闭 v3 后论文例 3 仍应由候选 2 兜底");
-        Assert.True(half!.IsComplete);
-        Assert.True(half.Note is null);
-        Assert.Equal(HalfCandidate.Algo8Uplift, half.Candidate);
-        Assert.Equal(0, half.Rank);
-        Assert.Equal(0, half.Target.PrimaryColumn);
-        Assert.Equal("0,1", string.Join(",", half.Target.Columns));
-        Assert.True(
-            half.TargetColumnsHaveSubRecipe,
-            "候选 2 的两列都是带子配方的 S 列");
-
-        Assert.Equal(2, half.Steps.Count);
-        Assert.Equal(AngleWorkStepKind.PreState, half.Steps[0].Kind);
-        Assert.False(
-            half.Steps.Any(step => step.Kind == AngleWorkStepKind.Collapse),
-            "半边步骤链不应再出现 Collapse 中间态");
-        Assert.Equal(AngleWorkStepKind.Target, half.Steps[^1].Kind);
-
-        ShapeDocument preState = half.Steps[0].Shape
-            ?? throw new InvalidOperationException("候选 2 必须给出前态 Q′");
-
-        Assert.Equal(leftPre, ShapeSignature.ColumnText(preState, 0));
-        Assert.Equal(rightPre, ShapeSignature.ColumnText(preState, 1));
-
-        // Q′ 由「提升一对 TT」得到：第 4 层的 TT → 第 5 层（1 起；0 起 3 → 4）。
-        Assert.Equal(CellType.Empty, preState[3, 0].Type);
-        Assert.Equal(CellType.Empty, preState[3, 1].Type);
-        Assert.Equal(CellType.Shape, preState[4, 0].Type);
-        Assert.Equal(CellType.Shape, preState[4, 1].Type);
-
-        ShapeDocument q = ShapeOps.Project(target, 0, 2);
-
-        Assert.Equal(CellType.Shape, q[3, 0].Type);
-        Assert.Equal(CellType.Shape, q[3, 1].Type);
-        Assert.Equal(CellType.Empty, q[4, 0].Type);
-        Assert.Equal(CellType.Empty, q[4, 1].Type);
-
-        // 除这一对普通格外，Q′ 与 Q 逐格相同。
-        for (int layer = 0; layer < cap; layer++)
-        {
-            if (layer is 3 or 4)
-            {
-                continue;
-            }
-
-            Assert.True(
-                ShapeOps.SameCell(preState[layer, 0], q[layer, 0]) &&
-                ShapeOps.SameCell(preState[layer, 1], q[layer, 1]),
-                $"第 {layer + 1} 层不应被逆提升改动");
-        }
-
-        // 真实一次下落：Q′ → Q（两列逐格，含形状码 / 颜色）。
-        ShapeDocument? collapsed = ShapePhysics.Collapse(preState).Document;
-
-        Assert.True(ShapeOps.Same(collapsed, q), "Q′ 一次下落应恰好得到 Q");
-        Assert.True(
-            ShapeOps.Same(half.Steps[^1].Shape, q),
-            "候选 2 的末步（Target）应是真实下落结果并逐格等于目标半边");
+        Assert.True(order.IsComplete, order.Note ?? "第 3 象限的角应可做");
+        Assert.Equal(HalfCandidate.LiftCornerDrop, order.Half!.Candidate);
     }
 
-    #endregion
-
-    #region 半边工序（k = n/2 列推广，P3）
-
     /// <summary>
-    /// k 列半边：n = 6 时半边是连续 3 列、n = 8 时是连续 4 列（<b>不再固定 2 列</b>）。
-    ///
-    /// <para>
-    /// 2026-11-18 用户口径：半边工序<b>优先候选 3</b>（临时晶体 + 保险丝 + 一刀），
-    /// 只有它做不出来才退候选 1 / 2。这里的三段 / 四段连续列
-    /// （<c>cT.T.cPT</c> + <c>TTTT.ccc</c> + 空列）因此不再由候选 1（Q 自身）命中，
-    /// 而是由候选 3 命中：前态 = 目标列抬升 + 洞填临时晶体 + 环伙伴咬合 + 保险丝跨刀口，
-    /// 一刀半破后逐格得到目标的那 k 列（候选 1 仍由
-    /// <see cref="HalfSideAlgo8SelfBuildsStableHalf"/> 与 HALFAUDIT 覆盖）。
-    /// </para>
-    /// <para>
-    /// 断言半边目标覆盖目标里从 <c>Start</c> 起的<b>全部 k 列</b>（按原始象限索引），
-    /// 且逐格（类型 / 形状码 / 颜色）等于目标的那一段——这正是
-    /// <c>HalfAssembly</c> 用来拼整图的依据。
-    /// </para>
+    /// 单列目标（第二列恒为空）就是「229 个非 S 合法角」的形态：
+    /// v4 判据要求两列一起跌落，单列没有第二列支撑 ⇒ NotProducible。
+    /// 这条把「单列目标不在 v4 的适用域」写成可执行规格。
     /// </summary>
+    public static void HalfSideV4SingleColumnTargetIsNotProducible()
+    {
+        const int layers = 8;
+
+        ShapeDocument target = FromColumns(4, layers, (0, "cT.T.cPT"));
+
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(
+            target,
+            0,
+            layers,
+            preferCrystalBreak: false);
+
+        Assert.False(order.IsComplete, "单列目标不能报半边可得");
+        Assert.True(
+            order.Note!.StartsWith(
+                AngleWorkOrderBuilder.NotProduciblePrefix,
+                StringComparison.Ordinal),
+            "单列目标应报 NotProducible：" + order.Note);
+    }
+
+    /// <summary>① 逆提升后的前态：两列合法、S ✔、P1 ✔，且逐格方向正确。</summary>
+    public static void HalfSideV4PreStateIsLiftedAndP1Clean()
+    {
+        HalfWorkOrder half = AssertV4Pass("cT.T.cPPT", "TTTT.cccc");
+
+        ShapeDocument lifted = half.Steps[0].Shape!;
+
+        Assert.True(
+            ShapeSignature.AllColumnsLegal(lifted, out int bad),
+            $"逆提升后的前态第 {bad + 1} 象限不合法");
+        Assert.False(
+            AngleWorkOrderBuilder.P1Violation(lifted, out _, out _),
+            "逆提升后的前态应满足 P1");
+        Assert.True(
+            ShapeOps.IsStable(half.CornerProducts[0]) &&
+            ShapeOps.IsStable(half.CornerProducts[1]),
+            "两张角产物（目标列 + 左右柱）应各自稳定");
+        Assert.Equal(
+            "cT..TcPPT",
+            ShapeSignature.ColumnText(lifted, 0),
+            "u 的普通格应被抬到晶体正下方");
+    }
+
+    /// <summary>③ 交换产物必须恰好是「柱 + u + v + 柱」：两根柱各来自一张角卡。</summary>
+    public static void HalfSideV4ExchangeHasTwoSupportPillars()
+    {
+        HalfWorkOrder half = AssertV4Pass("cT..T.cPT", "TTTTT.ccc");
+        ShapeDocument exchanged = half.ExchangedShape!;
+
+        Assert.True(IsPillarOnly(exchanged, 0));
+        Assert.True(IsPillarOnly(exchanged, 3));
+
+        Assert.Equal(
+            ShapeSignature.ColumnText(half.Steps[0].Shape!, 0),
+            ShapeSignature.ColumnText(exchanged, 1),
+            "交换后第 2 象限应是逆提升后的 u");
+        Assert.Equal(
+            ShapeSignature.ColumnText(half.Steps[0].Shape!, 1),
+            ShapeSignature.ColumnText(exchanged, 2),
+            "交换后第 3 象限应是逆提升后的 v");
+        Assert.Equal(2, half.RemovedPillarColumns.Count);
+        Assert.Equal(0, half.RemovedPillarColumns[0]);
+        Assert.Equal(3, half.RemovedPillarColumns[1]);
+    }
+
+    /// <summary>n = 6 的 k 列半边仍走论文候选 1（Q 自身）。</summary>
+    public static void HalfSideAlgo8SelfBuildsStableHalf()
+    {
+        const int parts = 6;
+        const int layers = 8;
+
+        ShapeDocument target = FromColumns(
+            parts,
+            layers,
+            (0, "cTcccccc"),
+            (1, "cTcccccc"),
+            (2, "cTcccccc"));
+
+        HalfWorkOrder? half = AngleWorkOrderBuilder.BuildHalf(target, 0, layers);
+
+        Assert.True(half is not null, "n = 6 的三列 S 半边应可得");
+        Assert.Equal(HalfCandidate.Algo8Self, half!.Candidate);
+        Assert.Equal(2, half.Steps.Count);
+        Assert.Equal(AngleWorkStepKind.PreState, half.Steps[0].Kind);
+        Assert.Equal(AngleWorkStepKind.Target, half.Steps[^1].Kind);
+        Assert.True(ShapeOps.Same(half.Steps[0].Shape, half.Steps[^1].Shape));
+    }
+
+    /// <summary>n = 6 / 8 的 k 列半边：列号按环顺序，产物逐格等于目标那一段。</summary>
     public static void HalfSideGeneralizesToKColumns()
     {
         var cases = new (int Parts, int Layers, int Start)[]
         {
-            // 目标放在第 3 象限，验证「半边 = 连续 3 列」的环顺序与列号。
             (6, 8, 2),
-            // 目标放在第 6 象限，验证「半边 = 连续 4 列」跨环。
             (8, 8, 5)
         };
 
         foreach ((int parts, int layers, int start) in cases)
         {
             int width = parts / 2;
-
             var columns = new List<(int Column, string Text)>();
 
-            columns.Add((start, "cT.T.cPT"));
-            columns.Add(((start + 1) % parts, "TTTT.ccc"));
+            for (int index = 0; index < width; index++)
+            {
+                columns.Add(((start + index) % parts, "cTcccccc"));
+            }
 
-            ShapeDocument target = FromColumns(
-                parts,
-                layers,
-                columns.ToArray());
-
-            ShapeDocument q = ShapeOps.Project(target, start, width);
+            ShapeDocument target = FromColumns(parts, layers, columns.ToArray());
 
             HalfWorkOrder? half = AngleWorkOrderBuilder.BuildHalf(
                 target,
                 start,
                 layers);
 
-            Assert.True(
-                half is not null,
-                $"n = {parts} 的 {width} 列半边应可得（候选 3）");
-
-            Assert.True(half!.IsComplete);
-            Assert.Equal(HalfCandidate.TempCrystalFuse, half.Candidate);
-            Assert.Equal(start, half.Target.PrimaryColumn);
+            Assert.True(half is not null, $"n = {parts} 的 {width} 列半边应可得");
+            Assert.Equal(start, half!.Target.PrimaryColumn);
             Assert.Equal(width, half.Target.Columns.Count);
-            Assert.Equal(
-                ShapeOps.Wrap(-start, parts),
-                half.Rotation,
-                $"n = {parts} 的候选 3 应把刀口转到第 1 位，顺转 {ShapeOps.Wrap(-start, parts)} 个象限");
 
             for (int index = 0; index < width; index++)
             {
@@ -4737,761 +4504,196 @@ internal static class AngleWorkOrderTests
                     $"n = {parts} 的半边应覆盖从第 {start + 1} 象限起的连续 {width} 列");
             }
 
-            Assert.Equal(3, half.Steps.Count);
-            Assert.Equal(AngleWorkStepKind.PreState, half.Steps[0].Kind);
-            Assert.Equal(AngleWorkStepKind.Cut, half.Steps[1].Kind);
-            Assert.Equal(AngleWorkStepKind.Target, half.Steps[^1].Kind);
-
-            ShapeDocument preState = half.Steps[0].Shape
-                ?? throw new InvalidOperationException("候选 3 必须给出前态");
-
-            // 前态是「终止前态」：目标列 ≠ 目标列本身，且真的填了临时晶体。
-            Assert.NotEqual(
-                ShapeSignature.ColumnText(target, start),
-                ShapeSignature.ColumnText(preState, start),
-                $"n = {parts} 的候选 3 前态目标列必须是被抬升 + 填充过的形态");
-
             Assert.True(
-                CountCrystals(preState, start) > CountCrystals(target, start),
-                $"n = {parts} 的候选 3 前态目标列必须真的带填充的临时晶体");
-
-            for (int index = 0; index < width; index++)
-            {
-                int part = (start + index) % parts;
-
-                Assert.True(
-                    ShapeSignature.IsTightColumn(preState, part),
-                    $"n = {parts} 的前态第 {part + 1} 象限必须是紧列");
-            }
-
-            Assert.True(ShapeOps.IsStable(preState), $"n = {parts} 的前态必须稳定");
-
-            // 真实回放：顺转 → 真实 Cut → 转回，k 列逐格等于目标那一段。
-            CutResult cut = ShapePhysics.Cut(
-                ShapeOps.Rotate(preState, half.Rotation));
-
-            Assert.True(cut.Success, cut.Error ?? $"n = {parts} 切割失败");
-
-            ShapeDocument replayed = ShapeOps.Rotate(
-                cut.West!,
-                -half.Rotation);
-
-            Assert.True(
-                ShapeOps.Same(replayed, half.Steps[^1].Shape),
-                $"n = {parts} 的半破结果应逐格等于半边目标");
-            Assert.True(
-                ShapeOps.Same(half.Steps[^1].Shape, q),
-                $"n = {parts} 的半边目标应逐格等于目标的那 {width} 列");
-
+                ShapeOps.Same(
+                    half.Steps[^1].Shape,
+                    ShapeOps.Project(target, start, width)),
+                $"n = {parts} 的半边目标应逐格等于目标那一段");
             Assert.Equal(0, half.Rank);
-            Assert.True(
-                half.TargetColumnsHaveSubRecipe,
-                "n ≥ 6 时 k 列都是整图里真实存在的 S 列（带子配方）");
-
-            // 逐列核对（类型 / 形状码 / 颜色）：每列都可以按单角工序单独做。
-            for (int index = 0; index < width; index++)
-            {
-                int part = (start + index) % parts;
-
-                Assert.Equal(
-                    ShapeSignature.ColumnText(q, part),
-                    ShapeSignature.ColumnText(half.Steps[^1].Shape!, part),
-                    $"n = {parts} 第 {part + 1} 象限应逐格等于目标");
-            }
-
-            // 每个半边的列都必须是合法列（n ≥ 6 时 S ⟺ 五项条件）。
-            Assert.True(
-                ShapeSignature.AllColumnsLegal(target, out _),
-                $"n = {parts} 的目标应每列合法");
+            Assert.True(half.TargetColumnsHaveSubRecipe);
         }
     }
 
-    /// <summary>
-    /// k 列半边不做假阳性：半边的列合法但<b>不稳定</b>、或某列不合法时，
-    /// 三个候选都必须拒绝（返回 null），不能只靠判据就声称半边可得。
-    /// </summary>
+    /// <summary>k 列半边不做假阳性：不稳定 / 有非法列时返回 null。</summary>
     public static void HalfSideKColumnsDoesNotFakeUnstableHalf()
     {
         const int parts = 6;
         const int layers = 3;
 
-        // 第 1 列 ".T"：普通格悬空（五项条件不管普通格，所以列合法但不稳定）。
         ShapeDocument unstable = FromColumns(
             parts,
             layers,
             (0, ".T"),
             (1, "T"));
 
-        Assert.True(
-            ShapeSignature.AllColumnsLegal(unstable, out _),
-            "合成列应每列合法（普通格不参与五项条件）");
-        Assert.False(ShapeOps.IsStable(unstable), "该合成半边应不稳定");
+        Assert.True(ShapeSignature.AllColumnsLegal(unstable, out _));
+        Assert.False(ShapeOps.IsStable(unstable));
         Assert.True(
             AngleWorkOrderBuilder.BuildHalf(unstable, 0, layers) is null,
-            "不稳定的 {0} 列半边不能报可得");
+            "不稳定的 k 列半边不能报可得");
 
-        // 第 2 列 ".c"：晶体下方有洞却没有普通资源 ⇒ 五项条件四失败。
         ShapeDocument illegal = FromColumns(
             parts,
             8,
             (0, "cT.T.cPT"),
             (1, ".c"));
 
-        Assert.False(
-            ShapeSignature.IsLegalColumn(illegal, 1),
-            "第 2 象限应不合法");
+        Assert.False(ShapeSignature.IsLegalColumn(illegal, 1));
         Assert.True(
             AngleWorkOrderBuilder.BuildHalf(illegal, 0, 8) is null,
-            "半边里有非法列时三个候选都必须拒绝");
+            "半边里有非法列时必须拒绝");
     }
 
-    /// <summary>
-    /// 候选 3 的多保险丝推广：一个目标列可能有多个临时晶体块（目标列的洞被原生材料
-    /// 隔开），保险丝柱要按<b>每块的顶层</b>各放一颗晶体，一刀才能把所有块一起碎掉。
-    ///
-    /// <para>
-    /// <c>cT.T.T.cPT</c>（10 层）的临时晶体块是 <c>{L3}</c> 与 <c>{L5,L6}</c>，
-    /// 前态保险丝柱 <c>TTcTTc....</c> 正好两颗晶体；<c>cT.T..T.cPT</c>（11 层）同理
-    /// （<c>TTcTTTc....</c>）。n = 4 只有一个块时退化成原来的一颗保险丝
-    /// （见 <see cref="HalfSideTempCrystalFuseBuildsAnchor"/>）。
-    /// </para>
-    /// </summary>
-    public static void HalfSideFuseHandlesMultipleTemporaryBlocks()
+    /// <summary>v4 的失败一律 NotProducible（不写「未覆盖」、不伪造 Target 步）。</summary>
+    public static void HalfSideV4NotesAreNotUncovered()
     {
-        var cases = new (string Text, string PreState, string PartnerPre, string PartnerPost, string Fuse)[]
+        var cases = new (string U, string V)[]
         {
-            ("cT.T.T.cPT", "cTcTccTcPT", "TTTTTcTccc", "TTTTTT.ccc", "TTcTTc...."),
-            ("cT.T..T.cPT", "cTcTcccTcPT", "TTTTTTcTccc", "TTTTTTT.ccc", "TTcTTTc....")
+            ("cT.T.cT.T.c", "TTTTTTTTTT"),
+            ("cT.T.cT.T.c", "TTTT.ccc"),
+            ("cT.T.cT.T.c", "........")
         };
 
-        foreach ((string text, string preStateText, string partnerPre, string partnerPost, string fuseText) in cases)
+        foreach ((string u, string v) in cases)
         {
-            int cap = text.Length;
+            int layers = Math.Max(u.Length, v.Length);
 
-            ShapeDocument target = FromColumns(4, cap, (0, text));
-
-            Assert.True(ShapeSignature.IsLegalColumn(target, 0), text + " 应是合法列");
-            Assert.False(
-                PillarSCriterion.IsPillarColumn(target, 0),
-                text + " 不应属于 n = 4 的 S");
-
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, cap, preferCrystalBreak: false);
-
-            Assert.True(
-                order.IsComplete,
-                order.Note ?? text + " 的多块保险丝工序应验证通过");
-            Assert.Equal(AngleConstruction.Half, order.Construction);
-
-            HalfWorkOrder half = order.Half
-                ?? throw new InvalidOperationException(text + " 必须带 Half 字段");
-
-            Assert.Equal(HalfCandidate.TempCrystalFuse, half.Candidate);
-
-            ShapeDocument preState = Step(order, AngleWorkStepKind.PreState).Shape!;
-
-            Assert.Equal(preStateText, ShapeSignature.ColumnText(preState, 0));
-            Assert.Equal(partnerPre, ShapeSignature.ColumnText(preState, 1));
-
-            // 保险丝柱：AuxiliaryColumns = {环伙伴, 空象限, 保险丝}。
-            int fuseColumn = order.AuxiliaryColumns[2];
-
-            Assert.Equal(fuseText, ShapeSignature.ColumnText(preState, fuseColumn));
-            Assert.Equal(
-                2,
-                CountCrystals(preState, fuseColumn),
-                text + " 的保险丝柱应按两个临时晶体块各放一颗晶体");
-
-            // 真实回放：一刀半破后两列逐格等于半边目标。
-            CutResult cut = ShapePhysics.Cut(
-                ShapeOps.Rotate(preState, order.Rotation));
-
-            Assert.True(cut.Success, cut.Error ?? text + " 切割失败");
-
-            ShapeDocument replayed = ShapeOps.Rotate(
-                cut.West!,
-                -order.Rotation);
-
-            Assert.Equal(text, ShapeSignature.ColumnText(replayed, 0));
-            Assert.Equal(partnerPost, ShapeSignature.ColumnText(replayed, 1));
-            Assert.True(
-                ShapeOps.Same(replayed, half.Steps[^1].Shape),
-                text + " 的两列都应逐格等于半边目标");
-            Assert.True(
-                AngleTestHelpers.TargetColumnMatches(order, target),
-                text + " 的末步应得到目标角");
-        }
-    }
-
-    /// <summary>
-    /// 候选 3 的跨层抬升：s−1 是洞，s−1 以下最近的一枚普通格 L 可以跨多层。
-    /// 把 L 的普通格抬到 s−1、L+1 … s−2 全填临时晶体，环伙伴的闸门晶体
-    /// 同步铺满 L … s−2；一刀后逐格等于目标半边，前态可独立站立。
-    ///
-    /// <para>
-    /// 两例都是「s−2 是空」的形态（旧规则拒绝的那一批）：
-    /// <c>cT.T..cPT</c>（L = s−3，跨 1 层）与
-    /// <c>cT.T....cPT</c>（L = s−5，跨 4 层）。旧规则只允许 s−2 紧邻抬升，
-    /// 这两个目标因此会落到 §2 的「下落」路线（前态无填充、不稳定）。
-    /// </para>
-    /// </summary>
-    public static void HalfSideCrossLayerLiftBuildsFilledPreState()
-    {
-        var cases = new (string Text, string Partner, string PreState, string PartnerPre, string Fuse, int FuseCrystals)[]
-        {
-            ("cT.T..cPT", "TTTT..ccc", "cTcccTcPT", "TTTccTccc", "TTTTc....", 1),
-            ("cT.T....cPT", "TTTT....ccc", "cTcccccTcPT", "TTTccccTccc", "TTTTTTc....", 1),
-            // 跨层 + 多块：L = 第 6 层、s−1 = 第 8 层；第 4 层的原生 T 把
-            // 更下方的临时晶体隔成两块 ⇒ 保险丝柱两颗晶体。
-            ("cT.T.T..cPT", "TTTTTT..ccc", "cTcTcccTcPT", "TTTTTccTccc", "TTcTTTc....", 2)
-        };
-
-        foreach ((string text, string partner, string preStateText, string partnerPre, string fuseText, int fuseCrystals) in cases)
-        {
-            int cap = text.Length;
-
-            ShapeDocument target = FromColumns(4, cap, (0, text), (1, partner));
-
-            Assert.True(ShapeSignature.IsLegalColumn(target, 0), text + " 应是合法列");
-            Assert.False(
-                PillarSCriterion.IsPillarColumn(target, 0),
-                text + " 不应属于 n = 4 的 S");
-            Assert.True(ShapeSignature.IsLegalColumn(target, 1), partner + " 应是合法列");
-
-            // 命令行入口用的 BuildHalf：半边必须逐格等于目标那两列。
-            HalfWorkOrder? direct = AngleWorkOrderBuilder.BuildHalf(target, 0, cap);
-
-            Assert.True(direct is not null, text + " 的 BuildHalf 应可得");
-            Assert.Equal(HalfCandidate.TempCrystalFuse, direct!.Candidate);
+            ShapeDocument target = FromColumns(
+                4,
+                layers,
+                (0, u),
+                (1, v));
 
             AngleWorkOrder order = AngleWorkOrderBuilder.Build(
                 target,
                 0,
-                cap,
+                layers,
                 preferCrystalBreak: false);
 
-            Assert.True(
-                order.IsComplete,
-                order.Note ?? text + " 的跨层抬升应验证通过");
-            Assert.True(order.Note is null);
-            Assert.Equal(AngleConstruction.Half, order.Construction);
-
-            HalfWorkOrder half = order.Half
-                ?? throw new InvalidOperationException(text + " 必须带 Half 字段");
-
-            Assert.True(half.IsComplete);
-            Assert.Equal(HalfCandidate.TempCrystalFuse, half.Candidate);
-            Assert.Equal(0, half.Rotation);
-            Assert.Equal("半破", half.OperationText);
-
-            AssertStepKinds(
-                order,
-                AngleWorkStepKind.PreState,
-                AngleWorkStepKind.Cut,
-                AngleWorkStepKind.Target);
-
-            ShapeDocument preState = Step(order, AngleWorkStepKind.PreState).Shape!;
-
-            Assert.Equal(preStateText, ShapeSignature.ColumnText(preState, 0));
-            Assert.Equal(partnerPre, ShapeSignature.ColumnText(preState, 1));
-            Assert.Equal(
-                new string('.', cap),
-                ShapeSignature.ColumnText(preState, 2));
-            Assert.Equal(fuseText, ShapeSignature.ColumnText(preState, 3));
-            Assert.Equal(
-                fuseCrystals,
-                CountCrystals(preState, 3),
-                text + " 的保险丝应按临时晶体块数各放一颗晶体");
-
-            // 前态真的带填充爆破晶体：目标列晶体数 > 目标本身。
-            Assert.True(
-                CountCrystals(preState, 0) > CountCrystals(target, 0),
-                text + " 的前态目标列必须带临时晶体填充");
-
-            // 前态可独立站立：稳定、每列合法且紧列。
-            Assert.True(ShapeOps.IsStable(preState), text + " 的前态必须稳定");
-            Assert.True(
-                ShapeSignature.AllColumnsLegal(preState, out int badColumn),
-                text + " 的前态第 " + (badColumn + 1) + " 象限不合法");
-
-            for (int part = 0; part < 4; part++)
+            if (order.IsComplete)
             {
-                Assert.True(
-                    ShapeSignature.IsTightColumn(preState, part),
-                    text + " 的前态第 " + (part + 1) + " 象限必须是紧列");
+                continue;
             }
 
-            Assert.False(order.HasIllegalPreState(out _, out _));
-
-            // 一刀：真实 Cut → 转回，逐格等于目标半边。
-            CutResult cut = ShapePhysics.Cut(
-                ShapeOps.Rotate(preState, order.Rotation));
-
-            Assert.True(cut.Success, cut.Error ?? text + " 切割失败");
-
-            ShapeDocument replayed = ShapeOps.Rotate(
-                cut.West!,
-                -order.Rotation);
-
-            Assert.Equal(text, ShapeSignature.ColumnText(replayed, 0));
-            Assert.Equal(partner, ShapeSignature.ColumnText(replayed, 1));
             Assert.True(
-                ShapeOps.Same(replayed, half.Steps[^1].Shape),
-                text + " 的半破结果应逐格等于半边目标");
-            Assert.True(
-                AngleTestHelpers.TargetColumnMatches(order, target),
-                text + " 的末步应得到目标角");
-        }
-    }
-
-    /// <summary>
-    /// v3 主路径的「环锚不必是最高晶体」+「目标邻列尾部保留」：
-    /// 十二层 / 十层样例的最高晶体在最末层，抬升源是更低的 <c>c@6</c> 下方的普通格；
-    /// 两列角产物各自保留目标邻列的顶部针 / 普通格，只在临时晶体段的锚层
-    /// （块顶层 <c>c@4</c>）配对角爆破柱。
-    ///
-    /// <para>v3 之前这里由旧候选 3 命中、Q3 留空；v3 主路径给第二列也装了
-    /// 对角爆破柱 <c>TTTc</c>（第 3 象限），所以 Q3 不再为空。旧候选 3 仍可用
-    /// <c>BuildHalf(..., preferCutReuseV3: false)</c> 走兜底。</para>
-    /// </summary>
-    public static void HalfSideCrossLayerKeepsLongPartnerTail()
-    {
-        var cases = new (string Text, string Partner, string PreState, string PartnerPre, string Fuse)[]
-        {
-            ("cT.T.cTcccTc", "TTTT.cccPT..", "cTccTcTcccTc", "TTTcTcccPT..", "TTTc........"),
-            ("cT.T.cTccc", "TTTT.cccPT", "cTccTcTccc", "TTTcTcccPT", "TTTc......")
-        };
-
-        foreach ((string text, string partner, string preStateText, string partnerPre, string fuseText) in cases)
-        {
-            int cap = text.Length;
-
-            ShapeDocument target = FromColumns(4, cap, (0, text), (1, partner));
-
-            Assert.True(ShapeSignature.IsLegalColumn(target, 0), text + " 应是合法列");
+                order.Note!.StartsWith(
+                    AngleWorkOrderBuilder.NotProduciblePrefix,
+                    StringComparison.Ordinal),
+                $"{u}|{v} 的失败必须写 NotProducible：" + order.Note);
             Assert.False(
-                PillarSCriterion.IsPillarColumn(target, 0),
-                text + " 不应属于 n = 4 的 S");
-            Assert.True(ShapeSignature.IsLegalColumn(target, 1), partner + " 应是合法列");
-
-            HalfWorkOrder? direct = AngleWorkOrderBuilder.BuildHalf(target, 0, cap);
-
-            Assert.True(direct is not null, text + " 的 BuildHalf 应可得");
-            Assert.True(direct!.CutReuseV3, text + " 现在应走 v3 主路径");
-            Assert.Equal(HalfCandidate.TempCrystalFuse, direct.Candidate);
-
-            AngleWorkOrder order = AngleWorkOrderBuilder.Build(
-                target,
-                0,
-                cap,
-                preferCrystalBreak: false);
-
-            Assert.True(
-                order.IsComplete,
-                order.Note ?? text + " 的跨层环锚应验证通过");
-            Assert.True(order.Note is null);
-            Assert.Equal(AngleConstruction.Half, order.Construction);
-
-            HalfWorkOrder half = order.Half
-                ?? throw new InvalidOperationException(text + " 必须带 Half 字段");
-
-            Assert.True(half.IsComplete);
-            Assert.True(half.CutReuseV3, text + " 的外层工序也应走 v3");
-            Assert.Equal(HalfCandidate.TempCrystalFuse, half.Candidate);
-            Assert.Equal(0, half.Rotation);
-            Assert.Equal("半破", half.OperationText);
-
-            ShapeDocument preState = Step(order, AngleWorkStepKind.PreState).Shape!;
-
-            Assert.Equal(preStateText, ShapeSignature.ColumnText(preState, 0));
-            Assert.Equal(partnerPre, ShapeSignature.ColumnText(preState, 1));
-            Assert.Equal(
-                "TTTc" + new string('.', cap - 4),
-                ShapeSignature.ColumnText(preState, 2));
-            Assert.Equal(fuseText, ShapeSignature.ColumnText(preState, 3));
-
-            Assert.True(
-                CountCrystals(preState, 0) > CountCrystals(target, 0),
-                text + " 的前态目标列必须带临时晶体填充");
-            Assert.True(ShapeOps.IsStable(preState), text + " 的前态必须稳定");
-
-            for (int part = 0; part < 4; part++)
-            {
-                Assert.True(
-                    ShapeSignature.IsTightColumn(preState, part),
-                    text + " 的前态第 " + (part + 1) + " 象限必须是紧列");
-            }
-
-            CutResult cut = ShapePhysics.Cut(
-                ShapeOps.Rotate(preState, order.Rotation));
-
-            Assert.True(cut.Success, cut.Error ?? text + " 切割失败");
-
-            ShapeDocument replayed = ShapeOps.Rotate(
-                cut.West!,
-                -order.Rotation);
-
-            Assert.Equal(text, ShapeSignature.ColumnText(replayed, 0));
-            Assert.Equal(partner, ShapeSignature.ColumnText(replayed, 1));
-            Assert.True(
-                ShapeOps.Same(replayed, half.Steps[^1].Shape),
-                text + " 的半破结果应逐格等于半边目标");
-            Assert.True(
-                AngleTestHelpers.TargetColumnMatches(order, target),
-                text + " 的末步应得到目标角");
-        }
-    }
-
-    /// <summary>
-    /// v3 的验收样例（任务书 §4.1 / <c>docs/half-side-v3-cut-reuse.md</c> §3）：
-    /// 10 层半边 <c>T.cT.T.cPT | PPTTTT.ccc</c>。
-    ///
-    /// <para>两列各自的角产物（「晶体正下方为空 ⇒ 抬升 + 临时晶体」）：</para>
-    /// <code>
-    /// q1 cTcTccTcPT   ← 两处间隙：L1 的 T 提到 L2、L6 的 T 提到 L7（临时晶体在 L1、L5–L6）
-    /// q2 PPTTTcTccc   ← 一处间隙：L6 的 T 提到 L7（临时晶体在 L6）
-    /// q3 TTTTTc....   ← q2 的对角爆破柱：锚层 L6 放一颗晶体
-    /// q4 cTTTTc....   ← q1 的对角爆破柱：锚层 L1、L6 各放一颗晶体
-    /// </code>
-    /// <para>一刀半破后 q1 = <c>T.cT.T.cPT</c>、q2 = <c>PPTTTT.ccc</c>，逐格 PASS。</para>
-    /// </summary>
-    public static void HalfSideV3CutReuseMatchesUserReplay()
-    {
-        const int cap = 10;
-        const string u = "T.cT.T.cPT";
-        const string v = "PPTTTT.ccc";
-
-        ShapeDocument target = FromColumns(4, cap, (0, u), (1, v));
-
-        Assert.True(ShapeSignature.IsLegalColumn(target, 0), u + " 应是合法列");
-        Assert.False(
-            PillarSCriterion.IsPillarColumn(target, 0),
-            u + " 不属于 n = 4 的 S（单角做不出来）");
-
-        HalfCutReuseProbe probe = AngleWorkOrderBuilder.ProbeHalfCutReuse(
-            target,
-            0,
-            cap);
-
-        Assert.Equal(HalfCutReuseStatus.Covered, probe.Status);
-
-        AngleWorkOrder order = AngleWorkOrderBuilder.Build(
-            target,
-            0,
-            cap,
-            preferCrystalBreak: false);
-
-        Assert.True(order.IsComplete, order.Note ?? "10 层半边应由 v3 完成");
-        Assert.True(order.Note is null);
-        Assert.Equal(AngleConstruction.Half, order.Construction);
-        Assert.Equal(AngleAlgorithm.None, order.Algorithm);
-        Assert.Equal(0, order.Rotation);
-        Assert.Equal(0, order.Rank);
-        Assert.Equal(2, order.AuxiliaryColumns.Count);
-
-        HalfWorkOrder half = order.Half
-            ?? throw new InvalidOperationException("v3 必须带 Half 字段");
-
-        Assert.True(half.IsComplete);
-        Assert.True(half.CutReuseV3, "默认必须走 v3 主路径");
-        Assert.Equal(HalfCandidate.TempCrystalFuse, half.Candidate);
-        Assert.Equal("半破", half.OperationText);
-        Assert.Equal(0, half.Rotation);
-        Assert.False(half.TargetColumnsHaveSubRecipe, "n = 4 的两列不是带子配方的 S 列");
-
-        AssertStepKinds(
-            order,
-            AngleWorkStepKind.PreState,
-            AngleWorkStepKind.Cut,
-            AngleWorkStepKind.Target);
-
-        ShapeDocument preState = Step(order, AngleWorkStepKind.PreState).Shape!;
-
-        AssertColumnCells(preState, 0, "cTcTccTcPT");
-        AssertColumnCells(preState, 1, "PPTTTcTccc");
-        AssertColumnCells(preState, 2, "TTTTTc....");
-        AssertColumnCells(preState, 3, "cTTTTc....");
-
-        for (int part = 0; part < 4; part++)
-        {
-            Assert.True(
-                ShapeSignature.IsTightColumn(preState, part),
-                $"第 {part + 1} 象限的前态必须是紧列");
-        }
-
-        Assert.True(
-            ShapeSignature.AllColumnsLegal(preState, out int badColumn),
-            $"前态第 {badColumn + 1} 象限不合法");
-        Assert.True(ShapeOps.IsStable(preState), "前态必须稳定");
-        Assert.False(
-            AngleWorkOrderBuilder.P1Violation(preState, out _, out _),
-            "前态必须满足 P1（每颗晶体正下方非空）");
-
-        CutResult cut = ShapePhysics.Cut(preState);
-
-        Assert.True(cut.Success, cut.Error ?? "v3 切割失败");
-
-        ShapeDocument replayed = ShapeOps.Rotate(cut.West!, 0);
-
-        AssertColumnCells(replayed, 0, u);
-        AssertColumnCells(replayed, 1, v);
-        Assert.True(
-            ShapeOps.Same(replayed, half.Steps[^1].Shape),
-            "v3 半破结果应逐格等于半边目标（类型 / 形状码 / 颜色）");
-        Assert.True(
-            AngleTestHelpers.TargetColumnMatches(order, target),
-            "末步应得到目标角");
-
-        // 只碎临时晶体 / 爆破柱：两列原生晶体一颗不少。
-        Assert.Equal(5, CountCrystals(preState, 0));
-        Assert.Equal(4, CountCrystals(preState, 1));
-        Assert.Equal(1, CountCrystals(preState, 2));
-        Assert.Equal(2, CountCrystals(preState, 3));
-        Assert.Equal(2, CountCrystals(replayed, 0));
-        Assert.Equal(3, CountCrystals(replayed, 1));
-        Assert.Equal(0, CountCrystals(replayed, 2));
-        Assert.Equal(0, CountCrystals(replayed, 3));
-    }
-
-    /// <summary>
-    /// 单列目标（第二列恒为空）没有第二列的刹车 / 环支撑，v3 的
-    /// 「两列各自落回目标」不会成立 ⇒ 必须如实退回旧候选 3 兜底，
-    /// 不能把 v3 的形态命中当成完成。
-    /// </summary>
-    public static void HalfSideV3LeavesIsolatedColumnToFallback()
-    {
-        const int cap = 8;
-        const string text = "cT.T.cPT";
-
-        ShapeDocument target = FromColumns(4, cap, (0, text));
-
-        HalfCutReuseProbe probe = AngleWorkOrderBuilder.ProbeHalfCutReuse(
-            target,
-            0,
-            cap);
-
-        Assert.Equal(HalfCutReuseStatus.ReplayRejected, probe.Status);
-
-        AngleWorkOrder order = AngleWorkOrderBuilder.Build(
-            target,
-            0,
-            cap,
-            preferCrystalBreak: false);
-
-        Assert.True(order.IsComplete, order.Note ?? "单列仍应由旧候选 3 兜底");
-        Assert.True(order.Half is not null);
-        Assert.False(order.Half!.CutReuseV3, "单列目标不能报成 v3 命中");
-        Assert.Equal(HalfCandidate.TempCrystalFuse, order.Half.Candidate);
-
-        ShapeDocument preState = Step(order, AngleWorkStepKind.PreState).Shape!;
-
-        Assert.Equal("cTccTcPT", ShapeSignature.ColumnText(preState, 0));
-        Assert.Equal(
-            "TTTcTccc",
-            ShapeSignature.ColumnText(preState, 1),
-            "旧候选 3 兜底会构造环伙伴");
-    }
-
-    /// <summary>
-    /// 2026-11-18 用户口径：<b>能做成「终止前态（带临时晶体填充）+ 一次半破」的，就用它</b>。
-    ///
-    /// <para>
-    /// 用户给出的 8 层图形 <c>crCucrCu:CuCuCuCu:--Cu--Cu:CuCuCuCu:--------:crcrcrcr:P-crP-cr:CucrCucr</c>
-    /// 两半相同（<c>q1 = q3 = cT.T.cPT</c>、<c>q2 = q4 = TTTT.ccc</c>）。
-    /// 现在由 v3 主路径命中：两列各自抬升 + 填临时晶体，临时晶体块的锚层（第 4 层）
-    /// 在对角象限各配一根爆破柱（Q1 → Q4、Q2 → Q3），一刀真实半破回到目标半边。
-    /// </para>
-    /// <para>
-    /// 本用例把 v3 的前态四列逐格钉死（类型 / 形状码 / 颜色）：
-    /// <code>
-    /// q1 cTccTcPT   ← 目标列抬升 + 两个洞填临时晶体
-    /// q2 TTTcTccc   ← 第二列角产物（同样抬升 + 填充）
-    /// q3 TTTc....   ← Q2 的对角爆破柱：锚层（第 4 层）一颗晶体
-    /// q4 TTTc....   ← Q1 的对角爆破柱：锚层（第 4 层）一颗晶体
-    /// </code>
-    /// 真实 <see cref="ShapePhysics.Cut"/> 后 <c>q1 = cT.T.cPT</c>、<c>q2 = TTTT.ccc</c>。
-    /// </para>
-    /// </summary>
-    public static void HalfSidePrefersTempCrystalFuseOverUplift()
-    {
-        const int cap = 8;
-
-        // 用户图形的四列（层 0 = 地面）。
-        ShapeDocument target = FromColumns(
-            4,
-            cap,
-            (0, "cT.T.cPT"),
-            (1, "TTTT.ccc"),
-            (2, "cT.T.cPT"),
-            (3, "TTTT.ccc"));
-
-        Assert.True(
-            ShapeSignature.AllColumnsLegal(target, out _),
-            "用户图形的每一列都应合法");
-        Assert.False(
-            PillarSCriterion.IsPillarColumn(target, 0),
-            "cT.T.cPT 不属于 n = 4 的 S（单角做不出来，只能半边做）");
-
-        // ── 候选选择：两个半边都必须走 v3（TempCrystalFuse 族）──
-        foreach (int column in new[] { 0, 2 })
-        {
-            HalfWorkOrder? half = AngleWorkOrderBuilder.BuildHalf(
-                target,
-                column,
-                cap);
-
-            Assert.True(half is not null, $"第 {column + 1} 象限的半边应可得");
-            Assert.True(half!.IsComplete);
-            Assert.True(half.CutReuseV3, $"第 {column + 1} 象限的半边应走 v3 主路径");
-            Assert.Equal(
-                HalfCandidate.TempCrystalFuse,
-                half.Candidate,
-                $"第 {column + 1} 象限的半边应优先用「临时晶体 + 对角爆破柱 + 一刀」，不再是联合逆提升");
-            Assert.Equal("半破", half.OperationText);
-            Assert.Equal(ShapeOps.Wrap(-column, 4), half.Rotation);
-
-            Assert.Equal(3, half.Steps.Count);
-            Assert.Equal(AngleWorkStepKind.PreState, half.Steps[0].Kind);
-            Assert.Equal(AngleWorkStepKind.Cut, half.Steps[1].Kind);
-            Assert.Equal(AngleWorkStepKind.Target, half.Steps[^1].Kind);
+                order.Note.Contains(
+                    AngleWorkOrderBuilder.UncoveredPrefix,
+                    StringComparison.Ordinal),
+                "不应再出现「未覆盖」：" + order.Note);
             Assert.False(
-                half.Steps.Any(step => step.Kind == AngleWorkStepKind.Collapse),
-                "v3 的步骤链不应出现 Collapse 中间态");
+                order.Steps.Any(step => step.Kind == AngleWorkStepKind.Target),
+                "未完成的工序不应伪造 Target 步");
         }
-
-        HalfWorkOrder chosen = AngleWorkOrderBuilder.BuildHalf(target, 0, cap)!;
-
-        // ── 前态四列逐格（类型 / 形状码 / 颜色）──
-        ShapeDocument preState = chosen.Steps[0].Shape
-            ?? throw new InvalidOperationException("v3 必须给出前态");
-
-        AssertColumnCells(preState, 0, "cTccTcPT");
-        AssertColumnCells(preState, 1, "TTTcTccc");
-        AssertColumnCells(preState, 2, "TTTc....");
-        AssertColumnCells(preState, 3, "TTTc....");
-
-        // 前态真的带填充爆破晶体：目标列 4 颗晶体（2 原生 + 2 临时），
-        // 两根对角爆破柱各 1 颗锚层晶体。
-        Assert.Equal(4, CountCrystals(preState, 0), "目标列应是 2 颗原生 + 2 颗临时晶体");
-        Assert.Equal(1, CountCrystals(preState, 2), "Q2 的对角爆破柱在锚层放一颗晶体");
-        Assert.Equal(1, CountCrystals(preState, 3), "Q1 的对角爆破柱在锚层放一颗晶体");
-        Assert.Equal(
-            2,
-            CountCrystals(preState, 0) - CountCrystals(target, 0),
-            "目标列应比目标多出 2 颗填充的临时晶体");
-
-        // 候选 2 的旧前态（提升后、未填充）绝不能是现在给出的前态。
-        Assert.NotEqual(
-            "cT..TcPT",
-            ShapeSignature.ColumnText(preState, 0),
-            "前态目标列不应再是联合逆提升的 Q′");
-
-        // 前态每列合法、紧列、稳定；目标列 ≠ 目标（禁止循环）。
-        Assert.True(
-            ShapeSignature.AllColumnsLegal(preState, out int badColumn),
-            $"前态第 {badColumn + 1} 象限不合法");
-        Assert.True(ShapeOps.IsStable(preState), "前态必须稳定");
-
-        for (int part = 0; part < 4; part++)
-        {
-            Assert.True(
-                ShapeSignature.IsTightColumn(preState, part),
-                $"前态第 {part + 1} 象限必须是紧列");
-        }
-
-        // ── 真实回放：一刀半破后逐格等于目标半边 ──
-        CutResult cut = ShapePhysics.Cut(
-            ShapeOps.Rotate(preState, chosen.Rotation));
-
-        Assert.True(cut.Success, cut.Error ?? "切割失败");
-
-        ShapeDocument replayed = ShapeOps.Rotate(
-            cut.West!,
-            -chosen.Rotation);
-
-        AssertColumnCells(replayed, 0, "cT.T.cPT");
-        AssertColumnCells(replayed, 1, "TTTT.ccc");
-
-        ShapeDocument q = ShapeOps.Project(target, 0, 2);
-
-        Assert.True(
-            ShapeOps.Same(replayed, chosen.Steps[^1].Shape),
-            "Cut 结果应逐格等于半边目标（类型 / 形状码 / 颜色）");
-        Assert.True(
-            ShapeOps.Same(chosen.Steps[^1].Shape, q),
-            "半边目标应逐格等于目标的第 1、2 象限");
-
-        // ── 外层角工序也走半边 + 候选 3 ──
-        AngleWorkOrder order = AngleWorkOrderBuilder.Build(
-            target,
-            0,
-            cap,
-            preferCrystalBreak: false);
-
-        Assert.True(order.IsComplete, order.Note ?? "用户图形应可制作");
-        Assert.Equal(AngleConstruction.Half, order.Construction);
-        Assert.True(order.Half is not null);
-        Assert.True(order.Half!.CutReuseV3);
-        Assert.Equal(HalfCandidate.TempCrystalFuse, order.Half!.Candidate);
-        Assert.Equal(0, order.Rotation);
-        Assert.Equal(
-            2,
-            order.AuxiliaryColumns.Count,
-            "v3 的辅助列 = 两根对角爆破柱（Q1→Q4、Q2→Q3，不合并）");
-
-        AssertStepKinds(
-            order,
-            AngleWorkStepKind.PreState,
-            AngleWorkStepKind.Cut,
-            AngleWorkStepKind.Target);
-        Assert.True(
-            AngleTestHelpers.TargetColumnMatches(order, target),
-            "末步应得到目标角");
     }
 
     /// <summary>
-    /// 候选 2 的步骤链<b>没有 Cut 步</b>，所以它只写「下落」，绝不写「半破」。
-    ///
-    /// <para>
-    /// 用规格 §6.4 的论文例（<c>cT.T.cT.Tccc</c> | <c>TTTT.cccccPT</c>），
-    /// 并显式关闭 v3 主路径 ⇒ 旧候选 2 兜底命中（v3 也会命中这个例子，
-    /// 由 <see cref="HalfSideAlgo8UpliftBuildsPaperExample"/> 覆盖）。
-    /// 这里钉死 Core 的文案职责：箭头 / 标题只说「下落」。
-    /// </para>
+    /// 五步链的中间态顺序：前态（逆提升）→ 交换 → 拆柱 → 目标，
+    /// 与命令行 <c>--half</c> 的打印顺序一致。
     /// </summary>
-    public static void HalfSideUpliftChainSaysFallNotHalfBreak()
+    public static void HalfSideV4WireFormatMatchesCliSequence()
     {
-        const int cap = 12;
+        HalfWorkOrder half = AssertV4Pass("cT.T.cPT", "TTTT.ccc");
+
+        Assert.True(half.LiftedHalf is not null, "① 逆提升前态必须有快照");
+        Assert.True(half.ExchangedShape is not null, "③ 交换必须有快照");
+        Assert.True(half.StrippedShape is not null, "④ 拆柱必须有快照");
+        Assert.True(half.PreSettleShape is not null, "⑤ 跌落前必须有快照");
+        Assert.True(half.CornerProducts.Count == 2, "② 两张角卡产物必须都在");
+
+        // ④ 拆柱的产物必须能由 ⑤ 一次 Collapse 得到目标（不再补第二次结算）。
+        ShapeDocument settled = ShapePhysics.Collapse(half.PreSettleShape!).Document!;
+
+        Assert.True(ShapeOps.Same(settled, half.Steps[^1].Shape));
+        Assert.True(
+            ShapeOps.IsStable(settled),
+            "⑤ 之后的一次落定必须稳定（不会再多落一次）");
+    }
+
+    /// <summary>跑一例 v4 并断言通过，返回 Half。</summary>
+    private static HalfWorkOrder AssertV4Pass(
+        string u,
+        string v)
+    {
+        int layers = Math.Max(u.Length, v.Length);
 
         ShapeDocument target = FromColumns(
             4,
-            cap,
-            (0, "cT.T.cT.Tccc"),
-            (1, "TTTT.cccccPT"));
+            layers,
+            (0, u),
+            (1, v));
 
-        HalfWorkOrder? half = AngleWorkOrderBuilder.BuildHalf(
+        AngleWorkOrder order = AngleWorkOrderBuilder.Build(
             target,
             0,
-            cap,
-            preferCutReuseV3: false);
+            layers,
+            preferCrystalBreak: false);
 
-        Assert.True(half is not null, "论文例的左半边应可得（候选 2）");
-        Assert.Equal(HalfCandidate.Algo8Uplift, half!.Candidate);
-        Assert.Equal("下落", half.OperationText);
-        Assert.Equal(0, half.Rotation);
-        Assert.False(
-            half.Steps.Any(step => step.Kind == AngleWorkStepKind.Cut),
-            "候选 2 是下落，不是切割：步骤链里不能有 Cut 步");
-        Assert.False(
-            half.Steps.Any(step => step.Title.Contains("半破", StringComparison.Ordinal)),
-            "候选 2 的标题不能写「半破」：" +
-            string.Join(" / ", half.Steps.Select(step => step.Title)));
+        Assert.True(order.IsComplete, order.Note ?? (u + "|" + v + " 应可做"));
+        Assert.True(order.Half is not null, "应带 Half 字段");
+
+        HalfWorkOrder half = order.Half!;
+
+        Assert.True(half.IsComplete, half.Note ?? "半边应完整");
+        Assert.Equal(HalfCandidate.LiftCornerDrop, half.Candidate);
         Assert.True(
-            half.Steps.Any(step => step.Title.Contains("下落", StringComparison.Ordinal)),
-            "候选 2 的标题必须写「下落」：" +
-            string.Join(" / ", half.Steps.Select(step => step.Title)));
+            ShapeOps.Same(
+                half.Steps[^1].Shape,
+                ShapeOps.Project(target, 0, 2)),
+            u + "|" + v + " 的半边目标应逐格等于目标那两列");
+
+        return half;
+    }
+
+    /// <summary>某列是否只有普通格（支撑柱）。</summary>
+    private static bool IsPillarOnly(
+        ShapeDocument shape,
+        int column)
+    {
+        bool any = false;
+
+        for (int layer = 0; layer < shape.LayerCount; layer++)
+        {
+            CellType type = shape[layer, column].Type;
+
+            if (type == CellType.Empty)
+            {
+                continue;
+            }
+
+            if (type != CellType.Shape)
+            {
+                return false;
+            }
+
+            any = true;
+        }
+
+        return any;
+    }
+
+    /// <summary>某列是否整列为空。</summary>
+    private static bool IsEmptyColumn(
+        ShapeDocument shape,
+        int column)
+    {
+        for (int layer = 0; layer < shape.LayerCount; layer++)
+        {
+            if (shape[layer, column].Type != CellType.Empty)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     #endregion
+
 
     #region 回放工具
 

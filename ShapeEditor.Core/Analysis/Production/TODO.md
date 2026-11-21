@@ -3238,3 +3238,50 @@ v3 的验收口径是「**两列**各自落回目标半边」。两列语料分�
 | 新/旧 Pin 差分 | 18,000 个随机图形逐格一致（临时探针，验证后已删除） |
 | 受影响的既有产物 | **0**（3–9 层 + n=6/8 的 S 列数与可制作数一格未变） |
 
+### 7.39 半边工序 v4：逆提升 → 各自做角 → 交换 → 拆柱 → 跌落（2026-11-21，第二十一轮）
+
+**用户裁定**（`docs/half-side-v4-lift-corner-drop.md` / `docs/prompt-for-main-agent-half-v4.md`）：
+**删减**半边工序，不再有碎晶 / 爆破柱 / 三候选。n = 4、五项 ✔ 且 S ✘ 的合法角只有一条路：
+
+```
+① 逆提升：两列「晶体正下方为空」的位置，把下方最近的普通格抬到晶体正下方
+② 各自做角：两列分别调现有角工序（AngleWorkOrderBuilder.Build）
+③ 交换：两张角产物真实 ShapeExchange.Exchange，两根支撑柱各来自一张角卡
+④ 拆柱：去掉左柱 + 右柱
+⑤ 跌落：一次真实 Collapse（之后不再补结算）
+⑥ 验收：两列逐格 == 目标半边
+```
+
+**语义**：①②⑤ 任一步不成立 ⇒ `NotProducible`（`Note` 写 ①「逆提升失败：第 N 层无普通格可抬」/
+②「角 u/v 不可制作」+ 角工序原因 / ⑤「拆柱跌落与目标不符：第 k 层期望 X 实际 Y」）。
+n = 4 不再出现「未覆盖」，也不回退碎晶。
+
+**实现要点**
+
+| 文件 | 改动 |
+|---|---|
+| `Analysis/AngleWorkOrderHalfSide.cs` | **重写**：只保留 `HalfWorkOrder` 数据、k ≥ 3 的两条论文候选与 v4。v4 按「抬升数从少到多」枚举间隙子集（≤ 6 处间隙），每组用真实 `Build` + `Exchange` + `Collapse` 验收；前态 / 角产物按**单元格**复制（形状码 / 颜色逐格保留）。`HalfCandidate` 新增 `LiftCornerDrop`；`TempCrystalFuse` 仅作历史枚举值保留给页面层 switch |
+| 删除 | `HalfPairCriterion.cs`（333 行）；v3 的 `TryBuildCutReuseV3` / `BuildCutReuseColumn` / `ProbeHalfCutReuse` / `HalfCutReuseStatus` / `TryBuildTempCrystalFuse` / `TryBuildFuseLayout` / `BuildFuseColumn` / 保险丝与环伙伴构造 / `HalfWorkOrder.CutReuseV3` |
+| `Analysis/CardBuilder.cs` | 半边卡改 `Mode=FromCorners`：`Inputs` = 两张角卡产物，可见步骤 = 交换 → 拆柱 → 跌落（**没有碎晶**），前态字段 = 拆柱后跌落前的形状；角卡保留自己的碎晶 / 顶针。删掉 `FromTightColumns` / `并半` / `TryBuildFromCorners` / `BuildCutHalfCard` 等 |
+| `Analysis/CardReplay.cs` | 新增可见操作「拆柱」「跌落」：拆柱做「恰好两根连续接地普通柱被整列清空」的结构校验；`FromCorners` 的前态允许是链中间快照 |
+| `Analysis/WorkOrderCardView.cs` | 新增 `LiftCornerProduct`（v4 角卡标记） |
+| `Production/HalfAssembly.cs` | v4 回放 = `Collapse(逆提升前态) == 半边目标`；「半边装配不越权」围栏不变 |
+| `Physics/ShapePhysics.cs` | 无改动（调试探针已删除） |
+| `Tests/*` | `HalfTestCli` 重写为五步输出；`HalfSideAudit` 改为 v4（229 + 8 条回归）；15 个半边用例换成 v4 / k ≥ 3 用例；卡片用例同步 |
+
+**验收数字**
+
+| 项 | 结果 |
+|---|---|
+| 全量测试 | **214/214** 通过（claw / 二择 2 项 XFAIL 保持），耗时约 **97 s**（原 116 s） |
+| 8 条回归 | 1–5 PASS、第 6 条 `NotProducible`、反例 A / B PASS（先真实 Cut 取半边再让 v4 复现） |
+| `HALFAUDIT`（229 非 S 合法角） | `halfComplete=10 notProducible=219`；`liftFail=0 cornerFail=0 settleFail=219`（② 角可做 = 229/229，短板在 ⑤ 跌落） |
+| `AUDIT` / `LAYERAUDIT` / `NINEAUDIT`（3–9 层 + n=6/8） | `failures=0`（半边只影响 n=4 S ✘ 的角） |
+| 代码量 | Core 约 **−1567 行**（含删除 `HalfPairCriterion.cs`）、Tests 约 **−1566 行**，合计约 **−3133 行** |
+
+**已知边界**：229 个非 S 合法角是**单列目标**（第二列恒为空），v4 的判据要求两列一起跌落，
+所以单列目标按 `NotProducible` 计；审计用「规范伙伴」（第一个晶下间隙处留空、下方普通格、上方晶体）
+组成两列半边重跑，得到 10 例 PASS。`② 角可做 = 229/229`，说明短板在 ⑤：
+大量单列/搭档组合在拆柱后不会落回原目标（侧向支撑 / 针环会把抬升格留住）。
+
+

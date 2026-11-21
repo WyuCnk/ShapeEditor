@@ -284,22 +284,20 @@ public sealed record AngleWorkOrder(
     public Recipe? Q1SubRecipe { get; init; }
 
     /// <summary>
-    /// 半边工序（docs/half-side-work-order.md）：n = 4、五项 ✔ 但 S ✘ 的合法角
-    /// 不能单角做，必须与相邻象限一起做。
+    /// 半边工序（docs/half-side-v4-lift-corner-drop.md）：n = 4、五项 ✔ 但 S ✘
+    /// 的合法角不能单角做，必须与相邻象限一起做。
     ///
     /// <para>
     /// 非 null 表示这份角工序走的是「两列一起做」的半边路径：
-    /// <see cref="Steps"/> 是目标角的单列视角（前态 → 一刀 → 目标），
-    /// <see cref="HalfWorkOrder.Steps"/> 才是两列的完整核对（两列逐格等于目标半边）。
+    /// <see cref="Steps"/> 是目标角的单列视角（逆提升前态 → 目标），
+    /// <see cref="HalfWorkOrder.Steps"/> 才是两列的完整核对
+    /// （逆提升 → 交换 → 拆柱 → 跌落，两列逐格等于目标半边）。
     /// </para>
     /// <para>
-    /// 候选按<b>本仓库优先级</b>尝试：候选 3（<see cref="HalfCandidate.TempCrystalFuse"/>，
-    /// 终止前态 + 一次半破）→ 候选 1（<see cref="HalfCandidate.Algo8Self"/>，Q 自身）→
-    /// 候选 2（<see cref="HalfCandidate.Algo8Uplift"/>，联合逆提升 / 一次下落）。
-    /// 候选 1 / 2 的两列都是带子配方的 S 列
-    /// （<see cref="HalfWorkOrder.TargetColumnsHaveSubRecipe"/>），
-    /// 候选 3 的环伙伴 / 保险丝仍是要求紧列的辅助列。回放没通过时
-    /// <see cref="IsComplete"/> 仍为 false，<see cref="Note"/> 以「未覆盖：」开头。
+    /// n = 4 只有 v4（<see cref="HalfCandidate.LiftCornerDrop"/>）一条路：
+    /// 逆提升 → 两列各自交给角工序 → 交换 → 拆柱 → 一次真实 Collapse。
+    /// 任一步不成立一律 <see cref="NotProduciblePrefix"/>（不再是「未覆盖」）。
+    /// n ≥ 6 的 k 列半边仍走论文候选 1 / 2。
     /// </para>
     /// </summary>
     public HalfWorkOrder? Half { get; init; }
@@ -552,9 +550,8 @@ public sealed record AngleWorkOrder(
             TargetColumnHasSubRecipe || SubRecipe is not null;
 
         /*
-         * 半边候选 1 / 2 的前态是「两根 S 列」：两列都能按单角工序单独做出来，
-         * 所以两列都算「带子配方」，允许带洞（docs §6 第 7 条）。
-         * 候选 3 的环伙伴 / 保险丝是真正的辅助列，不在这个豁免里。
+         * v4 半边（n = 4）与候选 1 / 2（n ≥ 6）的前态列都是「带子配方的目标列」：
+         * 两列都能按角工序单独做出来，所以允许带洞（docs §6 第 7 条）。
          */
         var subRecipeColumns = new List<int>();
 
@@ -735,8 +732,8 @@ public static partial class AngleWorkOrderBuilder
     /// 视为「带子配方的目标列」（允许带洞），其余非空列一律要求紧列。
     ///
     /// <para>
-    /// 半边候选 1 / 2 的两根列都是 S 列（各自有单角子配方），所以两列都在
-    /// 豁免集合里；候选 3 只豁免 Q1，环伙伴 / 保险丝仍按辅助列要求紧列。
+    /// v4 半边（n = 4）的两列都是角工序产物；n ≥ 6 的候选 1 / 2 两根列都是 S 列。
+    /// 所以半边的前态列都在豁免集合里，允许带洞。
     /// </para>
     /// </summary>
     /// <param name="preState">候选前态。</param>
@@ -997,42 +994,30 @@ public static partial class AngleWorkOrderBuilder
          * S 判据（五项 ∧ (D∨F)）不成立 ⇒ 这个角不可制作。
          * 不能再落到「未覆盖」（那是「还没实现」的语义）。
          *
-         * 例外（docs/half-side-work-order.md §4.1）：
+         * 例外（docs/half-side-v4-lift-corner-drop.md）：
          * 五项 ✔ 但 S ✘ 的合法角不能单角做，却可能「两列一起做」——
-         * 先试半边工序的候选 3（临时晶体 + 保险丝 + 一刀）。
-         * 候选命中并回放通过 ⇒ 返回角工序 + Half 字段；
-         * 候选不适用或回放没通过 ⇒ 仍按原语义报 NotProducible / 未覆盖。
+         * n = 4 走 v4（逆提升 → 各自做角 → 交换 → 拆柱 → 一次跌落）。
          */
         if (parts == 4 &&
             enforceFiveConditions &&
             !PillarSCriterion.IsPillarColumn(target, column))
         {
-            AngleWorkOrder? halfOrder = TryBuildHalfOrder(
+            /*
+             * n = 4 走 v4：逆提升 → 各自做角 → 交换 → 拆柱 → 一次跌落。
+             * 通过 ⇒ 角工序 + Half；不通过 ⇒ NotProducible（原因写进 Note）。
+             */
+            AngleWorkOrder? v4 = TryBuildHalfV4Order(
                 target,
                 column,
                 cap,
-                kind);
+                kind,
+                out string? halfFailure);
 
-            if (halfOrder is not null)
-            {
-                if (halfOrder.IsComplete)
-                {
-                    return halfOrder;
-                }
-
-                /*
-                 * 三个候选（3 → 1 → 2）全部没通过：按本条要求统一报「不可制作」，
-                 * 不再把「候选形态命中但回放失败」写成「未覆盖」。
-                 * 候选 3 的最后一条诊断只保留在 Limitations 里。
-                 */
-                return NotProducibleBySCriterion(
-                    target,
-                    column,
-                    kind,
-                    halfOrder.Note);
-            }
-
-            return NotProducibleBySCriterion(target, column, kind);
+            return v4 ?? NotProducibleBySCriterion(
+                target,
+                column,
+                kind,
+                halfFailure);
         }
 
         /*
@@ -2304,6 +2289,18 @@ public static partial class AngleWorkOrderBuilder
             $"n = 4 的 S 判据不成立（D 与 F 都不成立）：列 {columnText} 虽然通过五项条件，" +
             "但论文定理 3 判它不可制作。";
 
+        if (!string.IsNullOrEmpty(halfFailure))
+        {
+            reason += " 半边工序（v4）：" +
+                      halfFailure.Replace(
+                          NotProduciblePrefix,
+                          string.Empty,
+                          StringComparison.Ordinal).Replace(
+                          UncoveredPrefix,
+                          string.Empty,
+                          StringComparison.Ordinal);
+        }
+
         var limitations = new List<string>
         {
             "S 判据（n = 4）：五项条件 ∧ (D∨F)，见论文定理 3。",
@@ -2312,12 +2309,7 @@ public static partial class AngleWorkOrderBuilder
 
         if (halfFailure is not null)
         {
-            limitations.Add(
-                "半边候选（3 → 1 → 2）全部没通过；最后一条诊断：" +
-                halfFailure.Replace(
-                    UncoveredPrefix,
-                    string.Empty,
-                    StringComparison.Ordinal));
+            limitations.Add("半边工序（v4）的失败诊断：" + halfFailure);
         }
 
         return new AngleWorkOrder(

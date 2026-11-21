@@ -3,6 +3,7 @@ using ShapeEditor.Core.Analysis;
 using ShapeEditor.Core.Analysis.Production;
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Physics;
+using ShapeEditor.Core.Services;
 
 namespace ShapeEditor.Tests;
 
@@ -771,53 +772,38 @@ internal static class AngleAuditTests
     }
 
     /// <summary>
-    /// 半边工序的外部审计：7–9 层、4 象限、字母表 <c>. T P c</c>；
-    /// 加上两条论文算法 8 的实测半边（候选 1 / 候选 2）。
+    /// 半边工序 v4 的外部审计（7–9 层、4 象限、字母表 <c>. T P c</c>）。
     ///
-    /// <para>
-    /// 单列扫描只挑「五项 ✔ 且不属于 S」的合法列（≤6 层的审计口径不变，仍要求它们
-    /// 报「不可制作」）；单列目标的另一列是空列，所以只可能命中候选 3
-    /// （<c>s = 最高晶体 = 层数−3</c>、顶部 <c>c-P-T</c>、<c>s−1</c> 是洞、<c>s−2</c> 是普通格）。
-    /// 候选 1 / 2 需要第二列也有材料，因此另加两条两列半边：
-    /// </para>
-    /// <list type="bullet">
-    /// <item>候选 1：<c>cTcccccc</c> + <c>cTcccccc</c>（两列都在 S、Q 稳定）；
-    /// 目标列本身是 S，<see cref="AngleWorkOrderBuilder.Build"/> 会走单角算法，
-    /// 所以用独立入口 <see cref="AngleWorkOrderBuilder.BuildHalf"/> 触发；</item>
-    /// <item>候选 2：规格 §6.4 的 <c>cT.T.cT.Tccc</c> + <c>TTTT.cccccPT</c>
-    /// （第 4 层的 <c>TT</c> 提到第 5 层 ⇒ Q′，下落一次即得 Q）。</item>
-    /// </list>
-    /// <para>每一列 / 每个半边都按 docs §6 的七条独立核对：</para>
+    /// <para><b>229 个非 S 合法角</b>：每个列 <c>u</c> 与<b>规范伙伴</b>组成两列半边，
+    /// 按 v4 判据逐条核对（规范伙伴 = 第一个晶下间隙处留空、下方普通格、上方晶体，
+    /// 与 5 个回归例用的伙伴同构）。</para>
     /// <list type="number">
-    /// <item>完成（IsComplete）必须带 <see cref="HalfWorkOrder"/>，候选与形态一致、
-    /// <c>Half.IsComplete</c>、<c>Rank = 0</c>；</item>
-    /// <item>前态每一列过五项条件；候选 3 的全部列（含辅助列）必须是紧列，
-    /// 候选 1 / 2 的两列是带子配方的 S 列（允许带洞），其余象限必须为空；</item>
-    /// <item>候选 1 要求前态 = Q 且 Q 稳定；候选 2 要求前态 = Q′ 且真实一次下落得到 Q；
-    /// 候选 3 要求前态稳定、前态目标列 ≠ 目标列（禁止循环）；</item>
-    /// <item>候选 1 / 2 用真实 <see cref="ShapePhysics.Collapse"/> 回放
-    /// （候选 1 恒等、候选 2 落一层）；候选 3 用真实 <c>ShapePhysics.Cut</c> 回放；</item>
-    /// <item>两列逐格（类型 / 形状码 / 颜色）等于半边目标，末步等于目标角；</item>
-    /// <item>未完成时 Note 必须分清「不可制作」与「未覆盖」，且未覆盖不得伪造 Target 步。</item>
+    /// <item>① 两列逆提升后都必须属于 S（否则失败点记 ①）；</item>
+    /// <item>② 两张角卡产物必须由真实角工序做出（否则失败点记 ②）；</item>
+    /// <item>⑤ 拆柱后一次真实 Collapse 必须逐格等于目标半边（否则失败点记 ⑤）。</item>
     /// </list>
+    /// <para>
+    /// 失败的 Note 一律 <see cref="AngleWorkOrderBuilder.NotProduciblePrefix"/>，
+    /// 并按 ①/②/⑤ 分类；不允许出现「未覆盖」，也不允许伪造 Target 步。
+    /// </para>
+    /// <para><b>8 条回归</b>：5 条 PASS + 第 6 条 NotProducible + 两个 Cut 反例 PASS。</para>
     /// </summary>
     public static void HalfSideAudit()
     {
+        const string alphabet = ".TPc";
+
         int legalNonS = 0;
         int halfComplete = 0;
         int notProducible = 0;
-        int uncovered = 0;
-        int v3Complete = 0;
-        int fallbackComplete = 0;
-        int v3NoLift = 0;
-        int v3ReplayRejected = 0;
-        int v3NotApplicable = 0;
-        var halfColumns = new List<string>();
+        int liftFail = 0;
+        int cornerFail = 0;
+        int settleFail = 0;
         var problems = new List<string>();
+        var examples = new List<string>();
 
         for (int layers = 7; layers <= 9; layers++)
         {
-            int combinations = (int)Math.Pow(Alphabet.Length, layers);
+            int combinations = (int)Math.Pow(alphabet.Length, layers);
             var buffer = new char[layers];
 
             for (int code = 0; code < combinations; code++)
@@ -826,13 +812,12 @@ internal static class AngleAuditTests
 
                 for (int layer = 0; layer < layers; layer++)
                 {
-                    buffer[layer] = Alphabet[remaining % Alphabet.Length];
-                    remaining /= Alphabet.Length;
+                    buffer[layer] = alphabet[remaining % alphabet.Length];
+                    remaining /= alphabet.Length;
                 }
 
                 string text = new(buffer);
 
-                // 先用列字符串判掉不合法 / 属于 S 的列（S 走现有算法，见别的审计）。
                 if (!ShapeSignature.CheckColumn(text).IsLegal ||
                     PillarSCriterion.IsPillarColumn(text))
                 {
@@ -841,432 +826,172 @@ internal static class AngleAuditTests
 
                 legalNonS++;
 
-                ShapeDocument target = BuildColumn(text);
-                AngleWorkOrder order = AngleWorkOrderBuilder.Build(target, 0, layers);
+                string partner = CanonicalPartner(text);
+                ShapeDocument target = BuildColumns(text, partner);
 
-                // v3 诊断（不改变求解结果）：单列目标的第二列恒为空，
-                // v3 的「两列各自落回目标」不会成立，用来验证兜底是否仍在。
-                HalfCutReuseProbe probe = AngleWorkOrderBuilder.ProbeHalfCutReuse(
+                HalfWorkOrder? half = AngleWorkOrderBuilder.BuildHalf(
                     target,
                     0,
                     layers);
 
-                switch (probe.Status)
+                AngleWorkOrder order = AngleWorkOrderBuilder.Build(
+                    target,
+                    0,
+                    layers,
+                    preferCrystalBreak: false);
+
+                if (half is { IsComplete: true })
                 {
-                    case HalfCutReuseStatus.NoLiftSource:
-                        v3NoLift++;
-                        break;
-                    case HalfCutReuseStatus.ReplayRejected:
-                        v3ReplayRejected++;
-                        break;
-                    case HalfCutReuseStatus.NotApplicable:
-                        v3NotApplicable++;
-                        break;
-                    default:
-                        break;
-                }
+                    halfComplete++;
 
-                if (!order.IsComplete)
-                {
-                    if (order.Half is { IsComplete: true })
+                    if (examples.Count < 12)
                     {
-                        problems.Add(text + "：未完成却带已完成的 Half");
+                        examples.Add(text + "|" + partner);
                     }
 
-                    if (order.Note is null)
-                    {
-                        problems.Add(text + "：未完成但没有 Note");
-                    }
-                    else if (order.Note.StartsWith(
-                                 AngleWorkOrderBuilder.NotProduciblePrefix,
-                                 StringComparison.Ordinal))
-                    {
-                        notProducible++;
-                    }
-                    else if (order.Note.StartsWith(
-                                 AngleWorkOrderBuilder.UncoveredPrefix,
-                                 StringComparison.Ordinal))
-                    {
-                        uncovered++;
-
-                        if (order.Steps.Any(step =>
-                                step.Kind == AngleWorkStepKind.Target))
-                        {
-                            problems.Add(text + "：未覆盖却伪造了 Target 步");
-                        }
-                    }
-                    else
-                    {
-                        problems.Add(text + "：Note 前缀既不是不可制作也不是未覆盖：" +
-                                      order.Note);
-                    }
-
+                    VerifyHalfV4(half, target, text, problems);
                     continue;
                 }
 
-                halfComplete++;
-                halfColumns.Add(text);
+                notProducible++;
 
-                if (order.Half is { CutReuseV3: true })
+                string note = order.Note ?? string.Empty;
+
+                if (note.Contains("逆提升失败", StringComparison.Ordinal))
                 {
-                    v3Complete++;
+                    liftFail++;
+                }
+                else if (note.Contains("角 u 不可制作", StringComparison.Ordinal) ||
+                         note.Contains("角 v 不可制作", StringComparison.Ordinal))
+                {
+                    cornerFail++;
+                }
+                else if (note.Contains("拆柱跌落与目标不符", StringComparison.Ordinal))
+                {
+                    settleFail++;
                 }
                 else
                 {
-                    fallbackComplete++;
+                    problems.Add(text + "：失败原因没有落到 ①/②/⑤：" + note);
                 }
 
-                HalfWorkOrder? half = order.Half;
-
-                if (half is null || !half.IsComplete)
+                if (!note.StartsWith(
+                        AngleWorkOrderBuilder.NotProduciblePrefix,
+                        StringComparison.Ordinal))
                 {
-                    problems.Add(text + "：完成却没有已完成的 Half");
-                    continue;
+                    problems.Add(text + "：失败必须是 NotProducible：" + note);
                 }
 
-                if (half.Candidate != HalfCandidate.TempCrystalFuse)
+                if (note.Contains(
+                        AngleWorkOrderBuilder.UncoveredPrefix,
+                        StringComparison.Ordinal))
                 {
-                    problems.Add(text + "：候选不是 TempCrystalFuse");
+                    problems.Add(text + "：不应再出现「未覆盖」：" + note);
                 }
 
-                if (half.Target.PrimaryColumn != 0 ||
-                    half.Target.Columns.Count != 2 ||
-                    half.Target.Columns[0] != 0 ||
-                    half.Target.Columns[1] != 1)
+                if (order.Steps.Any(step => step.Kind == AngleWorkStepKind.Target))
                 {
-                    problems.Add(text + "：Half 的目标列不是第 1、2 象限");
-                }
-
-                AngleWorkStep? preStateStep = order.Steps.FirstOrDefault(
-                    step => step.Kind == AngleWorkStepKind.PreState &&
-                            step.Shape is not null);
-
-                if (preStateStep?.Shape is null)
-                {
-                    problems.Add(text + "：没有前态");
-                    continue;
-                }
-
-                ShapeDocument pre = preStateStep.Shape;
-
-                if (!ShapeOps.IsStable(pre))
-                {
-                    problems.Add(text + "：前态不稳定");
-                }
-
-                if (!ShapeSignature.AllColumnsLegal(pre, out int badColumn))
-                {
-                    problems.Add(
-                        text + $"：前态第 {badColumn + 1} 象限不是合法列");
-                }
-
-                for (int part = 0; part < pre.PartCount; part++)
-                {
-                    if (!ShapeSignature.IsTightColumn(pre, part))
-                    {
-                        problems.Add(
-                            text + $"：前态第 {part + 1} 象限不是紧列");
-                    }
-                }
-
-                if (ShapeSignature.ColumnText(pre, 0) == text)
-                {
-                    problems.Add(text + "：前态目标列等于目标（循环）");
-                }
-
-                if (order.HasIllegalPreState(out _, out _))
-                {
-                    problems.Add(text + "：HasIllegalPreState 判前态非法");
-                }
-
-                CutResult cut = ShapePhysics.Cut(
-                    ShapeOps.Rotate(pre, order.Rotation));
-
-                if (!cut.Success || cut.West is null)
-                {
-                    problems.Add(text + "：真实 Cut 失败");
-                    continue;
-                }
-
-                ShapeDocument replayed = ShapeOps.Rotate(
-                    cut.West!,
-                    -order.Rotation);
-
-                if (!ShapeOps.Same(replayed, half.Steps[^1].Shape))
-                {
-                    problems.Add(text + "：两列没有逐格等于半边目标");
-                }
-
-                if (ShapeSignature.ColumnText(replayed, 0) != text)
-                {
-                    problems.Add(text + "：半破后第 1 列不等于目标列");
-                }
-
-                if (!AngleTestHelpers.TargetColumnMatches(order, target))
-                {
-                    problems.Add(text + "：末步的目标列没有逐格等于目标");
+                    problems.Add(text + "：未完成的工序伪造了 Target 步");
                 }
             }
         }
 
-        /*
-         * 候选 1 / 2 需要第二列也有材料；上面的单列扫描里第二列恒为空，命中不了。
-         * 这里用两条论文算法 8 的实测半边补上，并逐条独立核对。
-         */
-        var paperHalfCases = new (string First, string Second, HalfCandidate Expected)[]
+        // ── 8 条回归（5 PASS + 第 6 条 NotProducible + 两个 Cut 反例 PASS）──
+        var passCases = new (string U, string V)[]
         {
-            ("cTcccccc", "cTcccccc", HalfCandidate.Algo8Self),
-            ("cT.T.cT.Tccc", "TTTT.cccccPT", HalfCandidate.Algo8Uplift)
+            ("cT.T.cPT", "TTTT.ccc"),
+            ("cT.T..cPT", "TTTT..ccc"),
+            ("cT..T.cPT", "TTTTT.ccc"),
+            ("cT.T.cPPT", "TTTT.cccc"),
+            ("T.cT.T.cPT", "PPTTTT.ccc")
         };
 
-        int halfTargetCases = 0;
+        int regressionPass = 0;
 
-        foreach ((string first, string second, HalfCandidate expected) in paperHalfCases)
+        foreach ((string u, string v) in passCases)
         {
-            halfTargetCases++;
+            int layers = Math.Max(u.Length, v.Length);
+            ShapeDocument target = BuildColumns(
+                u.PadRight(layers, '.'),
+                v.PadRight(layers, '.'));
 
-            string label = first + " | " + second;
-
-            ShapeDocument target = BuildColumns(first, second);
-
-            AngleWorkOrder? order = null;
-
-            HalfWorkOrder? half;
-
-            if (expected == HalfCandidate.Algo8Self)
+            if (AngleWorkOrderBuilder.BuildHalf(target, 0, layers) is { IsComplete: true })
             {
-                // 目标列本身是 S：Build 走单角算法，候选 1 只能从独立入口触发。
-                half = AngleWorkOrderBuilder.BuildHalf(
-                    target,
-                    0,
-                    target.LayerCount);
-                fallbackComplete++;
+                regressionPass++;
             }
             else
             {
-                /*
-                 * 2026-11-21 v3 主路径：这个论文例现在由 v3 命中。
-                 * 这里显式关闭 v3，继续核对旧候选 2 的兜底形态；
-                 * 同时单独确认默认入口仍是 v3（Cut 回放逐格）。
-                 */
-                order = null;
-
-                half = AngleWorkOrderBuilder.BuildHalf(
-                    target,
-                    0,
-                    target.LayerCount,
-                    preferCutReuseV3: false);
-
-                HalfWorkOrder? primary = AngleWorkOrderBuilder.BuildHalf(
-                    target,
-                    0,
-                    target.LayerCount);
-
-                if (primary is null || !primary.CutReuseV3)
-                {
-                    problems.Add(label + "：默认入口应走 v3 主路径");
-                }
-                else
-                {
-                    v3Complete++;
-
-                    ShapeDocument primaryPre = primary.Steps[0].Shape!;
-                    CutResult primaryCut = ShapePhysics.Cut(
-                        ShapeOps.Rotate(primaryPre, primary.Rotation));
-
-                    if (!primaryCut.Success || primaryCut.West is null)
-                    {
-                        problems.Add(label + "：v3 真实 Cut 失败");
-                    }
-                    else
-                    {
-                        ShapeDocument primaryReplay = ShapeOps.Rotate(
-                            primaryCut.West,
-                            -primary.Rotation);
-
-                        if (!ShapeOps.Same(primaryReplay, primary.Steps[^1].Shape))
-                        {
-                            problems.Add(label + "：v3 半破结果与半边目标不符");
-                        }
-                    }
-                }
-            }
-
-            if (half is null || !half.IsComplete)
-            {
-                problems.Add(label + "：半边候选没有验证通过");
-                continue;
-            }
-
-            halfComplete++;
-            halfColumns.Add(label);
-
-            if (half.Candidate != expected)
-            {
-                problems.Add(label + "：候选应为 " + expected + "，实际 " + half.Candidate);
-            }
-
-            if (half.Rank != 0)
-            {
-                problems.Add(label + "：Rank 应只统计 Pin 步（本候选为 0）");
-            }
-
-            if (half.Target.PrimaryColumn != 0 ||
-                half.Target.Columns.Count != 2 ||
-                half.Target.Columns[0] != 0 ||
-                half.Target.Columns[1] != 1)
-            {
-                problems.Add(label + "：Half 的目标列不是第 1、2 象限");
-            }
-
-            if (!half.TargetColumnsHaveSubRecipe)
-            {
-                problems.Add(label + "：候选 1 / 2 的两列都应带子配方");
-            }
-
-            if (order is not null)
-            {
-                if (!order.IsComplete || order.Note is not null)
-                {
-                    problems.Add(label + "：外层角工序未完成");
-                }
-
-                if (order.Construction != AngleConstruction.Half)
-                {
-                    problems.Add(label + "：外层构造应为 Half");
-                }
-
-                if (order.Rank != 0 ||
-                    order.Rotation != 0 ||
-                    order.AuxiliaryColumns.Count != 0)
-                {
-                    problems.Add(label + "：候选 2 不应有 Pin / 旋转 / 辅助列");
-                }
-
-                if (order.HasIllegalPreState(out _, out _))
-                {
-                    problems.Add(label + "：HasIllegalPreState 判前态非法");
-                }
-
-                if (!AngleTestHelpers.TargetColumnMatches(order, target))
-                {
-                    problems.Add(label + "：末步的目标列没有逐格等于目标");
-                }
-            }
-
-            ShapeDocument pre = half.Steps[0].Shape!;
-            ShapeDocument q = ShapeOps.Project(target, 0, 2);
-
-            if (!ShapeSignature.AllColumnsLegal(pre, out int badHalfColumn))
-            {
-                problems.Add(label + "：前态第 " + (badHalfColumn + 1) + " 象限不是合法列");
-            }
-
-            // 两列都属于 n = 4 的 S（候选 1 / 2 的共同前提）。
-            for (int part = 0; part < 2; part++)
-            {
-                if (!PillarSCriterion.IsPillarColumn(pre, part))
-                {
-                    problems.Add(label + "：前态第 " + (part + 1) + " 象限不在 S");
-                }
-            }
-
-            // 另外两个象限必须整列为空（不参与产物）。
-            for (int part = 2; part < 4; part++)
-            {
-                if (ShapeSignature
-                        .ColumnText(pre, part)
-                        .Any(code => code != ShapeSignature.EmptyCode))
-                {
-                    problems.Add(label + "：第 " + (part + 1) + " 象限应为空");
-                }
-            }
-
-            if (!ShapeOps.Same(half.Steps[^1].Shape, q))
-            {
-                problems.Add(label + "：两列没有逐格等于半边目标");
-            }
-
-            if (expected == HalfCandidate.Algo8Self)
-            {
-                if (half.Steps.Count != 2 ||
-                    half.Steps[0].Kind != AngleWorkStepKind.PreState ||
-                    half.Steps[^1].Kind != AngleWorkStepKind.Target)
-                {
-                    problems.Add(label + "：候选 1 的步骤链应为 PreState → Target");
-                }
-
-                if (!ShapeOps.Same(pre, q))
-                {
-                    problems.Add(label + "：候选 1 的前态应就是 Q 本身");
-                }
-
-                if (!ShapeOps.IsStable(pre))
-                {
-                    problems.Add(label + "：候选 1 的 Q 应稳定");
-                }
-
-                if (!ShapeOps.Same(
-                        ShapePhysics.Collapse(pre).Document,
-                        pre))
-                {
-                    problems.Add(label + "：候选 1 的一次下落应仍是 Q");
-                }
-            }
-            else
-            {
-                if (half.Steps.Count != 2 ||
-                    half.Steps[0].Kind != AngleWorkStepKind.PreState ||
-                    half.Steps[^1].Kind != AngleWorkStepKind.Target)
-                {
-                    problems.Add(label + "：候选 2 的步骤链应为 PreState → Target（自动下落并进 Target）");
-                }
-
-                if (half.Steps.Any(step => step.Kind == AngleWorkStepKind.Collapse))
-                {
-                    problems.Add(label + "：候选 2 的步骤链不应再出现 Collapse 中间态");
-                }
-
-                if (ShapeOps.Same(pre, q))
-                {
-                    problems.Add(label + "：候选 2 的前态必须是提升后的 Q′");
-                }
-
-                ShapeDocument? collapsed = ShapePhysics.Collapse(pre).Document;
-
-                if (!ShapeOps.Same(collapsed, q))
-                {
-                    problems.Add(label + "：候选 2 的 Q′ 一次下落没有得到 Q");
-                }
-
-                if (!ShapeOps.Same(half.Steps[^1].Shape, q))
-                {
-                    problems.Add(label + "：候选 2 的 Target 步不是真实下落结果");
-                }
-
-                if (!IsSinglePairLift(q, pre, out int liftFrom, out int liftTo))
-                {
-                    problems.Add(label + "：候选 2 的前态不是「提升一对普通格」得到的");
-                }
-                else if (liftTo - liftFrom < 1)
-                {
-                    problems.Add(label + "：候选 2 的提升方向错误");
-                }
+                problems.Add("回归 " + u + " | " + v + " 应判 PASS");
             }
         }
 
-        Console.WriteLine(
-            $"  HALFAUDIT legalNonS={legalNonS} halfTargets={halfTargetCases} " +
-            $"halfComplete={halfComplete} notProducible={notProducible} " +
-            $"uncovered={uncovered} problems={problems.Count}");
-        Console.WriteLine(
-            $"  HALFAUDIT-V3 v3Complete={v3Complete} fallbackComplete={fallbackComplete} " +
-            $"singleColumnNoLift={v3NoLift} singleColumnReplayRejected={v3ReplayRejected} " +
-            $"singleColumnNotApplicable={v3NotApplicable}");
-
-        if (halfColumns.Count > 0)
+        int regressionReject = 0;
         {
-            Console.WriteLine("  半边完成的列：" + string.Join(" ", halfColumns));
+            const int layers = 10;
+            ShapeDocument target = BuildColumns(
+                "cT.T.cT.T.c",
+                "TTTTTTTTTT");
+
+            if (AngleWorkOrderBuilder.BuildHalf(target, 0, layers) is null)
+            {
+                regressionReject++;
+            }
+            else
+            {
+                problems.Add("回归 6（cT.T.cT.T.c）应判 NotProducible");
+            }
+        }
+
+        var cutCases = new (string Code, int Layers, string U, string V)[]
+        {
+            (
+                "crcrCu--:CucrCu--:CucrCu--:--crCu--:crcrCu--:crCuCu--:CuCuCu--:" +
+                "crCuCu--:crcrcr--:CuCu----:crcr----:P-cr----:Cucr----",
+                13,
+                "cTT.ccT.T.cPT",
+                "cccccTTTT.ccc"),
+            (
+                "crCuCu--:CuCuCu--:crCuCu--:crcrcr--:CuCuCu--:crcrCu--:P-crCu--:" +
+                "CucrCu--:CuCuCu--:Cucrcr--:P-Cu----:Cucr----",
+                12,
+                "cT.T.cPTTTPT",
+                "TTTT.cccTT.c")
+        };
+
+        foreach ((string code, int layers, string u, string v) in cutCases)
+        {
+            ParseResult parsed = new ShortCodeParser().Parse(code, layers, 4);
+            CutResult cut = ShapePhysics.Cut(parsed.Document!);
+            HalfWorkOrder? half = AngleWorkOrderBuilder.BuildHalf(
+                cut.West!,
+                0,
+                layers);
+
+            if (half is null ||
+                ShapeSignature.ColumnText(half.Steps[^1].Shape!, 0) != u ||
+                ShapeSignature.ColumnText(half.Steps[^1].Shape!, 1) != v)
+            {
+                problems.Add("Cut 反例 " + u + " | " + v + " 应被 v4 复现");
+            }
+            else
+            {
+                regressionPass++;
+            }
+        }
+
+        int cornerReady = legalNonS - liftFail - cornerFail;
+
+        Console.WriteLine(
+            $"  HALFAUDIT legalNonS={legalNonS} halfComplete={halfComplete} " +
+            $"notProducible={notProducible} problems={problems.Count}");
+        Console.WriteLine(
+            $"  HALFAUDIT-V4 liftFail={liftFail} cornerFail={cornerFail} " +
+            $"settleFail={settleFail} cornerReady={cornerReady} " +
+            $"regressionPass={regressionPass} regressionReject={regressionReject}");
+
+        if (examples.Count > 0)
+        {
+            Console.WriteLine("  半边完成的列：" + string.Join(" ", examples));
         }
 
         if (problems.Count > 0)
@@ -1274,120 +999,119 @@ internal static class AngleAuditTests
             Console.WriteLine("  半边审计问题：" + string.Join(" | ", problems));
         }
 
-        Assert.Equal(
-            halfComplete,
-            v3Complete + fallbackComplete,
-            "v3 主路径 + 旧候选兜底的命中数应等于半边完成数");
-        Assert.True(
-            v3Complete >= 1,
-            "v3 主路径应至少覆盖论文候选 2 的那个两列半边");
-        Assert.Equal(
-            legalNonS,
-            v3NoLift + v3ReplayRejected + v3NotApplicable,
-            "229 个单列目标的 v3 诊断应覆盖全部（每个都给出一个状态）");
+        Assert.Equal(229, legalNonS, "7–9 层的非 S 合法角应固定为 229 个");
         Assert.True(
             problems.Count == 0,
             $"半边工序审计发现 {problems.Count} 个问题：" +
             string.Join(" | ", problems));
-        Assert.True(
-            halfComplete >= 6,
-            "候选 3 的 4 个单列 + 候选 1 / 2 各 1 个应至少有 6 个半边可做，实际 " +
-            halfComplete);
         Assert.Equal(
-            2,
-            halfTargetCases,
-            "论文算法 8 的两条实测半边（候选 1 / 2）都应被审计到");
+            legalNonS,
+            halfComplete + notProducible,
+            "229 例必须全部落到「成功 / NotProducible」之一");
         Assert.True(
-            notProducible > 0,
-            "形态外的合法非 S 列仍应按原语义报不可制作");
+            halfComplete > 6,
+            "v4 的半边成功数应显著大于旧基线的 6，实际 " + halfComplete);
+        Assert.True(
+            cornerReady >= legalNonS - 1,
+            "①/② 两步应几乎全通过（短板在 ⑤ 跌落），实际 cornerReady=" +
+            cornerReady);
+        Assert.Equal(5, regressionPass - 2, "5 条给定半边应全部 PASS");
+        Assert.Equal(1, regressionReject, "第 6 条应判 NotProducible");
     }
 
     /// <summary>
-    /// 验证 <paramref name="after"/> 是由 <paramref name="before"/> 把某一层的一对
-    /// 普通格整体上移得到的：恰好一层「两列都是普通格 ⇒ 两列都空」（起点 from），
-    /// 恰好一层「两列都空 ⇒ 两列都是普通格」（终点 to），其余格子逐格不变，
-    /// 且 from+1 … to−1 两列都为空。
+    /// 229 例用到的规范伙伴：第一个「晶体正下方为空」处留一个空层，
+    /// 下面普通格、上面晶体（与 5 个回归例的伙伴同构）。
     /// </summary>
-    private static bool IsSinglePairLift(
-        ShapeDocument before,
-        ShapeDocument after,
-        out int from,
-        out int to)
+    private static string CanonicalPartner(
+        string text)
     {
-        from = -1;
-        to = -1;
-
-        for (int layer = 0; layer < after.LayerCount; layer++)
+        for (int layer = 1; layer < text.Length; layer++)
         {
-            bool beforeEmpty = before[layer, 0].Type == CellType.Empty &&
-                               before[layer, 1].Type == CellType.Empty;
-
-            bool afterEmpty = after[layer, 0].Type == CellType.Empty &&
-                              after[layer, 1].Type == CellType.Empty;
-
-            bool beforeSolid = before[layer, 0].Type == CellType.Shape &&
-                               before[layer, 1].Type == CellType.Shape;
-
-            bool afterSolid = after[layer, 0].Type == CellType.Shape &&
-                              after[layer, 1].Type == CellType.Shape;
-
-            if (beforeSolid && afterEmpty)
+            if (text[layer] == ShapeSignature.CrystalCode &&
+                text[layer - 1] == ShapeSignature.EmptyCode)
             {
-                if (from >= 0)
-                {
-                    return false;
-                }
-
-                from = layer;
-                continue;
-            }
-
-            if (beforeEmpty && afterSolid)
-            {
-                if (to >= 0)
-                {
-                    return false;
-                }
-
-                to = layer;
-                continue;
-            }
-
-            if (!ShapeOps.SameCell(before[layer, 0], after[layer, 0]) ||
-                !ShapeOps.SameCell(before[layer, 1], after[layer, 1]))
-            {
-                return false;
+                return new string('T', layer - 1) + "." +
+                       new string('c', text.Length - layer);
             }
         }
 
-        if (from < 0 || to <= from)
-        {
-            return false;
-        }
-
-        for (int layer = from + 1; layer < to; layer++)
-        {
-            if (before[layer, 0].Type != CellType.Empty ||
-                before[layer, 1].Type != CellType.Empty)
-            {
-                return false;
-            }
-        }
-
-        return true;
+        return new string('T', text.Length);
     }
 
-    /// <summary>按两列文本造 4 象限目标（其余列留空）。</summary>
+    /// <summary>逐条核对一条 v4 半边：五步、两张角卡、真实跌落。</summary>
+    private static void VerifyHalfV4(
+        HalfWorkOrder half,
+        ShapeDocument target,
+        string text,
+        List<string> problems)
+    {
+        if (half.Candidate != HalfCandidate.LiftCornerDrop)
+        {
+            problems.Add(text + "：候选不是 LiftCornerDrop");
+        }
+
+        if (half.Steps.Count != 4 ||
+            half.Steps[0].Kind != AngleWorkStepKind.PreState ||
+            half.Steps[1].Kind != AngleWorkStepKind.Exchange ||
+            half.Steps[2].Kind != AngleWorkStepKind.Support ||
+            half.Steps[^1].Kind != AngleWorkStepKind.Target)
+        {
+            problems.Add(text + "：v4 步骤链应为 前态 → 交换 → 拆柱 → 目标");
+        }
+
+        if (half.CornerProducts.Count != 2 || half.CornerOrders.Count != 2)
+        {
+            problems.Add(text + "：v4 必须带两张角卡产物 / 角工序");
+            return;
+        }
+
+        if (!half.CornerOrders[0].IsComplete || !half.CornerOrders[1].IsComplete)
+        {
+            problems.Add(text + "：两张角工序都应完整");
+        }
+
+        ShapeDocument lifted = half.Steps[0].Shape!;
+
+        if (!PillarSCriterion.IsPillarColumn(lifted, 0) ||
+            !PillarSCriterion.IsPillarColumn(lifted, 1))
+        {
+            problems.Add(text + "：逆提升后的两列都应属于 S");
+        }
+
+        if (AngleWorkOrderBuilder.P1Violation(lifted, out _, out _))
+        {
+            problems.Add(text + "：逆提升后的前态违反 P1");
+        }
+
+        ShapeDocument settled = ShapePhysics.Collapse(half.PreSettleShape!).Document!;
+
+        if (!ShapeOps.Same(settled, half.Steps[^1].Shape))
+        {
+            problems.Add(text + "：Target 步不是真实 Collapse 的结果");
+        }
+
+        if (!ShapeOps.Same(half.Steps[^1].Shape, ShapeOps.Project(target, 0, 2)))
+        {
+            problems.Add(text + "：半边目标没有逐格等于目标那两列");
+        }
+    }
+
+
+    /// <summary>按两列文本造 4 象限目标（其余列留空；短列按空层补齐）。</summary>
     private static ShapeDocument BuildColumns(
         string first,
         string second)
     {
-        var document = new ShapeDocument(first.Length, Parts);
+        int layers = Math.Max(first.Length, second.Length);
+        var document = new ShapeDocument(layers, Parts);
 
-        for (int layer = 0; layer < first.Length; layer++)
+        for (int layer = 0; layer < layers; layer++)
         {
-            document[layer, 0] = CellFromCode(first[layer]);
-            document[layer, 1] = CellFromCode(second[layer]);
+            document[layer, 0] = CellFromCode(
+                layer < first.Length ? first[layer] : '.');
+            document[layer, 1] = CellFromCode(
+                layer < second.Length ? second[layer] : '.');
         }
 
         return document;

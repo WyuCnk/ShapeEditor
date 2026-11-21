@@ -155,28 +155,33 @@ public static class CardBuilder
                 continue;
             }
 
-            HalfWorkOrder? cutHalf = null;
-            string? cutHalfTitle = null;
+            /*
+             * v4 半边：两个角都由「逆提升后各自做角」得到。角卡直接复用半边里
+             * 已经真实回放过的角工序（liftHalf.CornerOrders），产物 = 角产物（Q1）。
+             * n ≥ 6 的整半边没有这一层，走普通角卡。
+             */
+            HalfWorkOrder? liftHalf = null;
+            int liftIndex = -1;
 
-            if (HalfNeedsCut(leftOrder) &&
-                ColumnInHalf(column, axis, half, parts))
+            if (TryGetLiftCorner(leftOrder, column, out liftIndex))
             {
-                cutHalf = leftOrder;
-                cutHalfTitle = "半边1";
+                liftHalf = leftOrder;
             }
-            else if (HalfNeedsCut(rightOrder) &&
-                     ColumnInHalf(column, rightAxis, half, parts))
+            else if (TryGetLiftCorner(rightOrder, column, out liftIndex))
             {
-                cutHalf = rightOrder;
-                cutHalfTitle = "半边2";
+                liftHalf = rightOrder;
+            }
+            else
+            {
+                liftIndex = -1;
             }
 
             cornerCards.Add(BuildCornerCard(
                 core,
                 column,
                 cap,
-                cutHalf,
-                cutHalfTitle));
+                liftHalf,
+                liftIndex));
         }
 
         set.CornerCards = cornerCards;
@@ -202,9 +207,9 @@ public static class CardBuilder
     /// 一张角卡：目标列 + 左右柱，产物归一化到 Q1。
     ///
     /// <list type="bullet">
-    /// <item><b>属于需要碎晶的半边</b>（<paramref name="cutHalf"/> 非空）：
-    /// 由 <see cref="TryBuildTightCornerCard"/> 接管——产物 = 该列在半边前态里的
-    /// 紧列 + 左右双柱，<b>没有碎晶步</b>（碎晶归半边卡）。</item>
+    /// <item><b>v4 半边里的角</b>（<paramref name="liftHalf"/> 非空）：直接复用
+    /// <see cref="HalfWorkOrder.CornerOrders"/> 的角工序，产物 =
+    /// <b>逆提升后</b>的目标列 + 左右支撑柱；角卡自己的碎晶 / 顶针仍然可见。</item>
     /// <item><b>独立角</b>：步骤来自角工序单（<see cref="AngleWorkOrder.Steps"/>）；
     /// 走半边工序的角（<see cref="AngleWorkOrder.Half"/> 非空）改用
     /// <see cref="HalfWorkOrder.Steps"/> 的两列视图。</item>
@@ -214,41 +219,54 @@ public static class CardBuilder
         ShapeDocument core,
         int column,
         int cap,
-        HalfWorkOrder? cutHalf = null,
-        string? cutHalfTitle = null)
+        HalfWorkOrder? liftHalf = null,
+        int liftIndex = -1)
     {
-        /*
-         * 属于「需要碎晶的半边」的角：碎晶归半边卡，本卡只产出
-         * 「该列在半边前态里的紧列 + 左右双柱」（用户裁定 2026-11-20）。
-         */
-        if (cutHalf is not null)
-        {
-            WorkOrderCardView? tightCard = TryBuildTightCornerCard(
-                column,
-                cap,
-                cutHalf,
-                cutHalfTitle);
+        int parts = core.PartCount;
 
-            if (tightCard is not null)
+        /*
+         * v4 半边里的角：直接复用半边已经真实回放过的角工序
+         * （<see cref="HalfWorkOrder.CornerOrders"/>）；产物 = 角产物（已归一化 Q1）。
+         */
+        AngleWorkOrder? liftOrder = null;
+        ShapeDocument? liftOutput = null;
+        ShapeDocument? liftProduct = null;
+
+        if (liftHalf is { IsComplete: true } &&
+            liftIndex >= 0 &&
+            liftIndex < liftHalf.CornerOrders.Count &&
+            liftIndex < liftHalf.CornerProducts.Count)
+        {
+            liftOrder = liftHalf.CornerOrders[liftIndex];
+            liftOutput = liftHalf.CornerProducts[liftIndex];
+
+            if (liftOrder is not null && liftOutput is not null)
             {
-                return tightCard;
+                liftProduct = ShapeOps.Rotate(
+                    liftOutput,
+                    -ShapeNormalization.Q1Rotation(parts, column));
+            }
+            else
+            {
+                liftOrder = null;
             }
         }
 
-        int parts = core.PartCount;
-
-        ShapeDocument product = BuildCornerProduct(core, column);
-        ShapeDocument output = ShapeNormalization.NormalizeToQ1(product, column);
+        ShapeDocument product = liftProduct ?? BuildCornerProduct(core, column);
+        ShapeDocument output = liftOutput ??
+                               ShapeNormalization.NormalizeToQ1(product, column);
 
         var card = new WorkOrderCardView(
             CardKind.Corner,
             "角" + (column + 1),
             output)
         {
-            Column = column
+            Column = column,
+            LiftCornerProduct = liftOrder is not null
         };
 
-        AngleWorkOrder order = AngleWorkOrderBuilder.Build(core, column, cap);
+        AngleWorkOrder order = liftOrder ??
+                               AngleWorkOrderBuilder.Build(core, column, cap);
 
         bool halfBased = order.Half is not null;
 
@@ -434,10 +452,13 @@ public static class CardBuilder
         {
             card.Verified = true;
 
-            card.Note = halfBased
-                ? "B 类角（S ✘）：目标列由半边工序的一刀真实产出，必须与半边一起做；" +
-                  "左右柱是构造 C 的结构交接（隐藏步）。"
-                : "S 角：单角可做（" + Describe(order) + "）；产物已归一化到 Q1。";
+            card.Note = liftOrder is not null
+                ? "v4 角：逆提升后由角工序单独做出（" + Describe(order) +
+                  "）；产物 = 目标列 + 左右支撑柱（Q1）。"
+                : halfBased
+                    ? "B 类角（S ✘）：目标列由半边工序的一刀真实产出，必须与半边一起做；" +
+                      "左右柱是构造 C 的结构交接（隐藏步）。"
+                    : "S 角：单角可做（" + Describe(order) + "）；产物已归一化到 Q1。";
         }
 
         return card;
@@ -486,127 +507,6 @@ public static class CardBuilder
         return product;
     }
 
-    /// <summary>
-    /// 角属于一个「需要碎晶的半边」时的角卡：
-    /// <c>Output = NormalizeToQ1(该列在半边前态里的紧列 + 左右双柱)</c>，<b>没有碎晶步</b>。
-    ///
-    /// <para>
-    /// 真实回放：<c>构造 A</c> 用结构校验确认产物是紧列 + 三列形态，
-    /// <c>旋转</c> 用真实 <see cref="ShapeOps.Rotate"/> 把目标列旋到 Q1。
-    /// 前态列不紧（候选 3 之外的半边）或层数对不上时返回 null，调用方退回原角卡路径。
-    /// </para>
-    /// </summary>
-    private static WorkOrderCardView? TryBuildTightCornerCard(
-        int column,
-        int cap,
-        HalfWorkOrder cutHalf,
-        string? cutHalfTitle)
-    {
-        ShapeDocument? preState = FirstPreStateShape(cutHalf.Steps);
-
-        if (preState is null ||
-            preState.LayerCount != cap ||
-            !ShapeSignature.IsTightColumn(preState, column))
-        {
-            return null;
-        }
-
-        int parts = preState.PartCount;
-
-        ShapeDocument product = BuildTightCornerProduct(preState, column);
-        ShapeDocument output = ShapeNormalization.NormalizeToQ1(product, column);
-
-        var card = new WorkOrderCardView(
-            CardKind.Corner,
-            "角" + (column + 1),
-            output)
-        {
-            Column = column,
-            TightColumnProduct = true
-        };
-
-        var steps = new List<CardStep>
-        {
-            new(
-                "构造 A",
-                product,
-                hidden: true,
-                detail: "紧列（该列在半边前态里的形态）+ 左右双柱；" +
-                        "提升 / 临时晶体都在这一列里完成，碎晶归半边卡"),
-            new(
-                "旋转",
-                output,
-                hidden: true,
-                detail: $"顺转 {ShapeNormalization.Q1Rotation(parts, column)} 个象限：" +
-                        "目标列 Q1、右柱 Q2、左柱 Q" + parts)
-            {
-                Rotation = ShapeNormalization.Q1Rotation(parts, column)
-            }
-        };
-
-        card.Steps = steps;
-
-        if (!CardReplay.Verify(card, out IReadOnlyList<string> replayErrors))
-        {
-            card.Verified = false;
-            card.Inputs = Array.Empty<ShapeDocument>();
-            card.Note = "未通过：" + string.Join("；", replayErrors);
-        }
-        else
-        {
-            card.Verified = true;
-            card.Note = (string.IsNullOrEmpty(cutHalfTitle)
-                    ? "属于需要碎晶的半边"
-                    : "属于" + cutHalfTitle + "（需要碎晶）") +
-                "：产物 = 该列在半边前态里的紧列 + 左右双柱；" +
-                "碎晶由半边卡完成，本卡不显示碎晶步。";
-        }
-
-        return card;
-    }
-
-    /// <summary>
-    /// 「左柱 + 紧列 + 右柱」三列形态（原朝向）：目标列取自半边前态，两侧补接地满高普通柱。
-    /// </summary>
-    private static ShapeDocument BuildTightCornerProduct(
-        ShapeDocument preState,
-        int column)
-    {
-        int parts = preState.PartCount;
-        int layers = preState.LayerCount;
-
-        var product = new ShapeDocument(layers, parts);
-
-        for (int layer = 0; layer < layers; layer++)
-        {
-            product[layer, column] = preState[layer, column].Clone();
-        }
-
-        int height = ShapeNormalization.ColumnHeight(preState, column);
-
-        if (height == 0)
-        {
-            return product;
-        }
-
-        int left = ShapeOps.Wrap(column - 1, parts);
-        int right = ShapeOps.Wrap(column + 1, parts);
-
-        for (int layer = 0; layer < height; layer++)
-        {
-            if (product[layer, left].Type == CellType.Empty)
-            {
-                product[layer, left] = ShapeCell.Shape('C', 'u');
-            }
-
-            if (product[layer, right].Type == CellType.Empty)
-            {
-                product[layer, right] = ShapeCell.Shape('C', 'u');
-            }
-        }
-
-        return product;
-    }
 
     #endregion
 
@@ -649,33 +549,29 @@ public static class CardBuilder
         };
 
         /*
-         * 用户裁定（2026-11-20）：碎晶是对整个图形的操作，一刀贯穿所有列。
-         * 所以「需要碎晶的半边」单独成一种卡：输入各列紧列，卡内按真实 Cut 步数碎晶。
+         * v4：真正的 A 类半边卡——两张角卡产物 → 交换 → 拆柱 → 跌落。
+         * 不再有「碎晶」步：碎晶 / 顶针都留在各自的角卡里。
          */
-        if (HalfNeedsCut(order))
+        if (order is { IsComplete: true, Candidate: HalfCandidate.LiftCornerDrop } &&
+            order.CornerProducts.Count == width &&
+            order.CornerOrders.Count == width)
         {
-            return BuildCutHalfCard(core, from, parts, cap, order!, cornerCards, title);
+            return BuildLiftCornerDropHalfCard(
+                core,
+                from,
+                parts,
+                cap,
+                order,
+                cornerCards,
+                title,
+                expected,
+                columns);
         }
 
         var halfCorners = cornerCards
             .Where(corner => columns.Contains(corner.Column))
             .ToArray();
 
-        /* A 类先试：两个角卡产物经真实 Exchange 拼成半边。 */
-        List<CardStep>? aSteps = TryBuildFromCorners(
-            halfCorners,
-            expected,
-            parts,
-            out string aReason);
-
-        if (aSteps is not null)
-        {
-            card.Mode = HalfMode.FromCorners;
-            card.Inputs = halfCorners.Select(corner => corner.Output).ToArray();
-            card.InputTitles = halfCorners.Select(corner => corner.Title).ToArray();
-            card.Steps = aSteps;
-        }
-        else
         {
             card.Mode = HalfMode.WholeHalf;
             card.Inputs = Array.Empty<ShapeDocument>();
@@ -720,33 +616,6 @@ public static class CardBuilder
 
                     switch (order.Candidate)
                     {
-                        case HalfCandidate.TempCrystalFuse:
-                        {
-                            ShapeDocument? cut = LastShapeOfKind(
-                                order.Steps,
-                                AngleWorkStepKind.Cut);
-
-                            if (cut is null)
-                            {
-                                failure.Add("候选 3 缺少真实 Cut 快照。");
-                            }
-                            else
-                            {
-                                steps.Add(new CardStep(
-                                    "碎晶",
-                                    cut,
-                                    detail: "真实 Cut：顺转 " + order.Rotation +
-                                            " 个象限后沿 n/2 刀口切开，打碎临时晶体 / 闸门晶体 / 保险丝"));
-
-                                if (!ShapeOps.Same(cut, half))
-                                {
-                                    failure.Add("候选 3 的 Cut 产物与半边目标不一致。");
-                                }
-                            }
-
-                            break;
-                        }
-
                         case HalfCandidate.Algo8Uplift:
                         {
                             ShapeDocument? collapsed =
@@ -794,7 +663,7 @@ public static class CardBuilder
 
             card.Note = failure.Count > 0
                 ? "未通过：" + string.Join("；", failure)
-                : DescribeHalfNote(order!, aReason);
+                : DescribeHalfNote(order!, string.Empty);
         }
 
         if (!CardReplay.Verify(card, out IReadOnlyList<string> replayErrors))
@@ -815,191 +684,126 @@ public static class CardBuilder
     }
 
     /// <summary>
-    /// 需要碎晶的半边卡（<see cref="HalfMode.FromTightColumns"/>）：
+    /// v4 的 A 类半边卡：<b>Inputs = 两张角卡产物</b>，
+    /// 卡内 交换 → 拆柱 → 跌落，<b>没有碎晶步</b>。
     ///
-    /// <code>
-    /// Inputs = 该半边各列的紧列（角卡产物 = 紧列 + 双柱，归一化 Q1）
-    /// 卡内   = 并半（隐藏：把各输入紧列放回前态）→ 碎晶 × N（N = 真实 Cut 步数）→ 收尾
-    /// Output = 目标半边（k 列）
-    /// </code>
-    ///
-    /// <para><b>真实回放</b>：<c>并半</c> 逐格核对每张输入的 Q1 紧列确实进了前态；
-    /// 每个 <c>碎晶</c> 步都用真实 <see cref="ShapePhysics.Cut"/> 重算；
-    /// 刀数 N 直接取半边工序里的真实 <c>Cut</c> 步数（单刀 = 1 步，多刀 = N 步）。</para>
+    /// <para>
+    /// 卡片的每一步都与 <see cref="HalfWorkOrder"/> 里真实回放过的中间态一一对应
+    /// （<c>ExchangedShape</c> / <c>StrippedShape</c> / <c>PreSettleShape</c>），
+    /// 由 <see cref="CardReplay.Verify"/> 用真实 Exchange / Collapse 重算。
+    /// </para>
     /// </summary>
-    private static WorkOrderCardView BuildCutHalfCard(
+    private static WorkOrderCardView BuildLiftCornerDropHalfCard(
         ShapeDocument core,
         int from,
         int parts,
         int cap,
         HalfWorkOrder order,
         IReadOnlyList<WorkOrderCardView> cornerCards,
-        string title)
+        string title,
+        ShapeDocument expected,
+        int[] columns)
     {
-        int width = parts / 2;
-
-        var columns = new int[width];
-
-        for (int index = 0; index < width; index++)
-        {
-            columns[index] = ShapeOps.Wrap(from + index, parts);
-        }
-
-        ShapeDocument expected = ShapeOps.Project(core, from, width);
-
         var card = new WorkOrderCardView(CardKind.Half, title, expected)
         {
             Column = from,
-            Mode = HalfMode.FromTightColumns
+            Mode = HalfMode.FromCorners
         };
 
-        /*
-         * 输入只取「已经是紧列 + 双柱」的角卡产物：这才是半边前态里的那一列。
-         * （候选 3 的目标列 / 环伙伴列都是紧列；万一某列退回旧角卡，就不冒充输入。）
-         */
-        var halfCorners = cornerCards
-            .Where(corner => columns.Contains(corner.Column) &&
-                             corner.TightColumnProduct)
+        var halfCorners = columns
+            .Select(column => cornerCards.FirstOrDefault(corner => corner.Column == column))
             .ToArray();
 
-        card.Inputs = halfCorners.Select(corner => corner.Output).ToArray();
-        card.InputTitles = halfCorners.Select(corner => corner.Title).ToArray();
-        card.InputColumns = halfCorners.Select(corner => corner.Column).ToArray();
-
-        ShapeDocument? preState = FirstPreStateShape(order.Steps);
-
-        /*
-         * 可见前态 =「并半」后的真实 Cut 输入：就是下面「并半」/「前态」步骤用的
-         * 同一个 ShapeDocument（FirstPreStateShape 返回的引用），不是另算一份。
-         * 它单独挂在卡片上展示；「并半」步本身仍保持 Hidden。
-         */
-        card.PreState = preState;
-        card.PreStateTitle = preState is null
-            ? null
-            : "碎晶前（并半后，真实 Cut 的输入）";
-
-        var steps = new List<CardStep>();
-        var failure = new List<string>();
-
-        if (preState is null)
+        if (halfCorners.Any(corner => corner is null || !corner.Verified))
         {
-            failure.Add("半边工序没有前态。");
+            card.Steps = Array.Empty<CardStep>();
+            card.Verified = false;
+            card.Note = "未通过：v4 半边的两张角卡没有都通过真实回放。";
+            return card;
         }
-        else if (card.Inputs.Count > 0)
+
+        card.Inputs = halfCorners.Select(corner => corner!.Output).ToArray();
+        card.InputTitles = halfCorners.Select(corner => corner!.Title).ToArray();
+
+        ShapeDocument? exchanged = order.ExchangedShape;
+        ShapeDocument? stripped = order.StrippedShape;
+        ShapeDocument? preSettle = order.PreSettleShape;
+
+        if (exchanged is null || stripped is null || preSettle is null)
         {
-            steps.Add(new CardStep(
-                "并半",
-                preState,
+            card.Steps = Array.Empty<CardStep>();
+            card.Verified = false;
+            card.Note = "未通过：v4 半边缺少交换 / 拆柱 / 跌落的中间态。";
+            return card;
+        }
+
+        int align = ShapeOps.Wrap(from - 1, parts);
+
+        var steps = new List<CardStep>
+        {
+            new(
+                "旋转",
+                ShapeOps.Rotate(card.Inputs[0], 1),
                 hidden: true,
-                detail: "把各列的紧列（角卡产物）放回半边前态；" +
-                        "辅助列 / 保险丝由本卡构造（前态仍是卡内私有）"));
-        }
-        else
-        {
-            steps.Add(new CardStep(
-                "前态",
-                preState,
+                detail: "第 1 张角产物顺转 1 个象限（准备交换）")
+            {
+                Rotation = 1,
+                InputIndex = 0
+            },
+            new(
+                "旋转",
+                ShapeOps.Rotate(card.Inputs[1], 2),
                 hidden: true,
-                detail: "半边工序前态（没有可用的紧列角卡输入，前态卡内私有）"));
-        }
-
-        int knife = 0;
-
-        foreach (AngleWorkStep step in order.Steps)
-        {
-            if (step.Shape is null)
+                detail: "第 2 张角产物顺转 2 个象限（准备交换）")
             {
-                continue;
-            }
-
-            switch (step.Kind)
+                Rotation = 2,
+                InputIndex = 1
+            },
+            new(
+                "交换",
+                exchanged,
+                detail: "两张角产物真实 Exchange：两根支撑柱各来自一张角卡"),
+            new(
+                "拆柱",
+                stripped,
+                detail: "去掉左柱 + 右柱"),
+            new(
+                "旋转",
+                preSettle,
+                hidden: true,
+                detail: $"顺转 {align} 个象限，把两列对齐到目标半边")
             {
-                case AngleWorkStepKind.PreState:
-                case AngleWorkStepKind.Target:
-                case AngleWorkStepKind.Note:
-                    break;
-
-                case AngleWorkStepKind.Cut:
-                    knife++;
-
-                    steps.Add(new CardStep(
-                        "碎晶",
-                        step.Shape,
-                        detail: $"第 {knife} 刀：真实 Cut 贯穿整个图形，打碎临时晶体 / " +
-                                "闸门晶体 / 保险丝后落定"));
-                    break;
-
-                case AngleWorkStepKind.Exchange:
-                    steps.Add(new CardStep(
-                        "纯支撑交接",
-                        step.Shape,
-                        hidden: true,
-                        detail: "轮间支柱交接：重装桥梁柱 / 保险丝柱，目标列逐格保持"));
-                    break;
-
-                default:
-                    steps.Add(new CardStep(
-                        step.Kind.ToString(),
-                        step.Shape,
-                        hidden: true,
-                        detail: "半边工序的中间态（数据保留，不作可见步骤）"));
-                    break;
-            }
-        }
-
-        if (knife == 0)
-        {
-            failure.Add("半边工序没有真实 Cut 步，不能按「需要碎晶」建卡。");
-        }
-
-        if (steps.Count == 0)
-        {
-            failure.Add("半边卡没有任何步骤。");
-        }
-        else if (!ShapeOps.Same(steps[^1].Output, expected))
-        {
-            /*
-             * 末步不是目标半边时，用结构收尾接上（目标列逐格保持）。
-             * 正常情况下候选 3 的最后一刀就是目标半边，不会走到这里。
-             */
-            steps.Add(new CardStep(
-                "收尾",
+                Rotation = align
+            },
+            new(
+                "跌落",
                 expected,
-                hidden: true,
-                detail: "最后一刀之后清掉辅助象限，得到目标半边"));
-
-            if (steps.Count(step => step.Operation == "碎晶") == 0)
-            {
-                failure.Add("半边卡没有可见碎晶步。");
-            }
-        }
+                detail: "一次真实 Collapse：两列各自落定，等于目标半边")
+        };
 
         card.Steps = steps;
 
-        int blocks = preState is null
-            ? 0
-            : CountTemporaryBlocks(preState, expected, columns);
+        /*
+         * 前态字段保留「拆柱后、跌落前」的形状：它不是回放链的起点，
+         * 而是链中间的一步（VerifyPreState 对 FromCorners 允许中间快照）。
+         */
+        card.PreState = preSettle;
+        card.PreStateTitle = "拆柱后（跌落前）";
 
-        string missingInputs = halfCorners.Length < columns.Length
-            ? $"（{columns.Length - halfCorners.Length} 列不是紧列，未作为输入）"
-            : string.Empty;
-
-        card.Note = failure.Count > 0
-            ? "未通过：" + string.Join("；", failure)
-            : $"{title}：输入 = 该半边各列的紧列（角卡产物，各带双柱）{missingInputs}；" +
-              $"卡内 {knife} 个真实 Cut 步（临时晶体块 K = {blocks}，" +
-              "保险丝在每个块顶层各放一颗，单刀即可同时打碎）；" +
-              "输出 = 目标半边。";
+        card.Note = title + "：v4（A 类，角产物交换）。Inputs = 两张角卡产物" +
+                    "（目标列 + 左右支撑柱）；卡内 交换 → 拆柱 → 跌落，没有碎晶步；" +
+                    "逆提升 = " +
+                    (order.LiftNotes.Count == 0
+                        ? "无需抬升"
+                        : string.Join("，", order.LiftNotes)) + "。";
 
         if (!CardReplay.Verify(card, out IReadOnlyList<string> replayErrors))
         {
             card.Verified = false;
             card.Inputs = Array.Empty<ShapeDocument>();
             card.InputTitles = Array.Empty<string>();
-            card.InputColumns = Array.Empty<int>();
-
             card.Note = "未通过：" + string.Join("；", replayErrors) +
-                        (failure.Count > 0 ? "（" + string.Join("；", failure) + "）" : string.Empty);
+                        "（" + card.Note + "）";
         }
         else
         {
@@ -1009,42 +813,6 @@ public static class CardBuilder
         return card;
     }
 
-    /// <summary>
-    /// 半边前态里的临时晶体连通块数 K：只在「前态是晶体、目标半边不是晶体」的格子上
-    /// 按纵向连通分组。它只是说明文字（刀数由真实 Cut 步数决定）。
-    /// </summary>
-    private static int CountTemporaryBlocks(
-        ShapeDocument preState,
-        ShapeDocument expected,
-        IReadOnlyList<int> columns)
-    {
-        int blocks = 0;
-
-        foreach (int column in columns)
-        {
-            for (int layer = 0; layer < preState.LayerCount; layer++)
-            {
-                if (preState[layer, column].Type != CellType.Crystal ||
-                    (layer < expected.LayerCount &&
-                     expected[layer, column].Type == CellType.Crystal))
-                {
-                    continue;
-                }
-
-                blocks++;
-
-                while (layer + 1 < preState.LayerCount &&
-                       preState[layer + 1, column].Type == CellType.Crystal &&
-                       (layer + 1 >= expected.LayerCount ||
-                        expected[layer + 1, column].Type != CellType.Crystal))
-                {
-                    layer++;
-                }
-            }
-        }
-
-        return blocks;
-    }
 
     /// <summary>
     /// A 类：两张（或 k 张）角卡产物 → 真实 <see cref="ShapeExchange.Exchange"/> → 半边。
@@ -1054,74 +822,6 @@ public static class CardBuilder
     /// 命中即停——确定性，不随机。k ≠ 2 时不做 A 类尝试（记录原因）。
     /// </para>
     /// </summary>
-    private static List<CardStep>? TryBuildFromCorners(
-        IReadOnlyList<WorkOrderCardView> corners,
-        ShapeDocument expected,
-        int parts,
-        out string reason)
-    {
-        int width = parts / 2;
-
-        if (width != 2)
-        {
-            reason = $"k = {width}：A 类只尝试「两个角」的切分，n ≥ 6 交给半边工序。";
-            return null;
-        }
-
-        if (corners.Count != 2 ||
-            corners.Any(corner => !corner.Verified))
-        {
-            reason = "该半边没有两张都通过校验的角卡。";
-            return null;
-        }
-
-        ShapeDocument first = corners[0].Output;
-        ShapeDocument second = corners[1].Output;
-
-        for (int ra = 0; ra < parts; ra++)
-        {
-            ShapeDocument left = ShapeOps.Rotate(first, ra);
-
-            for (int rb = 0; rb < parts; rb++)
-            {
-                ShapeDocument right = ShapeOps.Rotate(second, rb);
-
-                (ShapeDocument? a, ShapeDocument? b, _) =
-                    ShapeExchange.Exchange(left, right);
-
-                if (a is not null && ShapeOps.Same(b, expected) ||
-                    b is not null && ShapeOps.Same(a, expected))
-                {
-                    ShapeDocument product = ShapeOps.Same(a, expected) ? a! : b!;
-
-                    reason = string.Empty;
-
-                    return new List<CardStep>
-                    {
-                        new("旋转", left, hidden: true,
-                            detail: $"第 1 个角产物顺转 {ra} 个象限（Inputs[0]）")
-                        {
-                            Rotation = ra,
-                            InputIndex = 0
-                        },
-                        new("旋转", right, hidden: true,
-                            detail: $"第 2 个角产物顺转 {rb} 个象限（Inputs[1]）")
-                        {
-                            Rotation = rb,
-                            InputIndex = 1
-                        },
-                        new("交换", product, detail: "两个角产物交换成半边")
-                    };
-                }
-            }
-        }
-
-        reason = "两个角产物的任何一种真实 Exchange（旋转量 0…n−1 全试）都拼不出半边：" +
-                 "角产物各占 3 列（目标列 + 左右柱），横跨 n/2 刀口两侧，" +
-                 "交换在保留一侧的同时必然把另一侧的支撑柱一起带回来。";
-        return null;
-    }
-
     #endregion
 
     #region 交换卡
@@ -1335,33 +1035,29 @@ public static class CardBuilder
     #region 工具
 
     /// <summary>
-    /// 这条半边工序是否需要碎晶：完整、且有至少一个真实 <see cref="AngleWorkStepKind.Cut"/> 步。
-    ///
-    /// <para>
-    /// 用户裁定 2026-11-20：碎晶是对整个图形的操作，必须由半边卡承担。
-    /// 判据只读求解器给出的 <see cref="HalfWorkOrder.Steps"/>，不重新判定候选。
-    /// </para>
+    /// 这一列是否属于某条 v4 半边；是则给出它在 <see cref="HalfWorkOrder.CornerOrders"/>
+    /// 里的下标。只认已完成、且候选为 <see cref="HalfCandidate.LiftCornerDrop"/> 的半边。
     /// </summary>
-    private static bool HalfNeedsCut(
-        HalfWorkOrder? order)
-    {
-        return order is { IsComplete: true } &&
-               order.Steps.Any(step =>
-                   step.Kind == AngleWorkStepKind.Cut &&
-                   step.Shape is not null);
-    }
-
-    /// <summary>某一列是否落在这条半边（从 <paramref name="from"/> 起连续 width 列）里。</summary>
-    private static bool ColumnInHalf(
+    private static bool TryGetLiftCorner(
+        HalfWorkOrder? order,
         int column,
-        int from,
-        int width,
-        int parts)
+        out int index)
     {
-        for (int index = 0; index < width; index++)
+        index = -1;
+
+        if (order is not { IsComplete: true } ||
+            order.Candidate != HalfCandidate.LiftCornerDrop)
         {
-            if (ShapeOps.Wrap(from + index, parts) == column)
+            return false;
+        }
+
+        IReadOnlyList<int> columns = order.Target.Columns;
+
+        for (int part = 0; part < columns.Count; part++)
+        {
+            if (columns[part] == column)
             {
+                index = part;
                 return true;
             }
         }
@@ -1431,21 +1127,6 @@ public static class CardBuilder
             if (step.Kind == AngleWorkStepKind.PreState && step.Shape is not null)
             {
                 return step.Shape;
-            }
-        }
-
-        return null;
-    }
-
-    private static ShapeDocument? LastShapeOfKind(
-        IReadOnlyList<AngleWorkStep> steps,
-        AngleWorkStepKind kind)
-    {
-        for (int index = steps.Count - 1; index >= 0; index--)
-        {
-            if (steps[index].Kind == kind && steps[index].Shape is not null)
-            {
-                return steps[index].Shape;
             }
         }
 

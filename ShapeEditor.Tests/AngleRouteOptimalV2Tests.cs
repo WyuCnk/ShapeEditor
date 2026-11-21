@@ -532,7 +532,7 @@ internal static class AngleRouteOptimalV2Tests
             const string text = "cT.T.cPT";
 
             AngleWorkOrder half = AngleWorkOrderBuilder.Build(
-                FromColumns((0, text)),
+                FromColumns((0, text), (1, "TTTT.ccc")),
                 0,
                 8);
 
