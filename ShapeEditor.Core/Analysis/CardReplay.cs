@@ -438,6 +438,11 @@ public static class CardReplay
             collected.Add("最后一步的产物与卡片输出不逐格相等");
         }
 
+        if (!VerifyPreState(card, out string preStateReason))
+        {
+            collected.Add(preStateReason);
+        }
+
         if (card.Inputs.Count > 0)
         {
             bool used = card.Steps.Any(step => step.InputIndex >= 0) ||
@@ -452,6 +457,95 @@ public static class CardReplay
 
         errors = collected;
         return collected.Count == 0;
+    }
+
+    /// <summary>
+    /// 校验卡片公开的 <see cref="WorkOrderCardView.PreState"/>：
+    ///
+    /// <list type="number">
+    /// <item>前态必须就是卡片回放链的起点（第一步的产物），不能是另算的一份；</item>
+    /// <item><see cref="HalfMode.FromTightColumns"/> 的半边卡：前态必须能由真实
+    /// <see cref="ShapePhysics.Cut"/> 得到卡片输出——单刀时直接核对
+    /// <c>Cut(PreState) == Output</c>；多刀时轮间可能有「纯支撑交接」结构步，
+    /// 改为核对「第一刀从前态切出 + 最后一刀落定到输出」；</item>
+    /// <item>碎晶半边卡没有前态、或前态切不出输出 ⇒ 失败（调用方把
+    /// <c>Verified</c> 置 false 并写原因）。</item>
+    /// </list>
+    /// </summary>
+    public static bool VerifyPreState(
+        WorkOrderCardView card,
+        out string reason)
+    {
+        if (card is null)
+        {
+            throw new ArgumentNullException(nameof(card));
+        }
+
+        if (card.PreState is null)
+        {
+            if (card.Mode == HalfMode.FromTightColumns)
+            {
+                reason = "碎晶半边卡没有前态，无法核对真实 Cut 的输入。";
+                return false;
+            }
+
+            reason = string.Empty;
+            return true;
+        }
+
+        if (card.Steps.Count == 0 ||
+            !ShapeOps.Same(card.PreState, card.Steps[0].Output))
+        {
+            reason = "卡片前态不是回放链的起点（第一步产物与前态不逐格相等）。";
+            return false;
+        }
+
+        if (card.Mode != HalfMode.FromTightColumns)
+        {
+            reason = string.Empty;
+            return true;
+        }
+
+        CardStep[] cuts = card.Steps
+            .Where(step => step.Operation == "碎晶")
+            .ToArray();
+
+        if (cuts.Length == 0)
+        {
+            reason = "碎晶半边卡没有任何真实 Cut 步。";
+            return false;
+        }
+
+        if (cuts.Length == 1)
+        {
+            if (!TryCut(card.PreState, card.Output, out string cutReason))
+            {
+                reason = "碎晶前态经真实 Cut 不等于卡片输出：" + cutReason;
+                return false;
+            }
+
+            reason = string.Empty;
+            return true;
+        }
+
+        /*
+         * 多刀：轮间可能有仅做结构校验的「纯支撑交接」步。
+         * 前态只承诺是【第一刀】的输入；第一刀必须真实切出、最后一刀必须落定到输出。
+         */
+        if (!TryCut(card.PreState, cuts[0].Output, out string firstReason))
+        {
+            reason = "碎晶前态经真实第一刀不等于第 1 个碎晶步：" + firstReason;
+            return false;
+        }
+
+        if (!ShapeOps.Same(cuts[^1].Output, card.Output))
+        {
+            reason = "最后一刀没有落定到卡片输出（之后还有收尾步骤）。";
+            return false;
+        }
+
+        reason = string.Empty;
+        return true;
     }
 
     /// <summary>

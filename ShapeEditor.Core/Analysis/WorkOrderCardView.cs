@@ -30,9 +30,10 @@ public enum CardKind
 /// 半半边交换成半边，<b>不需要碎晶</b>；<see cref="WorkOrderCardView.Inputs"/> 是角卡产物。</item>
 /// <item><see cref="FromTightColumns"/>（B 类·碎晶）：输入 = 该半边各列的
 /// <b>紧列</b>（角卡产物 = 紧列 + 双柱），卡内 = 1..N 个真实「碎晶」步
-/// （N = 半边工序里的真实 <c>Cut</c> 步数），输出 = 目标半边。</item>
+/// （N = 半边工序里的真实 <c>Cut</c> 步数），输出 = 目标半边；
+/// 可见前态 = 并半后的真实 Cut 输入（<see cref="WorkOrderCardView.PreState"/>）。</item>
 /// <item><see cref="WholeHalf"/>（整半边）：候选 1 / 2，不需要切割、没有输入，
-/// 前态是卡内私有的（§3.5 R2）。</item>
+/// 前态通过 <see cref="WorkOrderCardView.PreState"/> 单独展示（不是输入链，§3.5 R2）。</item>
 /// </list>
 /// </summary>
 public enum HalfMode
@@ -43,7 +44,10 @@ public enum HalfMode
     /// <summary>B 类·碎晶：输入各列紧列（角卡产物），卡内按真实 Cut 步数碎晶。</summary>
     FromTightColumns,
 
-    /// <summary>整半边一起做（候选 1 / 2：Q 自身 / 联合逆提升，不切割）。</summary>
+    /// <summary>
+    /// 整半边一起做（候选 1 / 2：Q 自身 / 联合逆提升，不切割）。
+    /// 前态通过 <see cref="WorkOrderCardView.PreState"/> 单独展示（仍不是输入链）。
+    /// </summary>
     WholeHalf
 }
 
@@ -146,6 +150,29 @@ public sealed class WorkOrderCardView
     /// 的半边卡用它做真实回放（逐格核对输入紧列真的进了前态）。
     /// </summary>
     public IReadOnlyList<int> InputColumns = Array.Empty<int>();
+
+    /// <summary>
+    /// 卡片的前态（<b>可见</b>，单独展示，不占可见步骤）。
+    ///
+    /// <para>
+    /// <see cref="HalfMode.FromTightColumns"/> 的半边卡：<b>并半后的真实 Cut 输入</b>
+    /// （k 列前态：各输入的紧列摆回目标列 + 对角爆破柱）。它与卡内「碎晶」回放用的是
+    /// 同一个 <see cref="ShapeDocument"/>（<c>FirstPreStateShape(order.Steps)</c>），
+    /// 不是另算一份；真实 <see cref="ShapeEditor.Core.Physics.ShapePhysics.Cut"/> 必须逐格得到
+    /// <see cref="Output"/>（多刀时按刀链核对，见 <see cref="CardReplay.VerifyPreState"/>）。
+    /// </para>
+    /// <para>
+    /// 角卡 / <see cref="HalfMode.WholeHalf"/>：工序的初始前态（隐藏「前态」步的图形）。
+    /// 没有前态的卡为 null。
+    /// </para>
+    /// </summary>
+    public ShapeDocument? PreState;
+
+    /// <summary>
+    /// 前态标题（页面 / 导出 / CLI 共用）：碎晶半边卡是
+    /// 「碎晶前（并半后，真实 Cut 的输入）」，其它卡是「前态」。
+    /// </summary>
+    public string? PreStateTitle;
 
     /// <summary>
     /// 角卡产物是否只是「该列在半边前态里的紧列 + 左右双柱」——

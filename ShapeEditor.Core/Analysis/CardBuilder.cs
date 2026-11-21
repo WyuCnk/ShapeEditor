@@ -409,6 +409,16 @@ public static class CardBuilder
 
         card.Steps = steps;
 
+        /*
+         * 角卡的可见前态：只有回放链第一步就是隐藏「前态」时才填。
+         * 与半边卡不同，角卡的前态不是输入链，只是单独展示的起点。
+         */
+        if (steps.Count > 0 && steps[0].Operation == "前态")
+        {
+            card.PreState = steps[0].Output;
+            card.PreStateTitle = "前态";
+        }
+
         bool ok = CardReplay.Verify(card, out IReadOnlyList<string> replayErrors);
 
         if (!ok || failure.Count > 0)
@@ -698,6 +708,10 @@ public static class CardBuilder
                 }
                 else
                 {
+                    /* 整半边卡（候选 1 / 2）的前态也放进卡片字段，供页面 / CLI 单独展示。 */
+                    card.PreState = preState;
+                    card.PreStateTitle = "前态";
+
                     steps.Add(new CardStep(
                         "前态",
                         preState,
@@ -853,6 +867,16 @@ public static class CardBuilder
         card.InputColumns = halfCorners.Select(corner => corner.Column).ToArray();
 
         ShapeDocument? preState = FirstPreStateShape(order.Steps);
+
+        /*
+         * 可见前态 =「并半」后的真实 Cut 输入：就是下面「并半」/「前态」步骤用的
+         * 同一个 ShapeDocument（FirstPreStateShape 返回的引用），不是另算一份。
+         * 它单独挂在卡片上展示；「并半」步本身仍保持 Hidden。
+         */
+        card.PreState = preState;
+        card.PreStateTitle = preState is null
+            ? null
+            : "碎晶前（并半后，真实 Cut 的输入）";
 
         var steps = new List<CardStep>();
         var failure = new List<string>();

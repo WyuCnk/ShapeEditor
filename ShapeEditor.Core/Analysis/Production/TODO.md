@@ -3152,3 +3152,47 @@ v3 的验收口径是「**两列**各自落回目标半边」。两列语料分�
   （candidate 3 的 `Constructed` 伙伴只覆盖 `c-P-T` 顶部，需要推广到任意顶部形态）。
   在完成之前，单列目标的覆盖仍以旧候选 3 为准。
 
+### 7.37 卡片可见前态：碎晶前 = 并半后的真实 Cut 输入（2026-11-21，第十七轮）
+
+**用户反馈**：`--cards "crCu----:CuCu----:--Cu----:CuCu----:--------:crcr----:P-cr----:Cucr----"`
+的半边1 卡片只打印 `输入` → `步骤：碎晶`；`并半` 步被隐藏，看不到
+「两个紧列 + 对角爆破柱」拼成的 4 列前态（真实 `Cut` 的输入）。
+
+**改动（只动 Core / Tests + 本 TODO；未改 docs、未碰 UI）**
+
+| 文件 | 改动 |
+|---|---|
+| `Analysis/WorkOrderCardView.cs` | 新增 `PreState` / `PreStateTitle`（卡片级可见前态；页面 / 导出后续直接读同一字段） |
+| `Analysis/CardBuilder.cs` | `HalfMode.FromTightColumns` 半边卡：`PreState = FirstPreStateShape(order.Steps)`（与「并半」步 / 碎晶回放用的是同一个 `ShapeDocument`，不另算）；`PreStateTitle = 碎晶前（并半后，真实 Cut 的输入）`。整半边卡（候选 1 / 2）与角卡也把隐藏「前态」步放进该字段（标题「前态」） |
+| `Analysis/CardReplay.cs` | 新增 `VerifyPreState` 并接入 `Verify`：前态必须是回放链第一步的产物；碎晶半边卡单刀时 `Cut(PreState) == Output` 必须逐格成立，多刀时核对「第一刀从前态切出 + 最后一刀落定到输出」 |
+| `Tests/CardCli.cs` | 半边卡在 `输入` 之后、`步骤` 之前打印 `碎晶前（并半后，真实 Cut 的输入）：<短代码>`；整半边 / 角卡仍打印 `前态：...` |
+| `Tests/CardHierarchyTests.cs` | 在既有 11 条卡片用例里加断言（不新增用例项）：前态 = 「并半」产物、真实 `Cut` 得到输出、整半边前态字段存在 |
+
+**目标图形的半边1（`--cards` 实测）**
+
+```
+[半边卡] 半边1  Mode=FromTightColumns  Verified=true  Inputs=2（角1, 角2）
+  输入[0] = ...
+  输入[1] = ...
+  碎晶前（并半后，真实 Cut 的输入）：crCuCuCu:CuCuCuCu:crCuCuCu:crcrcrcr:CuCu----:crcr----:P-cr----:Cucr----
+  步骤：碎晶
+  碎晶第 1 步（真实 Cut） = crCu----:CuCu----:--Cu----:CuCu----:--------:crcr----:P-cr----:Cucr----
+  隐藏：并半
+  输出 = crCu----:CuCu----:--Cu----:CuCu----:--------:crcr----:P-cr----:Cucr----
+```
+
+前态四列 = `cTccTcPT | TTTcTccc | TTTc.... | TTTc....`（Q1 / Q2 两枚紧列 + Q3 / Q4 对角爆破柱），
+`ShapePhysics.Cut` 后逐格等于输出；`Verified=true`。
+
+**验收数字**
+
+| 项 | 结果 |
+|---|---|
+| 全量测试 | **210/210** 通过（claw / 二择 2 项 XFAIL 保持） |
+| `--cards` 目标图形 | 半边1 打印「碎晶前…」，`Verified=5/5`；`Cut(PreState)` 逐格等于输出 |
+| `AUDIT` / `LAYERAUDIT` / `NINEAUDIT` | 3–9 层 + n=6/8 全量 `failures=0`（本轮未改求解器，审计不退化） |
+| 无前态时 | 碎晶半边卡 `PreState=null` ⇒ `VerifyPreState` 失败、`Verified=false`、`Note` 写明原因 |
+
+**边界**：多刀半边的轮间「纯支撑交接」只做结构校验，所以前态只承诺是**第一刀**的输入；
+`VerifyPreState` 对多刀逐刀核对（第一刀从前态切出、最后一刀落定输出），不伪造「一刀切完全程」。
+

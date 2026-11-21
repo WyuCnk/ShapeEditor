@@ -331,6 +331,13 @@ internal static class CardHierarchyTests
             {
                 Assert.True(card.Verified, card.Title + " 应通过校验");
 
+                if (card.PreState is not null)
+                {
+                    Assert.True(
+                        CardReplay.VerifyPreState(card, out string preStateReason),
+                        card.Title + " 的前态字段不可回放：" + preStateReason);
+                }
+
                 if (card.Mode == HalfMode.FromCorners)
                 {
                     Assert.Equal(2, card.Inputs.Count, "A 类半边卡必须有两张角卡输入");
@@ -361,6 +368,15 @@ internal static class CardHierarchyTests
                         0,
                         card.Inputs.Count,
                         "整半边卡（候选 1 / 2）不给输入（前态是卡内私有的）");
+
+                    Assert.True(
+                        card.PreState is not null,
+                        "整半边卡（候选 1 / 2）必须把前态放进卡片字段");
+
+                    Assert.Equal(
+                        "前态",
+                        card.PreStateTitle,
+                        "整半边卡的前态标题");
                 }
 
                 ShapeDocument? previous = null;
@@ -490,6 +506,28 @@ internal static class CardHierarchyTests
         CardStep[] cuts = half1.VisibleSteps
             .Where(step => step.Operation == "碎晶")
             .ToArray();
+
+        Assert.True(half1.PreState is not null, "半边1 必须把碎晶前态放进卡片字段");
+
+        Assert.Equal(
+            "碎晶前（并半后，真实 Cut 的输入）",
+            half1.PreStateTitle,
+            "半边1 的前态标题必须是「碎晶前（并半后，真实 Cut 的输入）」");
+
+        Assert.True(
+            ShapeOps.Same(half1.PreState, assembly.Output),
+            "半边1 的前态必须就是「并半」步的产物（与 Cut 回放同一份，不另算）");
+
+        Assert.True(
+            CardReplay.TryCut(
+                half1.PreState!,
+                half1.Output,
+                out string preStateCutReason),
+            "半边1 的碎晶前必须经真实 Cut 逐格得到输出：" + preStateCutReason);
+
+        Assert.True(
+            ReplayCutInTest(half1.PreState!, half1.Output),
+            "半边1 的碎晶前必须由测试侧独立的真实 Cut 重放得到输出");
 
         Assert.Equal(1, cuts.Length, "该半边是单刀：半边卡应有 1 个碎晶步");
 

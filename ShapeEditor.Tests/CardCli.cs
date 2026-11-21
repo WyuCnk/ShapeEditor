@@ -219,12 +219,11 @@ internal static class CardCli
                 "  产物 = 紧列 + 双柱（该列在半边前态里的形态；碎晶归半边卡，本卡无碎晶步）");
         }
 
-        CardStep? preState = card.Steps.FirstOrDefault(
-            step => step.Operation == "前态");
-
-        if (preState is not null)
+        if (card.PreState is not null)
         {
-            Console.WriteLine("  前态：" + new ShortCodeExporter().Export(preState.Output));
+            Console.WriteLine(
+                "  " + PreStateLabel(card) + "：" +
+                new ShortCodeExporter().Export(card.PreState));
         }
 
         Console.WriteLine("  步骤：" + DescribeSteps(card));
@@ -249,12 +248,16 @@ internal static class CardCli
                 "  输入[" + index + "] = " + new ShortCodeExporter().Export(card.Inputs[index]));
         }
 
-        CardStep? preState = card.Steps.FirstOrDefault(
-            step => step.Operation == "前态");
-
-        if (preState is not null)
+        /*
+         * 可见前态：碎晶半边卡 = 并半后的真实 Cut 输入（4 列 / k 列整图）；
+         * 整半边卡 = 候选 1 / 2 的初始前态。都来自 WorkOrderCardView.PreState，
+         * 不在这里另算。
+         */
+        if (card.PreState is not null)
         {
-            Console.WriteLine("  前态：" + new ShortCodeExporter().Export(preState.Output));
+            Console.WriteLine(
+                "  " + PreStateLabel(card) + "：" +
+                new ShortCodeExporter().Export(card.PreState));
         }
 
         var cuts = card.VisibleSteps
@@ -300,6 +303,15 @@ internal static class CardCli
         Console.WriteLine("  输出 = 目标图形 " + new ShortCodeExporter().Export(card.Output));
         PrintNote(card);
         Console.WriteLine();
+    }
+
+    /// <summary>前态标题（字段为空时回退到「前态」）。</summary>
+    private static string PreStateLabel(
+        WorkOrderCardView card)
+    {
+        return string.IsNullOrEmpty(card.PreStateTitle)
+            ? "前态"
+            : card.PreStateTitle;
     }
 
     private static string DescribeSteps(
