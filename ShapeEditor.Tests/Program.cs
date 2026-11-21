@@ -189,6 +189,12 @@ internal static class Program
             ("物理:奇数象限被拒", PhysicsTests.OddPartCountIsRejected),
             ("物理:象限数取偶", PhysicsTests.NormalizePartCountRoundsUpToEven),
 
+            // 2026-11-21 物理基准对齐（docs/reasoner-repo-notes.md §7）：四处核对各一例。
+            ("物理基准:顶针删掉整组（含普通格）", PhysicsBaselineAlignTests.PinDropsAllTopCellsAndWholeFusedGroup),
+            ("物理基准:顶针按删前底掩码补针", PhysicsBaselineAlignTests.PinUsesPreDeleteBottomMask),
+            ("物理基准:堆叠统一结算不预删上料晶体", PhysicsBaselineAlignTests.StackSettlesOnceWithoutPreDeletingTopCrystals),
+            ("物理基准:交换合并后不再结算", PhysicsBaselineAlignTests.ExchangeDoesNotSettleAfterMerge),
+
             // 结晶原语、角分类与角工序（构造 G/F/H、填充+暴破、多轮 G）。
             ("结晶:空格与顶针变晶体", AngleWorkOrderTests.CrystallizeFillsEmptyAndPin),
             ("结晶:纯函数与颜色校验", AngleWorkOrderTests.CrystallizeIsPureAndValidatesColor),

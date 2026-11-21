@@ -58,11 +58,12 @@ public static class ShapePhysics
     /// <summary>
     /// 把 top 堆到 base 上。
     ///
-    /// 规则：
+    /// 规则（与反编译源码一致）：
     /// 1. 两者象限数必须一致；
-    /// 2. top 的晶体先被清空；
-    /// 3. 中间空一层拼接成临时图形；
-    /// 4. 对临时图形执行一次下落，再执行一次超上限删除；
+    /// 2. 上料原样抬到下方图形之上、隔一层空层（等价于基准里的“抬到 z + height + 1”
+    ///    这类整体平移；落点由落点公式决定，与抬高多少无关）；
+    /// 3. <b>不预删上料晶体</b>：上料原样参与唯一的一次统一结算；
+    /// 4. 对临时图形执行<b>一次</b>下落（不是先删后放，也不是结算两次），再执行一次超上限删除；
     /// 5. 没有兜底下落（截断碎晶造成的悬空就是游戏原样）。
     /// </summary>
     public static PhysicsResult Stack(
@@ -148,9 +149,16 @@ public static class ShapePhysics
     /// <summary>
     /// 顶针：内容整体上移一层，底层按原第 0 层的非空位置放顶针。
     ///
-    /// 使用图形自身的层数作为上限：
-    /// 上移后超出上限的那一层会先触发晶体破碎，再被删除；
-    /// 最后执行一次下落。
+    /// 使用图形自身的层数作为上限，语义与反编译源码一致：
+    /// <list type="number">
+    /// <item>删除前先算「晶体融合组」（晶体之间的环形水平 + 竖直连通）；</item>
+    /// <item><c>z == height-1</c> 的<b>所有格</b>（不止晶体）都先被丢弃，
+    /// 且含顶层晶体的<b>晶体融合组整组</b>一并删除；</item>
+    /// <item>顶层以下的格整体上移一层；</item>
+    /// <item>针按<b>删除前</b>的底层掩码补（即使那一格马上被删掉，也照补）；</item>
+    /// <item>最后执行一次下落。</item>
+    /// </list>
+    /// 具体实现见 <see cref="PhysicsGrid.Pin"/>。
     /// </summary>
     public static PhysicsResult Pin(
         ShapeDocument document,
@@ -161,48 +169,13 @@ public static class ShapePhysics
             return PhysicsResult.Fail("图形为空。");
         }
 
-        int parts = document.PartCount;
-        int layers = document.LayerCount;
-
-        if (!ShapeRules.IsValidPartCount(parts))
+        if (!ShapeRules.IsValidPartCount(document.PartCount))
         {
             return PhysicsResult.Fail("象限数必须为偶数。");
         }
 
-        var temporary = new ShapeDocument(
-            layers + 1,
-            parts);
-
-        for (int layer = 0;
-             layer < layers;
-             layer++)
-        {
-            for (int part = 0;
-                 part < parts;
-                 part++)
-            {
-                temporary[layer + 1, part] =
-                    document[layer, part].Clone();
-            }
-        }
-
-        for (int part = 0;
-             part < parts;
-             part++)
-        {
-            if (document[0, part].Type != CellType.Empty)
-            {
-                temporary[0, part] = ShapeCell.Pin();
-            }
-        }
-
-        ShapeDocument truncated =
-            PhysicsGrid.Truncate(temporary, layers);
-
-        ShapeDocument collapsed =
-            PhysicsGrid.Collapse(truncated, mode);
-
-        return PhysicsResult.Ok(collapsed);
+        return PhysicsResult.Ok(
+            PhysicsGrid.Pin(document, mode));
     }
 
     #endregion

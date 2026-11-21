@@ -711,6 +711,172 @@ internal static class PhysicsGrid
 
     #endregion
 
+    #region 顶针
+
+    /// <summary>
+    /// 顶针（与反编译源码的语义逐条对齐）：
+    /// <list type="number">
+    /// <item>在<b>删除前</b>按「晶体融合组」分组
+    /// （环形水平晶体相邻 + 竖直晶体相邻；普通格不参与融合）；</item>
+    /// <item><c>z == height-1</c> 的<b>所有格</b>（不止晶体）先被丢弃，
+    /// 且含它们的<b>晶体融合组整组</b>一并删除；</item>
+    /// <item>其余格整体上移一层；</item>
+    /// <item>针按<b>删除前</b> <c>z == 0</c> 的非空掩码补在最底层；</item>
+    /// <item>最后执行一次下落。</item>
+    /// </list>
+    /// 注意第 4 条：即使某一列第 0 层的格子属于触顶的晶体融合组、马上会被删掉，
+    /// 它仍然会为自己换来一枚针。
+    /// </summary>
+    public static ShapeDocument Pin(
+        ShapeDocument document,
+        CollapseMode mode)
+    {
+        int layers = document.LayerCount;
+        int parts = document.PartCount;
+
+        ShapeCell[,] cells = Clone(document);
+
+        bool[,] vanished = BuildVanishedCrystalGroups(
+            cells,
+            layers,
+            parts);
+
+        var shifted = new ShapeDocument(layers, parts);
+
+        // 顶层（z == height-1）不参与上移：它按基准就是被丢弃的那一层。
+        for (int layer = 0;
+             layer < layers - 1;
+             layer++)
+        {
+            for (int part = 0;
+                 part < parts;
+                 part++)
+            {
+                if (!vanished[layer, part])
+                {
+                    shifted[layer + 1, part] =
+                        cells[layer, part].Clone();
+                }
+            }
+        }
+
+        // 针按【删除前】的底层掩码补：vanished 不影响这里。
+        for (int part = 0;
+             part < parts;
+             part++)
+        {
+            if (cells[0, part].Type != CellType.Empty)
+            {
+                shifted[0, part] = ShapeCell.Pin();
+            }
+        }
+
+        return Collapse(shifted, mode);
+    }
+
+    /// <summary>
+    /// 「触顶的晶体融合组」掩码：删除前从顶层的每一颗晶体出发，
+    /// 沿晶体网络（环形水平 + 垂直）洪泛，整组标记。
+    ///
+    /// 普通格不在晶体融合组里：顶层普通格按“所有 z == height-1 的格先丢弃”处理，
+    /// 但顶层以下与晶体横向相邻的普通格不会被这一条连带删除。
+    /// </summary>
+    private static bool[,] BuildVanishedCrystalGroups(
+        ShapeCell[,] cells,
+        int layers,
+        int parts)
+    {
+        var vanished = new bool[layers, parts];
+
+        var queue = new Queue<(int Layer, int Part)>();
+
+        for (int part = 0;
+             part < parts;
+             part++)
+        {
+            if (cells[layers - 1, part].Type != CellType.Crystal)
+            {
+                continue;
+            }
+
+            vanished[layers - 1, part] = true;
+
+            queue.Enqueue((layers - 1, part));
+        }
+
+        while (queue.Count > 0)
+        {
+            (int layer, int part) = queue.Dequeue();
+
+            int left = (part - 1 + parts) % parts;
+            int right = (part + 1) % parts;
+
+            TryMarkCrystal(
+                cells,
+                vanished,
+                queue,
+                layer,
+                left,
+                layers,
+                parts);
+
+            TryMarkCrystal(
+                cells,
+                vanished,
+                queue,
+                layer,
+                right,
+                layers,
+                parts);
+
+            TryMarkCrystal(
+                cells,
+                vanished,
+                queue,
+                layer - 1,
+                part,
+                layers,
+                parts);
+
+            TryMarkCrystal(
+                cells,
+                vanished,
+                queue,
+                layer + 1,
+                part,
+                layers,
+                parts);
+        }
+
+        return vanished;
+    }
+
+    private static void TryMarkCrystal(
+        ShapeCell[,] cells,
+        bool[,] vanished,
+        Queue<(int Layer, int Part)> queue,
+        int layer,
+        int part,
+        int layers,
+        int parts)
+    {
+        if (layer < 0 ||
+            layer >= layers ||
+            part < 0 ||
+            part >= parts ||
+            vanished[layer, part] ||
+            cells[layer, part].Type != CellType.Crystal)
+        {
+            return;
+        }
+
+        vanished[layer, part] = true;
+
+        queue.Enqueue((layer, part));
+    }
+
+    #endregion
+
     #region 晶体破碎与截断
 
     /// <summary>
