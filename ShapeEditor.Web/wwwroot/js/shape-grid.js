@@ -2710,8 +2710,7 @@ window.shapeGrid.downloadAnalysis = async function (payload, fileName) {
                 ctx,
                 block.workOrderLayout,
                 PADDING,
-                lineY,
-                contentWidth);
+                lineY);
 
             // 板块之间的细分隔线
             ctx.strokeStyle = "#EEEAF7";
@@ -4820,13 +4819,21 @@ function drawAnalysisAngleHalf(ctx, card, left, top) {
 
 /*
  * 与页面同一份 WorkOrderCardPresentation：
- * 层 = 交换工序 → 半边工序 → 角工序；卡 = 标题 + 输入 + 前态 + 可见步骤 + 输出。
+ * 层 = 交换工序 → 半边工序 → 角工序；层内卡片横向排列（每行最多两张）。
+ * 卡 = 标题 + 输入 + 前态 + 可见步骤 + 输出。
  * 前态固定画在输入之后、步骤之前（v4 半边卡 = 拆柱后（跌落前），角卡 = 工序起点）。
  * 未验证的卡只画红色警示和 Note，不画输入链（C# 已经把 Inputs 清空）。
  * 旧版 B 类·碎晶半边卡（历史数据）照常绘制，只加虚线降级边框。
  * 所有竖式图固定 30px 单元格、1:1 绘制；图形宽时整张导出图随之变宽。
  */
 const ANALYSIS_WORK_ORDER_CARD_PADDING = 12;
+
+/*
+ * 导出的卡片宽度：三张 8 列步骤节点（3 × 256 + 2 × 12 = 792）
+ * 加左右内边距后约 816，取 820 让「交换 → 拆柱 → 跌落」这类三步链
+ * 在导出图里保持一排，卡片本身不因窄而被迫叠高。
+ */
+const ANALYSIS_WORK_ORDER_CARD_WIDTH = 820;
 
 const ANALYSIS_WORK_ORDER_CARD_GAP = 12;
 
@@ -4994,12 +5001,11 @@ function normalizeWorkOrderLayers(rawLayers) {
 }
 
 /*
- * 卡片内容需要的导出宽度：取输出 / 前态 / 输入 / 步骤里最宽的竖式图，
- * 加上卡片内边距。只有大图形才会撑宽导出图（最小宽度仍是 720）。
+ * 一张卡的最小导出宽度：默认 820；遇到比卡内可用宽度还大的竖式图时，
+ * 按「图形宽 + 左右内边距 + 24」撑宽，避免图形被裁掉。
  */
-function workOrderCardsContentWidth(rawLayers) {
-    const layers = normalizeWorkOrderLayers(rawLayers);
-    let width = 0;
+function workOrderCardWidth(layers) {
+    let width = ANALYSIS_WORK_ORDER_CARD_WIDTH;
 
     for (let i = 0; i < layers.length; i++) {
         const cards = layers[i].cards;
@@ -5022,6 +5028,33 @@ function workOrderCardsContentWidth(rawLayers) {
     }
 
     return width;
+}
+
+/*
+ * 卡片板块需要的导出宽度：层内卡片横向排列，每行最多两张，
+ * 因此按「两张卡 + 间距」计算；只有一张卡的层仍按单张宽度。
+ * 导出图的最小宽度仍是 720（见 MIN_CONTENT_WIDTH）。
+ */
+function workOrderCardsContentWidth(rawLayers) {
+    const layers = normalizeWorkOrderLayers(rawLayers);
+
+    if (layers.length === 0) {
+        return 0;
+    }
+
+    const cardWidth = workOrderCardWidth(layers);
+    let hasMultipleCards = false;
+
+    for (let i = 0; i < layers.length; i++) {
+        if (layers[i].cards.length > 1) {
+            hasMultipleCards = true;
+            break;
+        }
+    }
+
+    return hasMultipleCards
+        ? cardWidth * 2 + ANALYSIS_WORK_ORDER_CARD_GAP
+        : cardWidth;
 }
 
 /*
@@ -5295,7 +5328,9 @@ function layoutWorkOrderCard(measure, card, innerWidth) {
 }
 
 /*
- * 三层卡片的整体排版：层标题 + 每张卡的高度。
+ * 三层卡片的整体排版：层标题横跨整行，层内卡片横向成行，每行最多两张。
+ * 卡片宽度固定（默认 820），导出图宽度由 workOrderCardsContentWidth 撑开；
+ * 行高取该行最高的一张卡，下一行从这一行的底部继续。
  * 没有卡片时返回 null，调用方继续按普通文本板块绘制。
  */
 function layoutAnalysisWorkOrderLayers(measure, rawLayers, maxWidth) {
@@ -5305,8 +5340,19 @@ function layoutAnalysisWorkOrderLayers(measure, rawLayers, maxWidth) {
         return null;
     }
 
-    const cardWidth = Math.max(160, maxWidth);
+    const cardWidth = Math.max(160, workOrderCardWidth(layers));
     const innerWidth = Math.max(80, cardWidth - ANALYSIS_WORK_ORDER_CARD_PADDING * 2);
+    const availableWidth = Math.max(cardWidth, Number(maxWidth) || cardWidth);
+
+    // 与页面一致：一行最多两张卡，宽度不够时按一列排。
+    const perRow = Math.max(
+        1,
+        Math.min(
+            2,
+            Math.floor(
+                (availableWidth + ANALYSIS_WORK_ORDER_CARD_GAP) /
+                (cardWidth + ANALYSIS_WORK_ORDER_CARD_GAP))));
+
     const result = [];
     let totalHeight = 0;
 
@@ -5314,11 +5360,12 @@ function layoutAnalysisWorkOrderLayers(measure, rawLayers, maxWidth) {
         const layer = layers[i];
         const title = layer.title + "（" + layer.cards.length + " 张卡）";
 
+        // 层标题横跨整行，不按单张卡的宽度换行。
         const titleLines = wrapAnalysisText(
             measure,
             title,
             ANALYSIS_WORK_ORDER_LAYER_FONT,
-            innerWidth,
+            availableWidth,
             false);
 
         const cards = [];
@@ -5327,21 +5374,35 @@ function layoutAnalysisWorkOrderLayers(measure, rawLayers, maxWidth) {
             cards.push(layoutWorkOrderCard(measure, layer.cards[j], innerWidth));
         }
 
+        // 按 perRow 分行；行高 = 该行最高卡片的高度。
+        const rows = [];
         let layerHeight =
             titleLines.length * ANALYSIS_WORK_ORDER_LAYER_LINE_HEIGHT +
             10;
 
-        for (let j = 0; j < cards.length; j++) {
-            layerHeight += cards[j].height;
+        for (let j = 0; j < cards.length; j += perRow) {
+            const rowCards = cards.slice(j, j + perRow);
+            let rowHeight = 0;
 
-            if (j < cards.length - 1) {
+            for (let k = 0; k < rowCards.length; k++) {
+                rowHeight = Math.max(rowHeight, rowCards[k].height);
+            }
+
+            rows.push({
+                cards: rowCards,
+                height: rowHeight
+            });
+
+            layerHeight += rowHeight;
+
+            if (j + perRow < cards.length) {
                 layerHeight += ANALYSIS_WORK_ORDER_CARD_GAP;
             }
         }
 
         result.push({
             titleLines: titleLines,
-            cards: cards,
+            rows: rows,
             height: layerHeight
         });
 
@@ -5356,7 +5417,8 @@ function layoutAnalysisWorkOrderLayers(measure, rawLayers, maxWidth) {
         layers: result,
         height: totalHeight,
         cardWidth: cardWidth,
-        innerWidth: innerWidth
+        innerWidth: innerWidth,
+        perRow: perRow
     };
 }
 
@@ -5691,12 +5753,16 @@ function drawAnalysisWorkOrderCard(ctx, card, left, top, width) {
     return y;
 }
 
-/* 画三层卡片；返回整块的下边界，供板块分隔线定位。 */
-function drawAnalysisWorkOrderLayers(ctx, layout, left, top, cardWidth) {
+/*
+ * 画三层卡片；层标题横跨整行，层内卡片横向成行（每行最多两张）。
+ * 返回整块的下边界，供板块分隔线定位。
+ */
+function drawAnalysisWorkOrderLayers(ctx, layout, left, top) {
     if (!layout || !Array.isArray(layout.layers) || layout.layers.length === 0) {
         return top;
     }
 
+    const cardWidth = layout.cardWidth;
     let layerTop = top;
 
     for (let i = 0; i < layout.layers.length; i++) {
@@ -5718,17 +5784,21 @@ function drawAnalysisWorkOrderLayers(ctx, layout, left, top, cardWidth) {
 
         layerTop += 10;
 
-        for (let j = 0; j < layer.cards.length; j++) {
-            drawAnalysisWorkOrderCard(
-                ctx,
-                layer.cards[j],
-                left,
-                layerTop,
-                cardWidth);
+        for (let j = 0; j < layer.rows.length; j++) {
+            const row = layer.rows[j];
 
-            layerTop += layer.cards[j].height;
+            for (let k = 0; k < row.cards.length; k++) {
+                drawAnalysisWorkOrderCard(
+                    ctx,
+                    row.cards[k],
+                    left + k * (cardWidth + ANALYSIS_WORK_ORDER_CARD_GAP),
+                    layerTop,
+                    cardWidth);
+            }
 
-            if (j < layer.cards.length - 1) {
+            layerTop += row.height;
+
+            if (j < layer.rows.length - 1) {
                 layerTop += ANALYSIS_WORK_ORDER_CARD_GAP;
             }
         }

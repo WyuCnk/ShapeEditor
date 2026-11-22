@@ -5,7 +5,7 @@
     三层工序卡片里的一张卡。
 
     标题 + 验证标记 → 未验证时红色警示与 Note（不画输入链）→ 输入（上一层卡产物）
-    → 前态（PreStateTitle + 图形）→ 可见步骤（Hidden 的步骤在 C# 投影时已剔除）
+    → 前态（PreStateTitle + 图形）与可见步骤（Hidden 的步骤在 C# 投影时已剔除）并排
     → 输出（醒目边框）+ 角卡小字。
 
     前态固定画在输入之后、步骤之前：
@@ -73,46 +73,54 @@
         </section>
     }
 
-    @if (Card.PreState is not null)
+    @if (Card.PreState is not null || Card.Steps.Count > 0)
     {
-        @* 前态：位置固定在输入之后、步骤之前；不是输入链，未验证的卡也按 Core 的值展示。 *@
-        <section class="work-order-section work-order-prestate-section">
-            <div class="work-order-section-title">@PreStateSectionTitle</div>
+        @* 前态与可见步骤并排成一行：空间够时「前态一列 + 步骤一列」，
+           不够时自动换行，步骤节点本身仍保持横向排列。 *@
+        <div class="work-order-flow">
+            @if (Card.PreState is not null)
+            {
+                @* 前态：位置固定在输入之后、步骤之前；不是输入链，未验证的卡也按 Core 的值展示。 *@
+                <section class="work-order-section work-order-prestate-section">
+                    <div class="work-order-section-title">@PreStateSectionTitle</div>
 
-            <div class="work-order-prestate-box">
-                <PathNodePreview Document="Card.PreState" />
-            </div>
-        </section>
-    }
-
-    @if (Card.Steps.Count > 0)
-    {
-        <section class="work-order-section">
-            <div class="work-order-section-title">可见步骤（@Card.Steps.Count 步）</div>
-
-            <div class="work-order-step-list">
-                @for (int index = 0; index < Card.Steps.Count; index++)
-                {
-                    WorkOrderCardStep step = Card.Steps[index];
-
-                    @if (index > 0)
-                    {
-                        <span class="work-order-step-arrow" aria-hidden="true">→</span>
-                    }
-
-                    <div class="graph-node path-node angle-node work-order-step @step.CssClass"
-                         style="width:@Px(step.Shape.PartCount * 30 + 16)px;height:@Px(step.Shape.LayerCount * 30 + 50)px">
-                        <div class="path-node-head" title="@step.Operation">@step.Operation</div>
-
-                        <div class="graph-node-body path-node-body">
-                            <PathNodePreview Document="step.Shape" />
-                        </div>
+                    <div class="work-order-prestate-box">
+                        <PathNodePreview Document="Card.PreState" />
                     </div>
-                }
-            </div>
-        </section>
+                </section>
+            }
+
+            @if (Card.Steps.Count > 0)
+            {
+                <section class="work-order-section work-order-steps-section">
+                    <div class="work-order-section-title">可见步骤（@Card.Steps.Count 步）</div>
+
+                    <div class="work-order-step-list">
+                        @for (int index = 0; index < Card.Steps.Count; index++)
+                        {
+                            WorkOrderCardStep step = Card.Steps[index];
+
+                            @if (index > 0)
+                            {
+                                <span class="work-order-step-arrow" aria-hidden="true">→</span>
+                            }
+
+                            <div class="graph-node path-node angle-node work-order-step @step.CssClass"
+                                 style="width:@Px(step.Shape.PartCount * 30 + 16)px;height:@Px(step.Shape.LayerCount * 30 + 50)px">
+                                <div class="path-node-head" title="@step.Operation">@step.Operation</div>
+
+                                <div class="graph-node-body path-node-body">
+                                    <PathNodePreview Document="step.Shape" />
+                                </div>
+                            </div>
+                        }
+                    </div>
+                </section>
+            }
+        </div>
     }
-    else if (Card.Verified)
+
+    @if (Card.Steps.Count == 0 && Card.Verified)
     {
         <p class="work-order-empty-steps">
             没有可见步骤：旋转 / 废料 / 纯支撑交接等结构步骤已在 Core 中标记为隐藏。

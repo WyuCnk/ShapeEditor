@@ -3053,7 +3053,7 @@ button {
 
 /*
  * 平铺三层：交换工序（最外层）→ 半边工序 → 角工序（最内层）。
- * 每层一张浅色卡片，层内再按卡列出；卡内是流式布局，不依赖绝对坐标。
+ * 每层一张浅色卡片，层内卡片横向成行；卡内是流式布局，不依赖绝对坐标。
  */
 .work-order-layers {
     display: flex;
@@ -3102,13 +3102,24 @@ button {
     color: #6b6b76;
 }
 
+/*
+ * 层内卡片横向排列：一行摆不下时由 flex-wrap 自动换行（窄屏即一行一张），
+ * 层标题在卡片列表之外，因此始终横跨整行。
+ * 420px 是窄屏下的最小基准宽度，宽屏会自动长到 760px；
+ * 30px 单元格的 8 列图形（约 240px）在单张卡内放得下，宽屏时两张卡可并排。
+ */
 .work-order-card-list {
     display: flex;
-    flex-direction: column;
-    gap: 10px;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 12px;
 }
 
 .work-order-card {
+    flex: 1 1 420px;
+    min-width: 0;
+    max-width: 760px;
     padding: 12px;
     border: 1px solid #e6e2f2;
     border-radius: 10px;
@@ -3222,6 +3233,34 @@ button {
     color: #4527a0;
 }
 
+/*
+ * 卡内的「前态 + 可见步骤」流：空间够时前态与步骤各占一列并排，
+ * 空间不足时整块换行，避免互相挤压。步骤列至少留一个步骤节点的宽度。
+ */
+.work-order-flow {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 10px 14px;
+    margin-top: 10px;
+}
+
+    .work-order-flow > .work-order-section {
+        margin-top: 0;
+        min-width: 0;
+    }
+
+    .work-order-flow > .work-order-prestate-section {
+        flex: 0 1 auto;
+        max-width: 100%;
+    }
+
+    .work-order-flow > .work-order-steps-section {
+        flex: 1 1 300px;
+        min-width: min(260px, 100%);
+    }
+
 .work-order-output-caption {
     margin-left: 6px;
     font-size: 11px;
@@ -3229,16 +3268,42 @@ button {
     color: #6b6b76;
 }
 
-/* 输入 / 步骤：横向排列，图形较宽时自动换行；单个预览保持 30px 单元格。 */
+/*
+ * 输入 / 步骤：固定一行横向排列，单个预览保持 30px 单元格。
+ * 这一行不换行，宽度不够时只在卡片内部横向滚动，避免把卡片重新撑高；
+ * 窄屏（< 900px）改为自动换行，见文件末尾的媒体查询。
+ */
 .work-order-input-list,
 .work-order-step-list {
     display: flex;
-    flex-wrap: wrap;
+    flex-direction: row;
+    flex-wrap: nowrap;
     align-items: flex-start;
     gap: 12px;
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 4px;
+    scrollbar-width: thin;
+    scrollbar-color: #c9bff0 transparent;
+    overscroll-behavior-x: contain;
+}
+
+/* Chromium 的细滚动条：提示步骤链 / 多张输入还能横向拖动。 */
+.work-order-input-list::-webkit-scrollbar,
+.work-order-step-list::-webkit-scrollbar {
+    height: 8px;
+}
+
+.work-order-input-list::-webkit-scrollbar-thumb,
+.work-order-step-list::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: #c9bff0;
 }
 
 .work-order-input {
+    flex: 0 0 auto;
     margin: 0;
     padding: 8px;
     border: 1px solid #e6e2f2;
@@ -3285,6 +3350,7 @@ button {
 }
 
 .work-order-step-arrow {
+    flex: 0 0 auto;
     align-self: center;
     color: #512bd4;
     font-size: 16px;
@@ -3312,4 +3378,22 @@ button {
     margin: 6px 0 0;
     font-size: 11px;
     color: #6b6b76;
+}
+
+/*
+ * 窄屏：卡片本身按层内 flex-wrap 一行一张（< 900px 时分析页已是单列）；
+ * 输入 / 步骤也改为换行，不再出现卡片内部的横向滚动条。
+ */
+@media (max-width: 900px) {
+    .work-order-input-list,
+    .work-order-step-list {
+        flex-wrap: wrap;
+        padding-bottom: 0;
+    }
+
+    /* 窄屏单列时让前态 / 步骤各占整行，步骤节点拿到完整卡宽再换行。 */
+    .work-order-flow > .work-order-prestate-section,
+    .work-order-flow > .work-order-steps-section {
+        flex: 1 1 100%;
+    }
 }
