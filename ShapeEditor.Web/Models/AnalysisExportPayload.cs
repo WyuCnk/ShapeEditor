@@ -309,11 +309,28 @@ public sealed class AnalysisExportWorkOrderCard
     /// <summary>是否角卡：为 true 时在输出下方画「Q1 目标角 / Q2 右柱 / Q4 左柱」小字。</summary>
     public bool IsCorner { get; set; }
 
+    /// <summary>
+    /// 旧版 B 类·碎晶半边卡（历史数据）：仍按普通卡绘制，但边框改虚线、颜色降级，
+    /// 与页面的「旧版」样式一致。v4 已不再产生这种卡。
+    /// </summary>
+    public bool IsLegacyHalf { get; set; }
+
     /// <summary>输出说明：Q1 目标角 + 双柱 / 目标半边 / 目标图形。</summary>
     public string OutputCaption { get; set; } = "";
 
     /// <summary>角卡的小字标注（n = 4 时为 Q1 目标角 / Q2 右柱 / Q4 左柱）。</summary>
     public string CornerCaption { get; set; } = "";
+
+    /// <summary>
+    /// 前态标题（「拆柱后（跌落前）」「前态」）。为空表示这张卡没有前态。
+    /// </summary>
+    public string PreStateTitle { get; set; } = "";
+
+    /// <summary>
+    /// 前态图形。与页面一致，画在<b>输入之后、可见步骤之前</b>：
+    /// v4 半边卡是「拆柱后、跌落前」的 4 列中间态；角卡是工序起点。
+    /// </summary>
+    public ShapeCanvasState? PreState { get; set; }
 
     /// <summary>输出形状；未验证的卡仍然有输出（Core 只清空 Inputs）。</summary>
     public ShapeCanvasState? Output { get; set; }
@@ -343,7 +360,7 @@ public sealed class AnalysisExportWorkOrderCardInput
 /// </summary>
 public sealed class AnalysisExportWorkOrderCardStep
 {
-    /// <summary>步骤名：碎晶 / 交换 / 顶破 / 堆叠。</summary>
+    /// <summary>步骤名：碎晶 / 交换 / 拆柱 / 跌落 / 顶破 / 堆叠。</summary>
     public string Operation { get; set; } = "";
 
     public ShapeCanvasState? State { get; set; }

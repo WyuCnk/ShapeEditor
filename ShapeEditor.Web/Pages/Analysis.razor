@@ -308,7 +308,9 @@
 
                             <p class="analysis-note">
                                 按「交换工序 → 半边工序 → 角工序」三层从外到内平铺；每张卡显示标题、
-                                验证标记、输入（上一层卡产物）、可见步骤与输出。旋转 / 废料 / 纯支撑交接等
+                                验证标记、输入（上一层卡产物）、前态、可见步骤与输出。前态画在输入之后、
+                                步骤之前（v4 半边卡 = 拆柱后（跌落前），角卡 = 工序起点）；v4 半边卡的
+                                可见步骤固定是「交换 → 拆柱 → 跌落」，没有碎晶步。旋转 / 废料 / 纯支撑交接等
                                 <code>Hidden=true</code> 的步骤不渲染；未验证的卡不显示输入链，只显示 Note。
                                 角卡输出已归一化到 Q1：Q1 目标角、Q2 右柱、Q4 左柱（n = 4）。
                             </p>
@@ -1328,8 +1330,14 @@
 
     /// <summary>
     /// 三层工序卡片板块：与页面完全同源（同一个 <see cref="WorkOrderCardPresentation"/>），
-    /// 导出层标题、卡标题、输入、可见步骤、输出与角卡小字。
+    /// 导出层标题、卡标题、输入、前态、可见步骤、输出与角卡小字。
     /// 未验证的卡不导出输入链，只导出 Note。
+    ///
+    /// <para>
+    /// 卡片在分析阶段只建一次并缓存在 <c>_cards</c>：这里只做只读投影
+    /// （<see cref="WorkOrderCardPresentation.ToExportLayers"/>），
+    /// 不在导出时重跑 <see cref="CardBuilder"/>。
+    /// </para>
     /// </summary>
     private AnalysisExportSection BuildWorkOrderCardsSection()
     {
@@ -1342,7 +1350,11 @@
 
         section.Lines.Add(
             "按「交换工序 → 半边工序 → 角工序」三层从外到内平铺；" +
-            "每张卡显示标题、验证标记、输入（上一层卡产物）、可见步骤与输出。");
+            "每张卡显示标题、验证标记、输入（上一层卡产物）、前态、可见步骤与输出。");
+
+        section.Lines.Add(
+            "前态画在输入之后、可见步骤之前：v4 半边卡是「拆柱后（跌落前）」的中间态，" +
+            "角卡是工序起点；没有前态的卡不画这一块。");
 
         section.Lines.Add(
             "旋转 / 废料 / 纯支撑交接等隐藏步骤不导出；" +
@@ -1357,52 +1369,8 @@
             section.Notes.Add(_cards.Note);
         }
 
-        foreach (WorkOrderCardLayer layer in _cards.Layers)
-        {
-            var exportLayer = new AnalysisExportWorkOrderLayer
-            {
-                Title = layer.Title,
-                Count = layer.Cards.Count
-            };
-
-            foreach (WorkOrderCardItem card in layer.Cards)
-            {
-                var exportCard = new AnalysisExportWorkOrderCard
-                {
-                    Title = card.Title,
-                    KindText = card.KindText,
-                    ModeText = card.ModeText,
-                    Verified = card.Verified,
-                    Note = card.Note ?? "",
-                    IsCorner = card.Kind == CardKind.Corner,
-                    OutputCaption = card.OutputCaption,
-                    CornerCaption = card.ColumnCaption,
-                    Output = ShapeCanvasState.Create(card.Output)
-                };
-
-                foreach (WorkOrderCardInput input in card.Inputs)
-                {
-                    exportCard.Inputs.Add(new AnalysisExportWorkOrderCardInput
-                    {
-                        Title = input.Title,
-                        State = ShapeCanvasState.Create(input.Shape)
-                    });
-                }
-
-                foreach (WorkOrderCardStep step in card.Steps)
-                {
-                    exportCard.Steps.Add(new AnalysisExportWorkOrderCardStep
-                    {
-                        Operation = step.Operation,
-                        State = ShapeCanvasState.Create(step.Shape)
-                    });
-                }
-
-                exportLayer.Cards.Add(exportCard);
-            }
-
-            section.WorkOrderLayers.Add(exportLayer);
-        }
+        // 卡片的输入 / 前态 / 步骤 / 输出都在这里一次性投影，页面与导出共用同一份数据。
+        section.WorkOrderLayers.AddRange(_cards.ToExportLayers());
 
         return section;
     }

@@ -1,5 +1,6 @@
 using ShapeEditor.Core.Analysis;
 using ShapeEditor.Core.Models;
+using ShapeEditor.Web.Models;
 
 namespace ShapeEditor.Web.Services;
 
@@ -32,10 +33,15 @@ public sealed class WorkOrderCardInput
 
 /// <summary>
 /// 工序卡片里的一条可见步骤（<see cref="CardStep.Hidden"/> 为 true 的步骤不会进来）。
+///
+/// <para>
+/// v4 半边卡（A 类）的可见步骤固定是「交换 → 拆柱 → 跌落」；
+/// 角卡仍有「碎晶 / 顶破」等步骤；交换卡只有「交换」（无废料步）。
+/// </para>
 /// </summary>
 public sealed class WorkOrderCardStep
 {
-    /// <summary>步骤名：碎晶 / 交换 / 顶破 / 堆叠。</summary>
+    /// <summary>步骤名：碎晶 / 交换 / 拆柱 / 跌落 / 顶破 / 堆叠。</summary>
     public string Operation { get; init; } = "";
 
     /// <summary>页面节点样式类（复用 angle-node 的配色）。</summary>
@@ -59,7 +65,7 @@ public sealed class WorkOrderCardItem
     /// <summary>卡片标题（「角1」「半边1」「交换」）。</summary>
     public string Title { get; init; } = "";
 
-    /// <summary>半边卡的模式文案（A 类 / B 类·碎晶 / 整半边）；其它卡为空。</summary>
+    /// <summary>半边卡的模式文案（A 类 / B 类·碎晶（旧版）/ 整半边）；其它卡为空。</summary>
     public string ModeText { get; init; } = "";
 
     /// <summary>真实回放是否通过。</summary>
@@ -78,6 +84,35 @@ public sealed class WorkOrderCardItem
     /// <summary>可见步骤，按执行顺序。</summary>
     public IReadOnlyList<WorkOrderCardStep> Steps { get; init; } =
         Array.Empty<WorkOrderCardStep>();
+
+    /// <summary>
+    /// 前态标题（Core 的 <see cref="WorkOrderCardView.PreStateTitle"/>）：
+    /// v4 半边卡是「拆柱后（跌落前）」，角卡 / 整半边卡是「前态」。
+    /// 没有前态时为空。
+    /// </summary>
+    public string PreStateTitle { get; init; } = "";
+
+    /// <summary>
+    /// 前态图形（Core 的 <see cref="WorkOrderCardView.PreState"/>）。
+    ///
+    /// <para>
+    /// 页面 / 导出把它画在<b>输入之后、可见步骤之前</b>：半边卡的前态是
+    /// 「拆柱后、跌落前」的中间态（4 列），角卡的前态是工序起点。
+    /// 前态不是输入链，因此未验证的卡仍然按 Core 给的值展示；
+    /// Core 没有给前态时为 null，页面与导出都不画这一块。
+    /// </para>
+    /// </summary>
+    public ShapeDocument? PreState { get; init; }
+
+    /// <summary>
+    /// 旧版 B 类·碎晶半边卡（<see cref="HalfMode.FromTightColumns"/>）。
+    ///
+    /// <para>
+    /// v4 已删除该路径，枚举值只用于兼容历史数据：卡片照常可渲染，
+    /// 但页面 / 导出加「旧版」降级样式，不报错、不隐藏步骤。
+    /// </para>
+    /// </summary>
+    public bool IsLegacyHalf { get; init; }
 
     /// <summary>卡片产物（角卡固定 Q1；半边卡是 k 列半边；交换卡是目标图形）。</summary>
     public required ShapeDocument Output { get; init; }
@@ -177,6 +212,74 @@ public sealed class WorkOrderCardPresentation
         };
     }
 
+    /// <summary>
+    /// 导出图用的卡片层：<b>直接投影已缓存的卡片项</b>，不重跑 Core、也不重新建卡。
+    ///
+    /// <para>
+    /// 页面与导出消费同一个 <see cref="WorkOrderCardPresentation"/>，字段一一对应：
+    /// 标题 / 种类 / 模式 / 验证 / Note / 输入 / 前态 / 可见步骤 / 输出 / 角卡小字。
+    /// 未验证卡的输入链在 <see cref="ToItem"/> 里已经清空，因此导出同样不会画出未验证的输入。
+    /// </para>
+    /// </summary>
+    public IReadOnlyList<AnalysisExportWorkOrderLayer> ToExportLayers()
+    {
+        var layers = new List<AnalysisExportWorkOrderLayer>(Layers.Count);
+
+        foreach (WorkOrderCardLayer layer in Layers)
+        {
+            var exportLayer = new AnalysisExportWorkOrderLayer
+            {
+                Title = layer.Title,
+                Count = layer.Cards.Count
+            };
+
+            foreach (WorkOrderCardItem card in layer.Cards)
+            {
+                var exportCard = new AnalysisExportWorkOrderCard
+                {
+                    Title = card.Title,
+                    KindText = card.KindText,
+                    ModeText = card.ModeText,
+                    Verified = card.Verified,
+                    Note = card.Note ?? "",
+                    IsCorner = card.Kind == CardKind.Corner,
+                    IsLegacyHalf = card.IsLegacyHalf,
+                    OutputCaption = card.OutputCaption,
+                    CornerCaption = card.ColumnCaption,
+                    PreStateTitle = card.PreStateTitle,
+                    PreState = card.PreState is null
+                        ? null
+                        : ShapeCanvasState.Create(card.PreState),
+                    Output = ShapeCanvasState.Create(card.Output)
+                };
+
+                foreach (WorkOrderCardInput input in card.Inputs)
+                {
+                    exportCard.Inputs.Add(new AnalysisExportWorkOrderCardInput
+                    {
+                        Title = input.Title,
+                        State = ShapeCanvasState.Create(input.Shape)
+                    });
+                }
+
+                foreach (WorkOrderCardStep step in card.Steps)
+                {
+                    exportCard.Steps.Add(new AnalysisExportWorkOrderCardStep
+                    {
+                        Operation = step.Operation,
+                        State = ShapeCanvasState.Create(step.Shape)
+                    });
+                }
+
+                exportLayer.Cards.Add(exportCard);
+            }
+
+            layers.Add(exportLayer);
+        }
+
+        return layers;
+    }
+
     private static void AddLayer(
         List<WorkOrderCardLayer> layers,
         WorkOrderCardLayerKind kind,
@@ -225,6 +328,18 @@ public sealed class WorkOrderCardPresentation
             })
             .ToArray();
 
+        /*
+         * 前态：Core 只在对得上的卡上填。标题留空时统一补「前态」，
+         * 页面和导出共用这一份文案，避免两边各写一套默认值。
+         */
+        string preStateTitle = card.PreStateTitle ?? "";
+
+        if (card.PreState is not null &&
+            string.IsNullOrWhiteSpace(preStateTitle))
+        {
+            preStateTitle = "前态";
+        }
+
         return new WorkOrderCardItem
         {
             Kind = card.Kind,
@@ -235,6 +350,9 @@ public sealed class WorkOrderCardPresentation
             Note = card.Note,
             Inputs = inputs,
             Steps = steps,
+            PreStateTitle = preStateTitle,
+            PreState = card.PreState,
+            IsLegacyHalf = card.Mode == HalfMode.FromTightColumns,
             Output = card.Output,
             OutputCaption = OutputCaption(card.Kind),
             ColumnCaption = card.Kind == CardKind.Corner
@@ -258,7 +376,8 @@ public sealed class WorkOrderCardPresentation
         mode switch
         {
             HalfMode.FromCorners => "A 类 · 角产物交换",
-            HalfMode.FromTightColumns => "B 类 · 碎晶",
+            // v4 已不再产生 FromTightColumns；这里只给历史数据留可读文案。
+            HalfMode.FromTightColumns => "B 类 · 碎晶（旧版）",
             HalfMode.WholeHalf => "整半边",
             _ => ""
         };
@@ -284,7 +403,8 @@ public sealed class WorkOrderCardPresentation
             : $"Q1 目标角 / Q2 右柱 / Q{parts} 左柱";
 
     /// <summary>
-    /// 可见步骤复用 angle-node 的配色：碎晶红、交换紫红、顶破青绿、堆叠橙。
+    /// 可见步骤复用 angle-node 的配色：碎晶红、交换紫红、拆柱紫蓝、跌落蓝绿、
+    /// 顶破青绿、堆叠橙；未知步骤用目标绿兜底。
     /// </summary>
     private static string StepClass(
         string operation) =>
@@ -292,6 +412,8 @@ public sealed class WorkOrderCardPresentation
         {
             "碎晶" => "angle-kind-cut",
             "交换" => "angle-kind-exchange",
+            "拆柱" => "angle-kind-support",
+            "跌落" => "angle-kind-weakdrop",
             "顶破" => "angle-kind-pin",
             "堆叠" => "angle-kind-stack",
             _ => "angle-kind-target"

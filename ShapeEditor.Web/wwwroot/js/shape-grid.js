@@ -4820,8 +4820,10 @@ function drawAnalysisAngleHalf(ctx, card, left, top) {
 
 /*
  * 与页面同一份 WorkOrderCardPresentation：
- * 层 = 交换工序 → 半边工序 → 角工序；卡 = 标题 + 输入 + 可见步骤 + 输出。
+ * 层 = 交换工序 → 半边工序 → 角工序；卡 = 标题 + 输入 + 前态 + 可见步骤 + 输出。
+ * 前态固定画在输入之后、步骤之前（v4 半边卡 = 拆柱后（跌落前），角卡 = 工序起点）。
  * 未验证的卡只画红色警示和 Note，不画输入链（C# 已经把 Inputs 清空）。
+ * 旧版 B 类·碎晶半边卡（历史数据）照常绘制，只加虚线降级边框。
  * 所有竖式图固定 30px 单元格、1:1 绘制；图形宽时整张导出图随之变宽。
  */
 const ANALYSIS_WORK_ORDER_CARD_PADDING = 12;
@@ -4959,12 +4961,17 @@ function normalizeWorkOrderLayers(rawLayers) {
                 verified: !!raw.verified,
                 note: raw.note === null || raw.note === undefined ? "" : String(raw.note),
                 isCorner: !!raw.isCorner,
+                isLegacyHalf: !!raw.isLegacyHalf,
                 outputCaption: raw.outputCaption === null || raw.outputCaption === undefined
                     ? ""
                     : String(raw.outputCaption),
                 cornerCaption: raw.cornerCaption === null || raw.cornerCaption === undefined
                     ? ""
                     : String(raw.cornerCaption),
+                preStateTitle: raw.preStateTitle === null || raw.preStateTitle === undefined
+                    ? ""
+                    : String(raw.preStateTitle),
+                preState: normalizeWorkOrderShapeState(raw.preState),
                 output: output,
                 inputs: inputs,
                 steps: steps
@@ -4987,7 +4994,7 @@ function normalizeWorkOrderLayers(rawLayers) {
 }
 
 /*
- * 卡片内容需要的导出宽度：取输出 / 输入 / 步骤里最宽的竖式图，
+ * 卡片内容需要的导出宽度：取输出 / 前态 / 输入 / 步骤里最宽的竖式图，
  * 加上卡片内边距。只有大图形才会撑宽导出图（最小宽度仍是 720）。
  */
 function workOrderCardsContentWidth(rawLayers) {
@@ -5000,6 +5007,7 @@ function workOrderCardsContentWidth(rawLayers) {
         for (let j = 0; j < cards.length; j++) {
             const card = cards[j];
             const states = [card.output]
+                .concat(card.preState ? [card.preState] : [])
                 .concat(card.inputs.map(function (input) { return input.state; }))
                 .concat(card.steps.map(function (step) { return step.state; }));
 
@@ -5086,7 +5094,16 @@ function layoutWorkOrderShapeGrid(measure, items, innerWidth, options) {
     };
 }
 
-/* 一张卡的布局：标题 / 警示 / 输入 / 可见步骤 / 输出。 */
+/* 前态小节标题：和页面的 PreStateSectionTitle 完全一致。 */
+function workOrderPreStateHeading(title) {
+    if (!title || title === "前态") {
+        return "前态";
+    }
+
+    return "前态 · " + title;
+}
+
+/* 一张卡的布局：标题 / 警示 / 输入 / 前态 / 可见步骤 / 输出。 */
 function layoutWorkOrderCard(measure, card, innerWidth) {
     const headerText = [card.title, card.kindText, card.modeText]
         .filter(function (part) { return part !== ""; })
@@ -5131,6 +5148,34 @@ function layoutWorkOrderCard(measure, card, innerWidth) {
 
     let steps = null;
     let emptyLines = [];
+
+    /*
+     * 前态：输入之后、步骤之前。
+     * 单独的一个图形（30px 单元格）+ 标题，用虚线紫框绘制，区别于实线框的输入。
+     */
+    let preState = null;
+
+    if (card.preState) {
+        const headingLines = wrapAnalysisText(
+            measure,
+            workOrderPreStateHeading(card.preStateTitle),
+            ANALYSIS_WORK_ORDER_LABEL_FONT,
+            innerWidth,
+            false);
+        const shapeWidth = Number(card.preState.columns) * ANALYSIS_WORK_ORDER_CELL;
+        const shapeHeight = Number(card.preState.rows) * ANALYSIS_WORK_ORDER_CELL;
+
+        preState = {
+            headingLines: headingLines,
+            state: card.preState,
+            shapeWidth: shapeWidth,
+            shapeHeight: shapeHeight,
+            height:
+                headingLines.length * ANALYSIS_WORK_ORDER_LABEL_LINE_HEIGHT +
+                shapeHeight +
+                16
+        };
+    }
 
     if (card.steps.length > 0) {
         steps = {
@@ -5204,6 +5249,10 @@ function layoutWorkOrderCard(measure, card, innerWidth) {
             inputs.grid.height;
     }
 
+    if (preState) {
+        height += 12 + preState.height;
+    }
+
     if (steps) {
         height +=
             12 +
@@ -5229,10 +5278,12 @@ function layoutWorkOrderCard(measure, card, innerWidth) {
 
     return {
         verified: card.verified,
+        isLegacyHalf: card.isLegacyHalf,
         output: card.output,
         headerLines: headerLines,
         noteLines: noteLines,
         inputs: inputs,
+        preState: preState,
         steps: steps,
         emptyLines: emptyLines,
         outputHeadingLines: outputHeadingLines,
@@ -5316,6 +5367,10 @@ function workOrderStepColors(operation) {
             return { fill: "#FFF1F1", stroke: "#C62828" };
         case "交换":
             return { fill: "#F7EBFA", stroke: "#8E24AA" };
+        case "拆柱":
+            return { fill: "#EEF1FC", stroke: "#3F51B5" };
+        case "跌落":
+            return { fill: "#E4F4F1", stroke: "#00695C" };
         case "顶破":
             return { fill: "#F2FBFB", stroke: "#0E7C86" };
         case "堆叠":
@@ -5418,13 +5473,23 @@ function drawWorkOrderShapeGrid(ctx, grid, left, top, isSteps) {
     return top + grid.height;
 }
 
-/* 画一张卡：标题 + 验证标记 / 警示 / 输入 / 可见步骤 / 输出。 */
+/* 画一张卡：标题 + 验证标记 / 警示 / 输入 / 前态 / 可见步骤 / 输出。 */
 function drawAnalysisWorkOrderCard(ctx, card, left, top, width) {
     const padding = ANALYSIS_WORK_ORDER_CARD_PADDING;
 
     ctx.save();
-    ctx.fillStyle = card.verified ? "#FCFBFF" : "#FFFAFA";
-    ctx.strokeStyle = card.verified ? "#E6E2F2" : "#E7B6B6";
+
+    if (card.isLegacyHalf) {
+        // 旧版 B 类·碎晶半边卡：虚线暖色边框，和当前卡区分开。
+        ctx.fillStyle = "#FFFDF5";
+        ctx.strokeStyle = "#D6C27A";
+        ctx.setLineDash([7, 4]);
+    }
+    else {
+        ctx.fillStyle = card.verified ? "#FCFBFF" : "#FFFAFA";
+        ctx.strokeStyle = card.verified ? "#E6E2F2" : "#E7B6B6";
+    }
+
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.roundRect(left, top, width, card.height, 10);
@@ -5503,6 +5568,45 @@ function drawAnalysisWorkOrderCard(ctx, card, left, top, width) {
         }
 
         y = drawWorkOrderShapeGrid(ctx, card.inputs.grid, innerLeft, y, false);
+    }
+
+    // 前态：输入之后、步骤之前；虚线紫框 + 浅紫底，和实线框的输入区分开。
+    if (card.preState) {
+        y += 12;
+
+        ctx.font = ANALYSIS_WORK_ORDER_LABEL_FONT;
+        ctx.fillStyle = ANALYSIS_WORK_ORDER_TITLE_COLOR;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+
+        for (let i = 0; i < card.preState.headingLines.length; i++) {
+            ctx.fillText(card.preState.headingLines[i], innerLeft, y);
+            y += ANALYSIS_WORK_ORDER_LABEL_LINE_HEIGHT;
+        }
+
+        const preStateBoxWidth = card.preState.shapeWidth + 16;
+        const preStateBoxHeight = card.preState.shapeHeight + 16;
+
+        ctx.save();
+        ctx.fillStyle = "#F6F4FF";
+        ctx.strokeStyle = "#B39DDB";
+        ctx.lineWidth = 1;
+        ctx.setLineDash([5, 3]);
+        ctx.beginPath();
+        ctx.roundRect(innerLeft, y, preStateBoxWidth, preStateBoxHeight, 8);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+
+        window.shapeGrid.drawAnalysisShape(
+            ctx,
+            card.preState.state,
+            innerLeft + 8,
+            y + 8,
+            ANALYSIS_WORK_ORDER_CELL,
+            ANALYSIS_WORK_ORDER_CELL);
+
+        y += preStateBoxHeight;
     }
 
     if (card.steps) {

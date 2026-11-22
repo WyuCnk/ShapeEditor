@@ -3121,6 +3121,28 @@ button {
     background: #fffafa;
 }
 
+/*
+ * 旧版 B 类·碎晶半边卡（历史数据）：v4 已不再产生这种卡。
+ * 仍然完整渲染，只把边框改成虚线 + 暖色，和当前卡区分开，不报错也不隐藏内容。
+ */
+.work-order-card.legacy {
+    border-style: dashed;
+    border-color: #d6c27a;
+    background: #fffdf5;
+}
+
+.work-order-legacy-note {
+    margin: 6px 0 10px;
+    padding: 6px 10px;
+    border-left: 3px solid #c9a227;
+    border-radius: 6px;
+    background: #fffaeb;
+    font-size: 12px;
+    line-height: 18px;
+    color: #7a6415;
+    word-break: break-word;
+}
+
 .work-order-card-head {
     display: flex;
     align-items: center;
@@ -3234,6 +3256,25 @@ button {
 .work-order-shape-box {
     max-width: 100%;
     overflow: auto;
+}
+
+/*
+ * 前态：位置在输入之后、步骤之前。
+ * 用虚线紫框 + 浅紫底，和「输入」（实线浅紫框）区分开：它是卡内中间态，不是输入链。
+ */
+.work-order-prestate-box {
+    display: inline-block;
+    max-width: 100%;
+    padding: 8px;
+    border: 1px dashed #b39ddb;
+    border-radius: 8px;
+    background: #f6f4ff;
+    overflow: auto;
+}
+
+/* 前态标题后缀（拆柱后（跌落前）等）用正文色，避免和「前态」标签抢眼。 */
+.work-order-prestate-section .work-order-section-title {
+    color: #5e35b1;
 }
 
 /* 步骤节点：复用 path-node / angle-node 的配色，只把绝对定位改成流式。 */

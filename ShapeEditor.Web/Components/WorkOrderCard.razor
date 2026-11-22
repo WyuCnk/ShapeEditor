@@ -5,12 +5,19 @@
     三层工序卡片里的一张卡。
 
     标题 + 验证标记 → 未验证时红色警示与 Note（不画输入链）→ 输入（上一层卡产物）
-    → 可见步骤（Hidden 的步骤在 C# 投影时已剔除）→ 输出（醒目边框）+ 角卡小字。
+    → 前态（PreStateTitle + 图形）→ 可见步骤（Hidden 的步骤在 C# 投影时已剔除）
+    → 输出（醒目边框）+ 角卡小字。
 
-    输入 / 步骤 / 输出都复用 PathNodePreview：固定 30px 单元格、1:1 不缩放。
+    前态固定画在输入之后、步骤之前：
+      · v4 半边卡（A 类）=「拆柱后（跌落前）」的 4 列中间态（不是输入链）；
+      · 角卡 = 工序起点（角卡自己的碎晶 / 顶破步骤仍然可见）；
+      · 交换卡没有前态，因此不画这一块。
+    旧版 B 类·碎晶半边卡（历史数据）照常渲染，只加 .legacy 降级样式，不报错。
+
+    输入 / 前态 / 步骤 / 输出都复用 PathNodePreview：固定 30px 单元格、1:1 不缩放。
     步骤节点沿用 path-node / angle-node 的样式与配色，只是把绝对定位改成流式排列。
 *@
-<article class="work-order-card @KindClass @(Card.Verified ? "verified" : "unverified")">
+<article class="work-order-card @KindClass @(Card.Verified ? "verified" : "unverified") @(Card.IsLegacyHalf ? "legacy" : "")">
     <header class="work-order-card-head">
         <h4>@Card.Title</h4>
         <span class="work-order-kind">@Card.KindText</span>
@@ -24,6 +31,14 @@
             @(Card.Verified ? "已验证" : "未验证")
         </span>
     </header>
+
+    @if (Card.IsLegacyHalf)
+    {
+        @* 降级：v4 已删除 B 类·碎晶路径；历史数据仍按原步骤回放展示。 *@
+        <p class="work-order-legacy-note">
+            旧版 B 类·碎晶半边卡（仅兼容历史数据）：按原步骤回放展示，新分析不会再生成这种卡。
+        </p>
+    }
 
     @if (!Card.Verified)
     {
@@ -54,6 +69,18 @@
                         </div>
                     </figure>
                 }
+            </div>
+        </section>
+    }
+
+    @if (Card.PreState is not null)
+    {
+        @* 前态：位置固定在输入之后、步骤之前；不是输入链，未验证的卡也按 Core 的值展示。 *@
+        <section class="work-order-section work-order-prestate-section">
+            <div class="work-order-section-title">@PreStateSectionTitle</div>
+
+            <div class="work-order-prestate-box">
+                <PathNodePreview Document="Card.PreState" />
             </div>
         </section>
     }
@@ -122,6 +149,16 @@
     /// <summary>按种类给卡片加样式类：work-order-card-corner / half / exchange。</summary>
     private string KindClass =>
         "work-order-card-" + Card.Kind.ToString().ToLowerInvariant();
+
+    /// <summary>
+    /// 前态小节标题：Core 的 PreStateTitle 为「前态」时只写「前态」，
+    /// 否则写成「前态 · 拆柱后（跌落前）」，保证标题里始终能看到前态口径。
+    /// </summary>
+    private string PreStateSectionTitle =>
+        string.IsNullOrWhiteSpace(Card.PreStateTitle) ||
+        Card.PreStateTitle == "前态"
+            ? "前态"
+            : "前态 · " + Card.PreStateTitle;
 
     /// <summary>把坐标格式化成不带千分位分隔符的像素值。</summary>
     private static string Px(
