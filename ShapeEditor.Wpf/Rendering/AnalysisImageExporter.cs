@@ -20,7 +20,7 @@ namespace ShapeEditor.Wpf.Rendering;
 ///
 /// 全部内容由 DrawingVisual 一次性离屏绘制：
 /// 竖式图与节点预览复用 <see cref="ShapeGridDrawing"/>，与编辑器保持同一套配色；
-/// 画布宽度会随制作路径节点图自动加宽，节点图不缩放、不分片。
+/// 画布宽度会随制作路径节点图或横向排列的工序卡片自动加宽，节点图不缩放、不分片。
 /// </summary>
 public static class AnalysisImageExporter
 {
@@ -227,12 +227,18 @@ public static class AnalysisImageExporter
 
     private static readonly Brush StepHeaderBrush = CreateBrush(0x4A, 0x3F, 0x72);
 
-    /// <summary>工序卡片的布局常量：与窗口的 WorkOrderCardPanel / XAML 保持一致。</summary>
+    /// <summary>工序卡片的布局常量：与窗口的 WorkOrderCardPanel / CardFlowPanel 保持一致。</summary>
     private const double WorkOrderCardGap = 12;
 
     private const double WorkOrderCardPadding = 12;
 
     private const double WorkOrderLayerPadding = 12;
+
+    /// <summary>卡内区块之间的水平间距。</summary>
+    private const double WorkOrderBlockGap = 12;
+
+    /// <summary>卡内区块换行时的行间距。</summary>
+    private const double WorkOrderBlockLineGap = 8;
 
     private const double WorkOrderChipHeight = 18;
 
@@ -240,10 +246,16 @@ public static class AnalysisImageExporter
 
     private const double WorkOrderStepArrowWidth = 22;
 
-    private const double WorkOrderStepRowGap = 8;
+    private const double WorkOrderInputGap = 12;
 
-    /// <summary>内容宽度达到这个值时一行放两张卡，否则一行一张（与窗口面板一致）。</summary>
-    private const double WorkOrderTwoColumnWidth = 620;
+    /// <summary>角卡小字的最大宽度，与窗口的 MaxWidth 一致。</summary>
+    private const double WorkOrderCornerCaptionWidth = 220;
+
+    /// <summary>「没有可见步骤」说明的最大宽度。</summary>
+    private const double WorkOrderEmptyStepsWidth = 340;
+
+    /// <summary>卡片内容的最小宽度，避免未验证卡的 Note 把卡片挤得过窄。</summary>
+    private const double WorkOrderMinCardContentWidth = 360;
 
     /// <summary>
     /// 导出当前分析结果。调用方负责处理保存对话框与异常提示。
@@ -271,6 +283,20 @@ public static class AnalysisImageExporter
             viewModel.PathGraph is ProductionPathGraph graph)
         {
             contentWidth = Math.Max(contentWidth, graph.Width);
+        }
+
+        /*
+         * 工序卡片改成卡内横向排列后单卡更宽：
+         * 有展开的卡片时把画布加宽到能放下一整行区块，
+         * 导出图因此更宽更矮，且不会裁切任何区块。
+         */
+        if (viewModel.HasWorkOrderCards &&
+            viewModel.IsCardsExpanded &&
+            viewModel.CardVisuals is WorkOrderCardVisualSet cards)
+        {
+            contentWidth = Math.Max(
+                contentWidth,
+                MeasureWorkOrderCardsWidth(cards));
         }
 
         double canvasWidth = PagePadding * 2 + contentWidth;
@@ -1006,8 +1032,8 @@ public static class AnalysisImageExporter
 
         y = DrawParagraph(
             context,
-            "按「交换工序 → 半边工序 → 角工序」三层从外到内平铺，同一层内卡片横向成行；" +
-            "每张卡显示标题、验证标记、输入（上一层卡产物）、前态、可见步骤与输出。",
+            "按「交换工序 → 半边工序 → 角工序」三层从外到内平铺，同一层内一行一张卡；" +
+            "每张卡内部按「输入 → 前态 → 可见步骤 → 输出」横向流式排列，放不下时卡内自动换行。",
             y,
             contentWidth,
             11.5,
@@ -1047,70 +1073,36 @@ public static class AnalysisImageExporter
         return EndSection(context, y, contentWidth);
     }
 
-    /// <summary>画一层卡片：左侧强调色条、层标题（带张数）与横向卡片行。</summary>
+    /// <summary>
+    /// 画一层卡片：左侧强调色条、层标题（带张数）与纵向卡片列表。
+    /// 单卡变宽后一层只放一张卡，卡内区块横向排列。
+    /// </summary>
     private static double DrawWorkOrderLayer(
         DrawingContext context,
         WorkOrderCardLayerViewModel layer,
         double contentWidth,
         double y)
     {
-        int columns = contentWidth >= WorkOrderTwoColumnWidth ? 2 : 1;
-
         double innerWidth = Math.Max(
             1,
             contentWidth - WorkOrderLayerPadding * 2);
 
-        double cardWidth = Math.Max(
-            1,
-            (innerWidth - WorkOrderCardGap * (columns - 1)) / columns);
-
-        /*
-         * 输出 / 单步节点 / 前态都按 1:1 绘制、不缩放；
-         * 两列放不下单张卡的内容时退回一列，避免图形越出卡片边框。
-         */
-        double requiredWidth = 0;
+        var cards = new List<BuiltWorkOrderCard>(layer.Cards.Count);
 
         foreach (WorkOrderCardViewModel card in layer.Cards)
         {
-            requiredWidth = Math.Max(requiredWidth, card.Output.Width + 20);
+            double cardWidth = Math.Min(
+                MeasureWorkOrderCardWidth(card),
+                innerWidth);
 
-            if (card.PreState is not null)
-            {
-                requiredWidth = Math.Max(requiredWidth, card.PreState.Width + 18);
-            }
-
-            foreach (WorkOrderStepViewModel step in card.Steps)
-            {
-                requiredWidth = Math.Max(requiredWidth, step.Width);
-            }
-        }
-
-        if (columns > 1 &&
-            requiredWidth > cardWidth - WorkOrderCardPadding * 2)
-        {
-            columns = 1;
-
-            cardWidth = innerWidth;
-        }
-
-        // 层里只有一张卡时让它占满整行，与窗口的 WorkOrderCardPanel 一致。
-        if (layer.Cards.Count == 1)
-        {
-            columns = 1;
-
-            cardWidth = innerWidth;
-        }
-
-        var cardHeights = new double[layer.Cards.Count];
-
-        for (int index = 0; index < layer.Cards.Count; index++)
-        {
-            BuildWorkOrderCard(
-                layer.Cards[index],
+            List<WorkOrderDrawOp> ops = BuildWorkOrderCard(
+                card,
                 0,
                 0,
                 cardWidth,
-                out cardHeights[index]);
+                out double cardHeight);
+
+            cards.Add(new BuiltWorkOrderCard(ops, cardHeight));
         }
 
         FormattedText title = CreateText(
@@ -1125,27 +1117,13 @@ public static class AnalysisImageExporter
             MutedBrush,
             bold: true);
 
-        int rowCount = (layer.Cards.Count + columns - 1) / columns;
-
         double cardsHeight = 0;
 
-        for (int row = 0; row < rowCount; row++)
+        for (int index = 0; index < cards.Count; index++)
         {
-            double rowHeight = 0;
+            cardsHeight += cards[index].Height;
 
-            for (int column = 0; column < columns; column++)
-            {
-                int index = row * columns + column;
-
-                if (index < cardHeights.Length)
-                {
-                    rowHeight = Math.Max(rowHeight, cardHeights[index]);
-                }
-            }
-
-            cardsHeight += rowHeight;
-
-            if (row < rowCount - 1)
+            if (index < cards.Count - 1)
             {
                 cardsHeight += WorkOrderCardGap;
             }
@@ -1195,52 +1173,429 @@ public static class AnalysisImageExporter
 
         double cardTop = y + WorkOrderLayerPadding + title.Height + headerGap;
 
-        for (int row = 0; row < rowCount; row++)
+        double cardLeft = PagePadding + WorkOrderLayerPadding;
+
+        foreach (BuiltWorkOrderCard card in cards)
         {
-            double rowHeight = 0;
+            OffsetWorkOrderOps(card.Ops, cardLeft, cardTop);
 
-            for (int column = 0; column < columns; column++)
-            {
-                int index = row * columns + column;
+            DrawWorkOrderOps(context, card.Ops);
 
-                if (index < layer.Cards.Count)
-                {
-                    rowHeight = Math.Max(rowHeight, cardHeights[index]);
-
-                    double cardLeft =
-                        PagePadding +
-                        WorkOrderLayerPadding +
-                        column * (cardWidth + WorkOrderCardGap);
-
-                    List<WorkOrderDrawOp> ops = BuildWorkOrderCard(
-                        layer.Cards[index],
-                        cardLeft,
-                        cardTop,
-                        cardWidth,
-                        out _);
-
-                    DrawWorkOrderOps(context, ops);
-                }
-            }
-
-            cardTop += rowHeight;
-
-            if (row < rowCount - 1)
-            {
-                cardTop += WorkOrderCardGap;
-            }
+            cardTop += card.Height + WorkOrderCardGap;
         }
 
         return y + layerHeight + 12;
     }
 
     /// <summary>
-    /// 生成一张卡片的全部绘制指令（背景、卡框、标题、警示、输入、前态、步骤、输出）。
-    ///
-    /// <para>
-    /// 指令列表同时用于测量与绘制：窗口和导出消费同一份 <see cref="WorkOrderCardViewModel"/>，
-    /// 未验证的卡在视图里已经没有输入链，这里自然也不会画出输入。
-    /// </para>
+    /// 卡片的自然宽度：标题行与卡内横向区块取最宽者，再加左右内边距。
+    /// 导出图据此把画布加宽，让所有区块排成一行。
+    /// </summary>
+    private static double MeasureWorkOrderCardWidth(
+        WorkOrderCardViewModel card)
+    {
+        double headerWidth = MeasureWorkOrderHeaderWidth(card);
+
+        double flowWidth = 0;
+
+        int blockCount = 0;
+
+        foreach (WorkOrderCardBlock block in BuildWorkOrderFlowBlocks(card))
+        {
+            if (blockCount > 0)
+            {
+                flowWidth += WorkOrderBlockGap;
+            }
+
+            flowWidth += block.Width;
+
+            blockCount++;
+        }
+
+        double contentWidth = Math.Max(
+            WorkOrderMinCardContentWidth,
+            Math.Max(headerWidth, flowWidth));
+
+        return contentWidth + WorkOrderCardPadding * 2;
+    }
+
+    /// <summary>整棵卡片树的宽度：最宽的一张卡 + 层左右内边距。</summary>
+    private static double MeasureWorkOrderCardsWidth(
+        WorkOrderCardVisualSet cards)
+    {
+        double width = 0;
+
+        foreach (WorkOrderCardLayerViewModel layer in cards.Layers)
+        {
+            foreach (WorkOrderCardViewModel card in layer.Cards)
+            {
+                width = Math.Max(width, MeasureWorkOrderCardWidth(card));
+            }
+        }
+
+        return width + WorkOrderLayerPadding * 2;
+    }
+
+    /// <summary>标题行自然宽度：标题 + 种类 / Mode / 验证小标签。</summary>
+    private static double MeasureWorkOrderHeaderWidth(
+        WorkOrderCardViewModel card)
+    {
+        FormattedText title = CreateText(
+            card.Title,
+            14,
+            CardTitleBrush,
+            bold: true);
+
+        double width = title.Width + 8;
+
+        bool hasChip = false;
+
+        foreach (WorkOrderChipLayout chip in BuildWorkOrderChips(card))
+        {
+            if (hasChip)
+            {
+                width += WorkOrderChipGap;
+            }
+
+            width += chip.Width;
+
+            hasChip = true;
+        }
+
+        return width;
+    }
+
+    /// <summary>
+    /// 卡内横向流式区块（输入组 / 前态 / 可见步骤 / 输出 / 角卡小字）。
+    /// 每个区块的绘制指令都用局部坐标，摆放时再整体平移。
+    /// </summary>
+    private static List<WorkOrderCardBlock> BuildWorkOrderFlowBlocks(
+        WorkOrderCardViewModel card)
+    {
+        var blocks = new List<WorkOrderCardBlock>(5);
+
+        if (card.HasInputs)
+        {
+            blocks.Add(BuildWorkOrderInputsBlock(card));
+        }
+
+        if (card.HasPreState && card.PreState is not null)
+        {
+            blocks.Add(BuildWorkOrderPreStateBlock(card));
+        }
+
+        if (card.HasSteps)
+        {
+            blocks.Add(BuildWorkOrderStepsBlock(card));
+        }
+        else if (card.ShowEmptySteps)
+        {
+            blocks.Add(BuildWorkOrderEmptyStepsBlock());
+        }
+
+        blocks.Add(BuildWorkOrderOutputBlock(card));
+
+        if (card.HasCornerCaption)
+        {
+            blocks.Add(BuildWorkOrderCornerCaptionBlock(card));
+        }
+
+        return blocks;
+    }
+
+    private static WorkOrderCardBlock BuildWorkOrderInputsBlock(
+        WorkOrderCardViewModel card)
+    {
+        var block = new WorkOrderCardBlock();
+
+        FormattedText title = CreateText(
+            "输入（上一层卡产物）",
+            12,
+            CardSectionTitleBrush,
+            bold: true);
+
+        block.Ops.Add(TextOp(title, 0, 0));
+
+        double bodyTop = title.Height + 6;
+
+        double x = 0;
+
+        double bodyHeight = 0;
+
+        foreach (WorkOrderInputViewModel input in card.Inputs)
+        {
+            FormattedText inputTitle = CreateText(
+                input.Title,
+                11,
+                MutedBrush,
+                bold: true);
+
+            double boxWidth = Math.Max(
+                inputTitle.Width,
+                input.Preview.Width) + 16;
+
+            double boxHeight =
+                8 +
+                inputTitle.Height +
+                6 +
+                input.Preview.Height +
+                8;
+
+            block.Ops.Add(new WorkOrderDrawOp
+            {
+                Rect = new Rect(x, bodyTop, boxWidth, boxHeight),
+                Fill = InputFillBrush,
+                Stroke = InputBorderBrush,
+                StrokeThickness = 1,
+                Radius = 8
+            });
+
+            block.Ops.Add(TextOp(inputTitle, x + 8, bodyTop + 8));
+
+            block.Ops.Add(ImageOp(
+                input.Preview,
+                x + 8,
+                bodyTop + 8 + inputTitle.Height + 6));
+
+            x += boxWidth + WorkOrderInputGap;
+
+            bodyHeight = Math.Max(bodyHeight, boxHeight);
+        }
+
+        // 与窗口的 WorkOrderInputTemplate 一致：每张输入框右侧都留 12px 外边距，
+        // 最后一张也保留，作为输入组与下一个区块之间的呼吸空间。
+        block.Width = Math.Max(title.Width, x);
+
+        block.Height = bodyTop + bodyHeight;
+
+        return block;
+    }
+
+    private static WorkOrderCardBlock BuildWorkOrderPreStateBlock(
+        WorkOrderCardViewModel card)
+    {
+        var block = new WorkOrderCardBlock();
+
+        FormattedText title = CreateText(
+            card.PreStateSectionTitle,
+            12,
+            CardPreStateTitleBrush,
+            bold: true);
+
+        block.Ops.Add(TextOp(title, 0, 0));
+
+        double bodyTop = title.Height + 6;
+
+        ShapePreviewViewModel preview = card.PreState!;
+
+        double boxWidth = preview.Width + 18;
+
+        double boxHeight = preview.Height + 18;
+
+        block.Ops.Add(new WorkOrderDrawOp
+        {
+            Rect = new Rect(0, bodyTop, boxWidth, boxHeight),
+            Fill = PreStateFillBrush,
+            Stroke = PreStateBorderBrush,
+            StrokeThickness = 1,
+            Radius = 8,
+            Dashed = true
+        });
+
+        block.Ops.Add(ImageOp(preview, 9, bodyTop + 9));
+
+        block.Width = Math.Max(title.Width, boxWidth);
+
+        block.Height = bodyTop + boxHeight;
+
+        return block;
+    }
+
+    private static WorkOrderCardBlock BuildWorkOrderStepsBlock(
+        WorkOrderCardViewModel card)
+    {
+        var block = new WorkOrderCardBlock();
+
+        FormattedText title = CreateText(
+            card.StepsTitle,
+            12,
+            CardSectionTitleBrush,
+            bold: true);
+
+        block.Ops.Add(TextOp(title, 0, 0));
+
+        double bodyTop = title.Height + 6;
+
+        FormattedText arrow = CreateText(
+            "→",
+            16,
+            PrimaryBrush,
+            bold: true);
+
+        double x = 0;
+
+        double bodyHeight = 0;
+
+        foreach (WorkOrderStepViewModel step in card.Steps)
+        {
+            block.Ops.Add(new WorkOrderDrawOp
+            {
+                Rect = new Rect(x, bodyTop, step.Width, step.Height),
+                Fill = step.FillBrush,
+                Stroke = step.AccentBrush,
+                StrokeThickness = 1.5,
+                Radius = 10
+            });
+
+            FormattedText operation = CreateText(
+                step.Operation,
+                11,
+                StepHeaderBrush,
+                bold: true);
+
+            operation.MaxTextWidth = Math.Max(1, step.Width - 14);
+
+            operation.MaxLineCount = 1;
+
+            operation.Trimming = TextTrimming.CharacterEllipsis;
+
+            block.Ops.Add(TextOp(operation, x + 7, bodyTop + 7));
+
+            ShapePreviewViewModel preview = step.Preview;
+
+            block.Ops.Add(ImageOp(
+                preview,
+                x + (step.Width - preview.Width) / 2,
+                bodyTop + 30 + Math.Max(0, step.Height - 30 - preview.Height) / 2));
+
+            x += step.Width;
+
+            if (step.ShowArrow)
+            {
+                block.Ops.Add(new WorkOrderDrawOp
+                {
+                    Rect = new Rect(
+                        x,
+                        bodyTop + (step.Height - arrow.Height) / 2,
+                        WorkOrderStepArrowWidth,
+                        arrow.Height),
+                    Text = arrow,
+                    TextCentered = true
+                });
+
+                x += WorkOrderStepArrowWidth;
+            }
+
+            bodyHeight = Math.Max(bodyHeight, step.Height);
+        }
+
+        block.Width = Math.Max(title.Width, x);
+
+        block.Height = bodyTop + bodyHeight;
+
+        return block;
+    }
+
+    private static WorkOrderCardBlock BuildWorkOrderEmptyStepsBlock()
+    {
+        var block = new WorkOrderCardBlock();
+
+        FormattedText text = CreateText(
+            "没有可见步骤：旋转 / 废料 / 纯支撑交接等结构步骤已在 Core 中标记为隐藏。",
+            12,
+            MutedBrush);
+
+        text.MaxTextWidth = WorkOrderEmptyStepsWidth;
+
+        block.Ops.Add(TextOp(text, 0, 0));
+
+        block.Width = text.Width;
+
+        block.Height = text.Height;
+
+        return block;
+    }
+
+    private static WorkOrderCardBlock BuildWorkOrderOutputBlock(
+        WorkOrderCardViewModel card)
+    {
+        var block = new WorkOrderCardBlock();
+
+        FormattedText title = CreateText(
+            "输出",
+            12,
+            CardSectionTitleBrush,
+            bold: true);
+
+        block.Ops.Add(TextOp(title, 0, 0));
+
+        double headerWidth = title.Width;
+
+        if (card.HasOutputCaption)
+        {
+            FormattedText caption = CreateText(
+                card.OutputCaption,
+                11,
+                MutedBrush);
+
+            block.Ops.Add(TextOp(
+                caption,
+                title.Width + 6,
+                title.Height - caption.Height));
+
+            headerWidth += 6 + caption.Width;
+        }
+
+        double bodyTop = title.Height + 6;
+
+        ShapePreviewViewModel preview = card.Output;
+
+        double boxWidth = preview.Width + 20;
+
+        double boxHeight = preview.Height + 20;
+
+        block.Ops.Add(new WorkOrderDrawOp
+        {
+            Rect = new Rect(0, bodyTop, boxWidth, boxHeight),
+            Fill = InputFillBrush,
+            Stroke = PrimaryBrush,
+            StrokeThickness = 2,
+            Radius = 10
+        });
+
+        block.Ops.Add(ImageOp(preview, 10, bodyTop + 10));
+
+        block.Width = Math.Max(headerWidth, boxWidth);
+
+        block.Height = bodyTop + boxHeight;
+
+        return block;
+    }
+
+    private static WorkOrderCardBlock BuildWorkOrderCornerCaptionBlock(
+        WorkOrderCardViewModel card)
+    {
+        var block = new WorkOrderCardBlock();
+
+        FormattedText text = CreateText(
+            card.CornerCaption,
+            11,
+            MutedBrush);
+
+        text.MaxTextWidth = WorkOrderCornerCaptionWidth;
+
+        block.Ops.Add(TextOp(text, 0, 0));
+
+        block.Width = text.Width;
+
+        block.Height = text.Height;
+
+        return block;
+    }
+
+    /// <summary>
+    /// 生成一张卡片的全部绘制指令：标题行、legacy 说明、未验证警示，
+    /// 以及卡内按输入 → 前态 → 可见步骤 → 输出 → 角卡小字横向排列的区块。
     /// </summary>
     private static List<WorkOrderDrawOp> BuildWorkOrderCard(
         WorkOrderCardViewModel card,
@@ -1273,7 +1628,6 @@ public static class AnalysisImageExporter
         ops.Add(TextOp(title, left, top));
 
         // 标题行的小标签：种类 / 半边 Mode / 验证标记。
-        // 与窗口的 WrapPanel 一致：优先跟在标题后面，放不下时换行。
         var chips = BuildWorkOrderChips(card);
 
         double chipX = title.Width + 8;
@@ -1325,111 +1679,53 @@ public static class AnalysisImageExporter
         // 旧版 B 类·碎晶半边卡：只兼容历史数据，加一条降级说明。
         if (card.HasLegacyNote)
         {
-            FormattedText note = CreateText(
-                card.LegacyNote,
-                11.5,
-                LegacyNoteTextBrush);
-
-            note.MaxTextWidth = Math.Max(1, contentWidth - 20);
-
-            double boxHeight = note.Height + 12;
-
-            ops.Add(new WorkOrderDrawOp
-            {
-                Rect = new Rect(left, top, contentWidth, boxHeight),
-                Fill = LegacyNoteFillBrush,
-                Stroke = LegacyNoteBorderBrush,
-                StrokeThickness = 1,
-                Radius = 6
-            });
-
-            ops.Add(TextOp(note, left + 10, top + 6));
-
-            top += boxHeight + 6;
+            top = AppendWorkOrderLegacyNote(ops, card, left, contentWidth, top);
         }
 
         // 未验证：红色警示 + Note；不画输入链。
         if (card.ShowWarning)
         {
-            FormattedText warningTitle = CreateText(
-                "未通过真实回放",
-                12,
-                UnverifiedChipTextBrush,
-                bold: true);
+            top = AppendWorkOrderWarning(ops, card, left, contentWidth, top);
+        }
 
-            FormattedText? warningNote = null;
+        // 卡内区块横向依次排列；导出图已按自然宽度加宽画布，正常都会排成一行。
+        List<WorkOrderCardBlock> blocks = BuildWorkOrderFlowBlocks(card);
 
-            if (card.HasNote)
+        double cursor = 0;
+
+        double rowTop = 0;
+
+        double rowHeight = 0;
+
+        foreach (WorkOrderCardBlock block in blocks)
+        {
+            if (cursor > 0 &&
+                cursor + WorkOrderBlockGap + block.Width > contentWidth)
             {
-                warningNote = CreateText(
-                    card.Note,
-                    12,
-                    WarningNoteBrush);
+                rowTop += rowHeight + WorkOrderBlockLineGap;
 
-                warningNote.MaxTextWidth = Math.Max(1, contentWidth - 20);
+                cursor = 0;
+
+                rowHeight = 0;
             }
 
-            double boxHeight =
-                8 +
-                warningTitle.Height +
-                (warningNote is null ? 0 : 4 + warningNote.Height) +
-                8;
-
-            ops.Add(new WorkOrderDrawOp
+            if (cursor > 0)
             {
-                Rect = new Rect(left, top, contentWidth, boxHeight),
-                Fill = WarningFillBrush,
-                Stroke = WarningBorderBrush,
-                StrokeThickness = 1,
-                Radius = 6
-            });
-
-            ops.Add(TextOp(warningTitle, left + 10, top + 8));
-
-            if (warningNote is not null)
-            {
-                ops.Add(TextOp(
-                    warningNote,
-                    left + 10,
-                    top + 8 + warningTitle.Height + 4));
+                cursor += WorkOrderBlockGap;
             }
 
-            top += boxHeight + 6;
+            OffsetWorkOrderOps(block.Ops, left + cursor, top + rowTop);
+
+            ops.AddRange(block.Ops);
+
+            cursor += block.Width;
+
+            rowHeight = Math.Max(rowHeight, block.Height);
         }
 
-        // 输入：上一层卡产物，多张并排。
-        if (card.HasInputs)
+        if (blocks.Count > 0)
         {
-            AppendWorkOrderInputs(ops, card, left, contentWidth, ref top);
-        }
-
-        // 前态：输入之后、可见步骤之前。
-        if (card.HasPreState && card.PreState is not null)
-        {
-            AppendWorkOrderPreState(ops, card, left, contentWidth, ref top);
-        }
-
-        // 可见步骤：操作名 + 该步输出图形。
-        AppendWorkOrderSteps(ops, card, left, contentWidth, ref top);
-
-        // 输出：醒目边框。
-        AppendWorkOrderOutput(ops, card, left, ref top);
-
-        // 角卡小字：Q1 目标角 / Q2 右柱 / Q4 左柱。
-        if (card.HasCornerCaption)
-        {
-            FormattedText corner = CreateText(
-                card.CornerCaption,
-                11,
-                MutedBrush);
-
-            corner.MaxTextWidth = contentWidth;
-
-            top += 6;
-
-            ops.Add(TextOp(corner, left, top));
-
-            top += corner.Height;
+            top += rowTop + rowHeight;
         }
 
         height = top - y + WorkOrderCardPadding;
@@ -1448,354 +1744,104 @@ public static class AnalysisImageExporter
         return ops;
     }
 
-    private static void AppendWorkOrderInputs(
+    private static double AppendWorkOrderLegacyNote(
         List<WorkOrderDrawOp> ops,
         WorkOrderCardViewModel card,
         double left,
         double contentWidth,
-        ref double top)
+        double top)
     {
-        FormattedText title = CreateText(
-            "输入（上一层卡产物）",
-            12,
-            CardSectionTitleBrush,
-            bold: true);
+        FormattedText note = CreateText(
+            card.LegacyNote,
+            11.5,
+            LegacyNoteTextBrush);
 
-        ops.Add(TextOp(title, left, top));
+        note.MaxTextWidth = Math.Max(1, contentWidth - 20);
 
-        top += title.Height + 6;
-
-        var boxes = new List<WorkOrderInputBoxLayout>(card.Inputs.Count);
-
-        double x = 0;
-
-        double rowTop = 0;
-
-        double rowHeight = 0;
-
-        foreach (WorkOrderInputViewModel input in card.Inputs)
-        {
-            FormattedText inputTitle = CreateText(
-                input.Title,
-                11,
-                MutedBrush,
-                bold: true);
-
-            inputTitle.MaxTextWidth = Math.Max(1, contentWidth - 16);
-
-            double boxWidth = Math.Max(
-                inputTitle.Width,
-                input.Preview.Width) + 16;
-
-            double boxHeight =
-                8 +
-                inputTitle.Height +
-                6 +
-                input.Preview.Height +
-                8;
-
-            if (x > 0 && x + boxWidth > contentWidth)
-            {
-                rowTop += rowHeight + 12;
-
-                x = 0;
-
-                rowHeight = 0;
-            }
-
-            boxes.Add(new WorkOrderInputBoxLayout(
-                inputTitle,
-                input.Preview,
-                boxWidth,
-                boxHeight,
-                x,
-                rowTop));
-
-            rowHeight = Math.Max(rowHeight, boxHeight);
-
-            x += boxWidth + 12;
-        }
-
-        foreach (WorkOrderInputBoxLayout box in boxes)
-        {
-            double boxLeft = left + box.X;
-
-            double boxTop = top + box.Y;
-
-            ops.Add(new WorkOrderDrawOp
-            {
-                Rect = new Rect(boxLeft, boxTop, box.Width, box.Height),
-                Fill = InputFillBrush,
-                Stroke = InputBorderBrush,
-                StrokeThickness = 1,
-                Radius = 8
-            });
-
-            ops.Add(TextOp(box.Title, boxLeft + 8, boxTop + 8));
-
-            ops.Add(ImageOp(
-                box.Preview,
-                boxLeft + 8,
-                boxTop + 8 + box.Title.Height + 6));
-        }
-
-        top += rowTop + rowHeight + 8;
-    }
-
-    private static void AppendWorkOrderPreState(
-        List<WorkOrderDrawOp> ops,
-        WorkOrderCardViewModel card,
-        double left,
-        double contentWidth,
-        ref double top)
-    {
-        FormattedText title = CreateText(
-            card.PreStateSectionTitle,
-            12,
-            CardPreStateTitleBrush,
-            bold: true);
-
-        title.MaxTextWidth = Math.Max(1, contentWidth);
-
-        ops.Add(TextOp(title, left, top));
-
-        top += title.Height + 6;
-
-        ShapePreviewViewModel preview = card.PreState!;
-
-        double boxWidth = preview.Width + 18;
-
-        double boxHeight = preview.Height + 18;
+        double boxHeight = note.Height + 12;
 
         ops.Add(new WorkOrderDrawOp
         {
-            Rect = new Rect(left, top, boxWidth, boxHeight),
-            Fill = PreStateFillBrush,
-            Stroke = PreStateBorderBrush,
+            Rect = new Rect(left, top, contentWidth, boxHeight),
+            Fill = LegacyNoteFillBrush,
+            Stroke = LegacyNoteBorderBrush,
             StrokeThickness = 1,
-            Radius = 8,
-            Dashed = true
+            Radius = 6
         });
 
-        ops.Add(ImageOp(preview, left + 9, top + 9));
+        ops.Add(TextOp(note, left + 10, top + 6));
 
-        top += boxHeight + 8;
+        return top + boxHeight + 6;
     }
 
-    private static void AppendWorkOrderSteps(
+    private static double AppendWorkOrderWarning(
         List<WorkOrderDrawOp> ops,
         WorkOrderCardViewModel card,
         double left,
         double contentWidth,
-        ref double top)
+        double top)
     {
-        if (!card.HasSteps)
+        FormattedText warningTitle = CreateText(
+            "未通过真实回放",
+            12,
+            UnverifiedChipTextBrush,
+            bold: true);
+
+        FormattedText? warningNote = null;
+
+        if (card.HasNote)
         {
-            if (card.ShowEmptySteps)
-            {
-                FormattedText empty = CreateText(
-                    "没有可见步骤：旋转 / 废料 / 纯支撑交接等结构步骤已在 Core 中标记为隐藏。",
-                    12,
-                    MutedBrush);
+            warningNote = CreateText(
+                card.Note,
+                12,
+                WarningNoteBrush);
 
-                empty.MaxTextWidth = contentWidth;
+            warningNote.MaxTextWidth = Math.Max(1, contentWidth - 20);
+        }
 
-                ops.Add(TextOp(empty, left, top));
+        double boxHeight =
+            8 +
+            warningTitle.Height +
+            (warningNote is null ? 0 : 4 + warningNote.Height) +
+            8;
 
-                top += empty.Height + 8;
-            }
+        ops.Add(new WorkOrderDrawOp
+        {
+            Rect = new Rect(left, top, contentWidth, boxHeight),
+            Fill = WarningFillBrush,
+            Stroke = WarningBorderBrush,
+            StrokeThickness = 1,
+            Radius = 6
+        });
 
+        ops.Add(TextOp(warningTitle, left + 10, top + 8));
+
+        if (warningNote is not null)
+        {
+            ops.Add(TextOp(
+                warningNote,
+                left + 10,
+                top + 8 + warningTitle.Height + 4));
+        }
+
+        return top + boxHeight + 6;
+    }
+
+    /// <summary>把区块或卡片的局部绘制指令整体平移到目标位置。</summary>
+    private static void OffsetWorkOrderOps(
+        IReadOnlyList<WorkOrderDrawOp> ops,
+        double dx,
+        double dy)
+    {
+        if (dx == 0 && dy == 0)
+        {
             return;
         }
 
-        FormattedText title = CreateText(
-            card.StepsTitle,
-            12,
-            CardSectionTitleBrush,
-            bold: true);
-
-        ops.Add(TextOp(title, left, top));
-
-        top += title.Height + 6;
-
-        var rows = new List<List<WorkOrderStepViewModel>>();
-
-        var current = new List<WorkOrderStepViewModel>();
-
-        double currentWidth = 0;
-
-        foreach (WorkOrderStepViewModel step in card.Steps)
+        foreach (WorkOrderDrawOp op in ops)
         {
-            double needed = step.Width +
-                            (current.Count > 0 ? WorkOrderStepArrowWidth : 0);
-
-            if (current.Count > 0 && currentWidth + needed > contentWidth)
-            {
-                rows.Add(current);
-
-                current = new List<WorkOrderStepViewModel>();
-
-                currentWidth = 0;
-
-                needed = step.Width;
-            }
-
-            current.Add(step);
-
-            currentWidth += needed;
+            op.Rect.Offset(dx, dy);
         }
-
-        if (current.Count > 0)
-        {
-            rows.Add(current);
-        }
-
-        FormattedText arrow = CreateText(
-            "→",
-            16,
-            PrimaryBrush,
-            bold: true);
-
-        for (int row = 0; row < rows.Count; row++)
-        {
-            List<WorkOrderStepViewModel> steps = rows[row];
-
-            double rowHeight = 0;
-
-            foreach (WorkOrderStepViewModel step in steps)
-            {
-                rowHeight = Math.Max(rowHeight, step.Height);
-            }
-
-            double nodeLeft = 0;
-
-            for (int index = 0; index < steps.Count; index++)
-            {
-                WorkOrderStepViewModel step = steps[index];
-
-                double nodeLeftAbsolute = left + nodeLeft;
-
-                ops.Add(new WorkOrderDrawOp
-                {
-                    Rect = new Rect(
-                        nodeLeftAbsolute,
-                        top,
-                        step.Width,
-                        step.Height),
-                    Fill = step.FillBrush,
-                    Stroke = step.AccentBrush,
-                    StrokeThickness = 1.5,
-                    Radius = 10
-                });
-
-                FormattedText operation = CreateText(
-                    step.Operation,
-                    11,
-                    StepHeaderBrush,
-                    bold: true);
-
-                operation.MaxTextWidth = Math.Max(1, step.Width - 14);
-
-                operation.MaxLineCount = 1;
-
-                operation.Trimming = TextTrimming.CharacterEllipsis;
-
-                ops.Add(TextOp(
-                    operation,
-                    nodeLeftAbsolute + 7,
-                    top + 7));
-
-                ShapePreviewViewModel preview = step.Preview;
-
-                ops.Add(ImageOp(
-                    preview,
-                    nodeLeftAbsolute + (step.Width - preview.Width) / 2,
-                    top + 30 + Math.Max(0, step.Height - 30 - preview.Height) / 2));
-
-                nodeLeft += step.Width;
-
-                /*
-                 * 「→」画在节点之后：同一行还有下一步，或后面还有换行的步骤时都画，
-                 * 换行后的第一张节点不会带着行首箭头。
-                 */
-                bool hasNext = index < steps.Count - 1 || row < rows.Count - 1;
-
-                if (hasNext &&
-                    nodeLeft + WorkOrderStepArrowWidth <= contentWidth)
-                {
-                    ops.Add(new WorkOrderDrawOp
-                    {
-                        Rect = new Rect(
-                            left + nodeLeft,
-                            top + (rowHeight - arrow.Height) / 2,
-                            WorkOrderStepArrowWidth,
-                            arrow.Height),
-                        Text = arrow,
-                        TextCentered = true
-                    });
-
-                    nodeLeft += WorkOrderStepArrowWidth;
-                }
-            }
-
-            top += rowHeight;
-
-            if (row < rows.Count - 1)
-            {
-                top += WorkOrderStepRowGap;
-            }
-        }
-
-        top += 8;
-    }
-
-    private static void AppendWorkOrderOutput(
-        List<WorkOrderDrawOp> ops,
-        WorkOrderCardViewModel card,
-        double left,
-        ref double top)
-    {
-        FormattedText title = CreateText(
-            "输出",
-            12,
-            CardSectionTitleBrush,
-            bold: true);
-
-        ops.Add(TextOp(title, left, top));
-
-        if (card.HasOutputCaption)
-        {
-            FormattedText caption = CreateText(
-                card.OutputCaption,
-                11,
-                MutedBrush);
-
-            ops.Add(TextOp(
-                caption,
-                left + title.Width + 6,
-                top + title.Height - caption.Height));
-        }
-
-        top += title.Height + 6;
-
-        ShapePreviewViewModel preview = card.Output;
-
-        double boxWidth = preview.Width + 20;
-
-        double boxHeight = preview.Height + 20;
-
-        ops.Add(new WorkOrderDrawOp
-        {
-            Rect = new Rect(left, top, boxWidth, boxHeight),
-            Fill = InputFillBrush,
-            Stroke = PrimaryBrush,
-            StrokeThickness = 2,
-            Radius = 10
-        });
-
-        ops.Add(ImageOp(preview, left + 10, top + 10));
-
-        top += boxHeight;
     }
 
     /// <summary>标题行的小标签：种类 / 半边 Mode / 验证标记。</summary>
@@ -1929,13 +1975,20 @@ public static class AnalysisImageExporter
         Brush Fill,
         double Width);
 
-    private readonly record struct WorkOrderInputBoxLayout(
-        FormattedText Title,
-        ShapePreviewViewModel Preview,
-        double Width,
-        double Height,
-        double X,
-        double Y);
+    /// <summary>卡片内部的一个横向区块：局部坐标下的一组绘制指令与尺寸。</summary>
+    private sealed class WorkOrderCardBlock
+    {
+        public double Width;
+
+        public double Height;
+
+        public List<WorkOrderDrawOp> Ops { get; } = new();
+    }
+
+    /// <summary>已构建好绘制指令、等待摆放的一张卡片。</summary>
+    private readonly record struct BuiltWorkOrderCard(
+        List<WorkOrderDrawOp> Ops,
+        double Height);
 
     #endregion
 

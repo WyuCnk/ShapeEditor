@@ -4,16 +4,16 @@ using System.Windows.Controls;
 namespace ShapeEditor.Wpf.Controls;
 
 /// <summary>
-/// 工序卡片的横向布局面板。
+/// 工序卡片的纵向列表：<b>一行只放一张卡</b>，卡片宽度按内容自适应。
 ///
 /// <para>
-/// 宽屏时一行两张，窄屏时自动变成一张一行：
-/// 列数由「最小卡宽 + 卡片间距」推算，最多 <see cref="MaxColumns"/> 列；
-/// 每一行的行高取该行最高卡片的高度，卡片之间保持 <see cref="ItemGap"/> 的间距。
+/// 每张卡先按无限宽测量，得到「卡内区块排成一行」的自然宽度：
+/// 自然宽度不超过可用宽度时按自然宽度排布（内容少的卡不会硬拉满整行）；
+/// 超过可用宽度时按可用宽度复测，卡内 <see cref="CardFlowPanel"/> 自动换行，
+/// 因此窄窗口下也不会出现内容被卡片裁切。
 /// </para>
 /// <para>
-/// 之所以不用普通 <see cref="WrapPanel"/>：卡片内容宽度随图形列数变化，
-/// 需要把可用宽度平均分给固定列数，才能稳定做到「宽屏 2 张 / 窄屏换行」。
+/// 卡片之间保持 <see cref="ItemGap"/> 的垂直间距，整层高度为所有卡片高度之和。
 /// </para>
 /// </summary>
 public sealed class WorkOrderCardPanel : Panel
@@ -28,202 +28,119 @@ public sealed class WorkOrderCardPanel : Panel
                 FrameworkPropertyMetadataOptions.AffectsMeasure |
                 FrameworkPropertyMetadataOptions.AffectsArrange));
 
-    public static readonly DependencyProperty MinCardWidthProperty =
-        DependencyProperty.Register(
-            nameof(MinCardWidth),
-            typeof(double),
-            typeof(WorkOrderCardPanel),
-            new FrameworkPropertyMetadata(
-                300.0,
-                FrameworkPropertyMetadataOptions.AffectsMeasure |
-                FrameworkPropertyMetadataOptions.AffectsArrange));
-
-    public static readonly DependencyProperty MaxColumnsProperty =
-        DependencyProperty.Register(
-            nameof(MaxColumns),
-            typeof(int),
-            typeof(WorkOrderCardPanel),
-            new FrameworkPropertyMetadata(
-                2,
-                FrameworkPropertyMetadataOptions.AffectsMeasure |
-                FrameworkPropertyMetadataOptions.AffectsArrange));
-
-    /// <summary>卡片之间的水平 / 垂直间距。</summary>
+    /// <summary>卡片之间的垂直间距。</summary>
     public double ItemGap
     {
         get => (double)GetValue(ItemGapProperty);
         set => SetValue(ItemGapProperty, value);
     }
 
-    /// <summary>窄屏时一张卡片至少需要的宽度，用来决定列数。</summary>
-    public double MinCardWidth
-    {
-        get => (double)GetValue(MinCardWidthProperty);
-        set => SetValue(MinCardWidthProperty, value);
-    }
-
-    /// <summary>最多几列；默认 2（宽屏一行两张）。</summary>
-    public int MaxColumns
-    {
-        get => (int)GetValue(MaxColumnsProperty);
-        set => SetValue(MaxColumnsProperty, value);
-    }
+    /// <summary>测量阶段算出的每张卡片宽度，排布阶段直接复用。</summary>
+    private readonly List<double> _cardWidths = new();
 
     protected override Size MeasureOverride(
         Size availableSize)
     {
-        double width = availableSize.Width;
+        _cardWidths.Clear();
 
-        if (double.IsInfinity(width) || width <= 0)
-        {
-            width = Math.Max(MinCardWidth, 1);
-        }
+        double available = availableSize.Width;
 
-        int columns = GetColumnCount(width);
-
-        double itemWidth = GetItemWidth(width, columns);
+        bool unbounded = double.IsInfinity(available) || available <= 0;
 
         double totalHeight = 0;
 
-        double rowHeight = 0;
+        double maxCardWidth = 0;
 
-        int itemsInRow = 0;
+        int visibleCount = 0;
 
         foreach (UIElement child in InternalChildren)
         {
-            child.Measure(new Size(itemWidth, double.PositiveInfinity));
-
-            rowHeight = Math.Max(rowHeight, child.DesiredSize.Height);
-
-            itemsInRow++;
-
-            if (itemsInRow == columns)
+            if (child.Visibility == Visibility.Collapsed)
             {
-                totalHeight += rowHeight + ItemGap;
+                child.Measure(new Size(0, 0));
 
-                rowHeight = 0;
+                _cardWidths.Add(0);
 
-                itemsInRow = 0;
+                continue;
             }
+
+            // 先按无限宽测出卡内区块横向排成一行的自然宽度。
+            child.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+
+            double naturalWidth = child.DesiredSize.Width;
+
+            double cardWidth = unbounded
+                ? Math.Max(1, naturalWidth)
+                : Math.Max(1, Math.Min(naturalWidth, available));
+
+            if (!unbounded && naturalWidth > available)
+            {
+                // 内容比可用宽度宽：按可用宽度复测，卡内自动换行，不裁切。
+                child.Measure(new Size(available, double.PositiveInfinity));
+            }
+
+            _cardWidths.Add(cardWidth);
+
+            maxCardWidth = Math.Max(maxCardWidth, cardWidth);
+
+            totalHeight += child.DesiredSize.Height;
+
+            visibleCount++;
         }
 
-        if (itemsInRow > 0)
+        if (visibleCount > 1)
         {
-            totalHeight += rowHeight;
-        }
-        else if (InternalChildren.Count > 0)
-        {
-            // 最后一行刚好排满时，上面多加了一次行间距，这里扣掉。
-            totalHeight = Math.Max(0, totalHeight - ItemGap);
+            totalHeight += ItemGap * (visibleCount - 1);
         }
 
-        return new Size(width, totalHeight);
+        return new Size(
+            unbounded ? maxCardWidth : available,
+            totalHeight);
     }
 
     protected override Size ArrangeOverride(
         Size finalSize)
     {
-        double width = finalSize.Width;
-
-        if (double.IsInfinity(width) || width <= 0)
-        {
-            width = Math.Max(MinCardWidth, 1);
-        }
-
-        int columns = GetColumnCount(width);
-
-        double itemWidth = GetItemWidth(width, columns);
-
-        var row = new List<UIElement>(columns);
-
         double top = 0;
+
+        int visibleCount = 0;
 
         for (int index = 0; index < InternalChildren.Count; index++)
         {
-            row.Add(InternalChildren[index]);
+            UIElement child = InternalChildren[index];
 
-            bool rowComplete = row.Count == columns;
-
-            bool lastChild = index == InternalChildren.Count - 1;
-
-            if (!rowComplete && !lastChild)
+            if (child.Visibility == Visibility.Collapsed)
             {
+                child.Arrange(new Rect(0, 0, 0, 0));
+
                 continue;
             }
 
-            ArrangeRow(row, itemWidth, top);
+            double cardWidth = index < _cardWidths.Count
+                ? _cardWidths[index]
+                : child.DesiredSize.Width;
 
-            top += RowHeight(row) + ItemGap;
+            if (cardWidth <= 0)
+            {
+                cardWidth = Math.Max(1, child.DesiredSize.Width);
+            }
 
-            row.Clear();
-        }
+            if (visibleCount > 0)
+            {
+                top += ItemGap;
+            }
 
-        if (InternalChildren.Count > 0)
-        {
-            // 最后一行后面不需要行间距。
-            top = Math.Max(0, top - ItemGap);
-        }
-
-        return new Size(width, top);
-    }
-
-    private void ArrangeRow(
-        List<UIElement> row,
-        double itemWidth,
-        double top)
-    {
-        double rowHeight = RowHeight(row);
-
-        for (int index = 0; index < row.Count; index++)
-        {
-            row[index].Arrange(new Rect(
-                index * (itemWidth + ItemGap),
+            child.Arrange(new Rect(
+                0,
                 top,
-                itemWidth,
-                rowHeight));
-        }
-    }
+                cardWidth,
+                child.DesiredSize.Height));
 
-    private static double RowHeight(
-        List<UIElement> row)
-    {
-        double height = 0;
+            top += child.DesiredSize.Height;
 
-        foreach (UIElement child in row)
-        {
-            height = Math.Max(height, child.DesiredSize.Height);
+            visibleCount++;
         }
 
-        return height;
-    }
-
-    /// <summary>可用宽度能放下几列：至少 1 列，最多 <see cref="MaxColumns"/> 列。</summary>
-    private int GetColumnCount(
-        double width)
-    {
-        int columns = Math.Max(1, MaxColumns);
-
-        while (columns > 1 &&
-               width < MinCardWidth * columns + ItemGap * (columns - 1))
-        {
-            columns--;
-        }
-
-        return columns;
-    }
-
-    private double GetItemWidth(
-        double width,
-        int columns)
-    {
-        // 层里只有一张卡时让它占满整行，避免右侧留出半行空白。
-        if (InternalChildren.Count == 1)
-        {
-            return Math.Max(1, width);
-        }
-
-        return Math.Max(
-            1,
-            (width - ItemGap * (columns - 1)) / columns);
+        return new Size(finalSize.Width, top);
     }
 }

@@ -232,36 +232,6 @@ public sealed class WorkOrderCardLayerViewModel
 
     /// <summary>层左侧的强调色条。</summary>
     public Brush AccentBrush { get; }
-
-    /// <summary>
-    /// 本层卡片的最小宽度：输出 / 前态 / 单个步骤都按 1:1 绘制，
-    /// 两列放不下时让窗口面板退回一列（与导出图的列数判断一致）。
-    /// </summary>
-    public double CardMinWidth
-    {
-        get
-        {
-            double required = 0;
-
-            foreach (WorkOrderCardViewModel card in Cards)
-            {
-                required = Math.Max(required, card.Output.Width + 20);
-
-                if (card.PreState is not null)
-                {
-                    required = Math.Max(required, card.PreState.Width + 18);
-                }
-
-                foreach (WorkOrderStepViewModel step in card.Steps)
-                {
-                    required = Math.Max(required, step.Width);
-                }
-            }
-
-            // 卡片左右各 12px 内边距，预留 2px 余量。
-            return Math.Max(300, required + 26);
-        }
-    }
 }
 
 /// <summary>

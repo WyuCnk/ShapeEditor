@@ -101,6 +101,12 @@ public static class RenderRunner
             RenderAnalysisCardsWindow(
                 Path.Combine(outputDirectory, "ui-analysis-cards.png"));
 
+            RenderAnalysisCardsNarrowWindow(
+                Path.Combine(outputDirectory, "ui-analysis-cards-narrow.png"));
+
+            RenderAnalysisCardsMediumWindow(
+                Path.Combine(outputDirectory, "ui-analysis-cards-1160.png"));
+
             RenderAnalysisCardsFailureWindow(
                 Path.Combine(outputDirectory, "ui-analysis-cards-failure.png"));
 
@@ -494,6 +500,36 @@ public static class RenderRunner
     private static void RenderAnalysisCardsWindow(
         string path)
     {
+        /*
+         * B 方案后单卡变宽（约 1200–1600），窗口取 1700 宽，
+         * 让「输入 → 前态 → 步骤 → 输出」在截图里完整排成一行。
+         */
+        RenderAnalysisPage(
+            WorkOrderHalfOnlyExample,
+            path,
+            1700,
+            2400);
+    }
+
+    /// <summary>
+    /// 窄窗口下的三层卡片：卡内区块自动换行，用来确认没有内容被裁切。
+    /// </summary>
+    private static void RenderAnalysisCardsNarrowWindow(
+        string path)
+    {
+        RenderAnalysisPage(
+            WorkOrderHalfOnlyExample,
+            path,
+            900,
+            3200);
+    }
+
+    /// <summary>
+    /// 旧截图用的 1160 宽窗口：用于和改前 1105×4492 的整页高度直接对比。
+    /// </summary>
+    private static void RenderAnalysisCardsMediumWindow(
+        string path)
+    {
         RenderAnalysisPage(
             WorkOrderHalfOnlyExample,
             path,
@@ -508,8 +544,8 @@ public static class RenderRunner
         RenderAnalysisPage(
             WorkOrderFailureExample,
             path,
-            1160,
-            3200);
+            1700,
+            2600);
     }
 
     /// <summary>没有卡片集（n = 2）时回退旧「制作路径」区块的渲染图。</summary>
@@ -830,7 +866,7 @@ public static class RenderRunner
     /// <item>角卡保留自己的碎晶步骤，交换卡只有交换、没有可见废料；</item>
     /// <item>失败形态里未验证卡有红色警示 / Note，且没有输入链；</item>
     /// <item>n = 2 没有卡片集时回退旧「制作路径」区块；</item>
-    /// <item>窗口里确实把三层卡片模板实例化出来（不是只有数据）。</item>
+    /// <item>窗口里一层一行一张卡，卡内区块横向排列；窄窗口自动换行且不裁切。</item>
     /// </list>
     /// </summary>
     private static void CheckWorkOrderCards(
@@ -973,25 +1009,47 @@ public static class RenderRunner
                 fallbackViewModel.CardVisuals is null &&
                 fallbackViewModel.ShowLegacyPathSection;
 
-            bool windowLayout =
+            bool layoutWide =
                 CheckWorkOrderCardWindowLayout(
                     WorkOrderHalfOnlyExample,
                     expectedCards: 5,
-                    windowWidth: 1200,
-                    expectTwoColumns: true,
-                    out string windowLayoutDetail) &&
+                    windowWidth: 1700,
+                    expectSingleFlowRow: true,
+                    minimumFlowBlocks: 4,
+                    out string layoutWideDetail);
+
+            bool layoutMedium =
+                CheckWorkOrderCardWindowLayout(
+                    WorkOrderHalfOnlyExample,
+                    expectedCards: 5,
+                    windowWidth: 1160,
+                    expectSingleFlowRow: false,
+                    minimumFlowBlocks: 4,
+                    out string layoutMediumDetail);
+
+            bool layoutNarrow =
                 CheckWorkOrderCardWindowLayout(
                     WorkOrderHalfOnlyExample,
                     expectedCards: 5,
                     windowWidth: 900,
-                    expectTwoColumns: false,
-                    out _) &&
+                    expectSingleFlowRow: false,
+                    minimumFlowBlocks: 4,
+                    out string layoutNarrowDetail);
+
+            bool layoutFailure =
                 CheckWorkOrderCardWindowLayout(
                     WorkOrderFailureExample,
                     expectedCards: 5,
-                    windowWidth: 1200,
-                    expectTwoColumns: true,
-                    out _);
+                    windowWidth: 1700,
+                    expectSingleFlowRow: true,
+                    minimumFlowBlocks: 3,
+                    out string layoutFailureDetail);
+
+            bool windowLayout =
+                layoutWide &&
+                layoutMedium &&
+                layoutNarrow &&
+                layoutFailure;
 
             lines.Add($"验收图形卡片：{(threeLayers ? "通" : "失")}（层 {cards?.Layers.Count ?? 0}，共 {cardCount} 张，已验证 {cards?.VerifiedCount ?? 0}）");
             lines.Add($"半边1：{(half1Ready ? "通" : "失")}（{half1?.ModeText}，步骤 {half1Steps}，前态 {half1?.PreStateSectionTitle}）");
@@ -1001,7 +1059,10 @@ public static class RenderRunner
             lines.Add($"导出与窗口同源：{(exportMirrorsCards ? "通" : "失")}（导出 {exportCount} 张）");
             lines.Add($"失败形态红色警示 / Note / 无输入链：{(failureReady ? "通" : "失")}");
             lines.Add($"n=2 回退旧制作路径：{(fallbackReady ? "通" : "失")}");
-            lines.Add($"窗口实例化三层卡片模板：{(windowLayout ? "通" : "失")}（{windowLayoutDetail}）");
+            lines.Add($"窗口卡片一行一张 + 卡内横向排列：{(windowLayout ? "通" : "失")}（{layoutWideDetail}）");
+            lines.Add($"窗口 1160 宽卡内换行 / 不裁切：{(layoutMedium ? "通" : "失")}（{layoutMediumDetail}）");
+            lines.Add($"窗口 900 宽卡内换行 / 不裁切：{(layoutNarrow ? "通" : "失")}（{layoutNarrowDetail}）");
+            lines.Add($"失败形态窗口卡内横向排列：{(layoutFailure ? "通" : "失")}（{layoutFailureDetail}）");
 
             ok = threeLayers &&
                  half1Ready &&
@@ -1025,13 +1086,15 @@ public static class RenderRunner
     }
 
     /// <summary>
-    /// 打开分析窗口并确认三层卡片的 ItemsControl 与卡片面板都实例化出预期数量。
+    /// 打开分析窗口，确认三层卡片「一行一张」、卡内区块从左到右依次排列，
+    /// 并确认窄窗口下卡内自动换行、没有任何区块超出卡片。
     /// </summary>
     private static bool CheckWorkOrderCardWindowLayout(
         string code,
         int expectedCards,
         double windowWidth,
-        bool expectTwoColumns,
+        bool expectSingleFlowRow,
+        int minimumFlowBlocks,
         out string detail)
     {
         detail = "";
@@ -1060,6 +1123,8 @@ public static class RenderRunner
 
             window.UpdateLayout();
 
+            window.UpdateLayout();
+
             if (window.ViewModel?.HasWorkOrderCards != true ||
                 window.WorkOrderCardsRoot.Items.Count != 3)
             {
@@ -1071,51 +1136,155 @@ public static class RenderRunner
 
             int realizedCards = panels.Sum(panel => panel.Children.Count);
 
-            if (panels.Length > 0 &&
-                panels[0].Children.Count > 0 &&
-                panels[0].Children[0] is FrameworkElement firstCard)
+            if (panels.Length != 3 || realizedCards != expectedCards)
             {
-                detail =
-                    $"层宽 {panels[0].ActualWidth:0} / 卡宽 {firstCard.ActualWidth:0}";
+                return false;
             }
 
-            bool singleCardSpansRow =
-                panels.Length == 0 ||
-                panels[0].Children.Count != 1 ||
-                !(panels[0].Children[0] is FrameworkElement only) ||
-                Math.Abs(only.ActualWidth - panels[0].ActualWidth) < 1;
+            bool oneCardPerRow = true;
 
-            // 半边层有 2 张卡：宽屏时两张并排，窄屏时各占整行。
-            bool columnsReady = true;
+            bool cardsInsidePanel = true;
 
-            if (panels.Length > 1 &&
-                panels[1].Children.Count == 2 &&
-                panels[1].Children[0] is FrameworkElement leftCard &&
-                panels[1].Children[1] is FrameworkElement rightCard)
+            foreach (WorkOrderCardPanel panel in panels)
             {
-                if (expectTwoColumns)
-                {
-                    columnsReady =
-                        leftCard.ActualWidth < panels[1].ActualWidth - 1 &&
-                        rightCard.ActualWidth < panels[1].ActualWidth - 1;
-                }
-                else
-                {
-                    columnsReady =
-                        Math.Abs(leftCard.ActualWidth - panels[1].ActualWidth) < 1 &&
-                        Math.Abs(rightCard.ActualWidth - panels[1].ActualWidth) < 1;
-                }
+                FrameworkElement[] cards = panel.Children
+                    .OfType<FrameworkElement>()
+                    .ToArray();
 
-                detail =
-                    $"层宽 {panels[1].ActualWidth:0} / 卡宽 " +
-                    $"{leftCard.ActualWidth:0}+{rightCard.ActualWidth:0}" +
-                    (expectTwoColumns ? "（两列）" : "（单列）");
+                for (int index = 0; index < cards.Length; index++)
+                {
+                    if (cards[index].ActualWidth > panel.ActualWidth + 0.5 ||
+                        cards[index].ActualWidth <= 0)
+                    {
+                        cardsInsidePanel = false;
+                    }
+
+                    if (index > 0)
+                    {
+                        Point current = cards[index].TranslatePoint(
+                            new Point(0, 0),
+                            panel);
+
+                        Point previous = cards[index - 1].TranslatePoint(
+                            new Point(0, 0),
+                            panel);
+
+                        // 一行一张：后一张卡必须在前一张卡下方，左边缘对齐。
+                        if (current.Y <= previous.Y + 0.5 ||
+                            Math.Abs(current.X) > 0.5)
+                        {
+                            oneCardPerRow = false;
+                        }
+                    }
+                }
             }
 
-            return panels.Length == 3 &&
-                   realizedCards == expectedCards &&
-                   singleCardSpansRow &&
-                   columnsReady;
+            // 半边层选区块最多的一张卡：验收图形里是半边1（输入 2 + 前态 + 步骤 3 + 输出）。
+            WorkOrderCardPanel halfPanel = panels[1];
+
+            FrameworkElement? halfCard = null;
+
+            CardFlowPanel? flow = null;
+
+            int blockCount = -1;
+
+            foreach (FrameworkElement candidateCard in halfPanel.Children
+                         .OfType<FrameworkElement>())
+            {
+                CardFlowPanel? candidateFlow =
+                    FindVisualChildren<CardFlowPanel>(candidateCard)
+                        .FirstOrDefault();
+
+                if (candidateFlow is null)
+                {
+                    continue;
+                }
+
+                int candidateCount = candidateFlow.Children
+                    .OfType<FrameworkElement>()
+                    .Count(block => block.Visibility == Visibility.Visible);
+
+                if (candidateCount > blockCount)
+                {
+                    blockCount = candidateCount;
+
+                    halfCard = candidateCard;
+
+                    flow = candidateFlow;
+                }
+            }
+
+            if (halfCard is null || flow is null)
+            {
+                return false;
+            }
+
+            FrameworkElement[] blocks = flow.Children
+                .OfType<FrameworkElement>()
+                .Where(block => block.Visibility == Visibility.Visible)
+                .ToArray();
+
+            bool orderReady = blocks.Length >= minimumFlowBlocks;
+
+            bool insideCard = flow.ActualWidth <= halfCard.ActualWidth + 0.5;
+
+            int rows = 0;
+
+            double rowY = double.NaN;
+
+            double previousRight = double.NaN;
+
+            foreach (FrameworkElement block in blocks)
+            {
+                Point position = block.TranslatePoint(new Point(0, 0), flow);
+
+                double right = position.X + block.ActualWidth;
+
+                if (double.IsNaN(rowY) ||
+                    Math.Abs(position.Y - rowY) > 0.5)
+                {
+                    // 换行后必须继续向下，不能回到上面的行。
+                    if (!double.IsNaN(rowY) &&
+                        position.Y <= rowY + 0.5)
+                    {
+                        orderReady = false;
+                    }
+
+                    rows++;
+
+                    rowY = position.Y;
+
+                    previousRight = double.NaN;
+                }
+                else if (position.X <= previousRight + 0.5)
+                {
+                    // 同一行内必须严格从左到右。
+                    orderReady = false;
+                }
+
+                previousRight = right;
+
+                if (right > flow.ActualWidth + 0.5)
+                {
+                    orderReady = false;
+                }
+            }
+
+            bool rowModeReady = expectSingleFlowRow
+                ? rows == 1
+                : rows >= 2;
+
+            detail =
+                $"层宽 {halfPanel.ActualWidth:0} / 卡宽 {halfCard.ActualWidth:0}" +
+                $"（每行 1 张；卡内 {rows} 行 / {blocks.Length} 块；" +
+                $"单列={oneCardPerRow} 卡在内={cardsInsidePanel} " +
+                $"顺序={orderReady} 未溢出={insideCard} 行数={rowModeReady}）";
+
+            return oneCardPerRow &&
+                   cardsInsidePanel &&
+                   orderReady &&
+                   insideCard &&
+                   rowModeReady;
         }
         finally
         {

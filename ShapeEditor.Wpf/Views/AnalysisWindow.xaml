@@ -240,7 +240,7 @@
                     BorderThickness="1"
                     CornerRadius="8"
                     Padding="8"
-                    Margin="0,0,12,8">
+                    Margin="0,0,12,0">
                 <StackPanel>
                     <TextBlock Text="{Binding Title}"
                                FontSize="11"
@@ -260,8 +260,7 @@
 
         <!-- 可见步骤：操作名 + 该步输出图形；「→」画在节点之后，换行时不会出现在行首。 -->
         <DataTemplate x:Key="WorkOrderStepTemplate">
-            <StackPanel Orientation="Horizontal"
-                        Margin="0,0,0,8">
+            <StackPanel Orientation="Horizontal">
                 <Border Width="{Binding Width}"
                         Height="{Binding Height}"
                         Background="{Binding FillBrush}"
@@ -296,7 +295,7 @@
                 </Border>
 
                 <TextBlock Text="→"
-                           Width="18"
+                           Width="22"
                            TextAlignment="Center"
                            FontSize="16"
                            FontWeight="Bold"
@@ -307,9 +306,9 @@
         </DataTemplate>
 
         <!--
-            一张工序卡：标题 + 种类 + 半边 Mode + 验证标记 → 未验证警示 + Note
-            → 输入（多张并排）→ 前态（PreStateTitle + 图形）→ 可见步骤
-            → 输出（醒目边框）→ 角卡 Q1/Q2/Q4 小字。
+            一张工序卡：标题行单独一行（标题 + 种类 + 半边 Mode + 验证标记），
+            下面是未验证警示 / legacy 说明，然后卡内区块按「输入 → 前态 → 可见步骤
+            → 输出 → 角卡小字」横向流式排列；空间不足时由 CardFlowPanel 自动换行。
             未验证的卡不显示输入链（Presentation 已清空 Inputs，这里再按 HasInputs 兜一层）。
         -->
         <DataTemplate x:Key="WorkOrderCardTemplate">
@@ -331,7 +330,7 @@
                 </Border.Style>
 
                 <StackPanel>
-                    <!-- 标题行：标题、种类、半边 Mode、验证标记 -->
+                    <!-- 标题行：单独一行，不再和图形区块混排 -->
                     <WrapPanel>
                         <TextBlock Text="{Binding Title}"
                                    FontSize="14"
@@ -401,7 +400,7 @@
                             BorderThickness="3,0,0,0"
                             CornerRadius="6"
                             Padding="8,6"
-                            Margin="0,6,0,6"
+                            Margin="0,6,0,0"
                             Visibility="{Binding HasLegacyNote, Converter={StaticResource BoolToVis}}">
                         <TextBlock Text="{Binding LegacyNote}"
                                    FontSize="12"
@@ -415,7 +414,7 @@
                             BorderThickness="3,0,0,0"
                             CornerRadius="6"
                             Padding="8,6"
-                            Margin="0,6,0,6"
+                            Margin="0,6,0,0"
                             Visibility="{Binding ShowWarning, Converter={StaticResource BoolToVis}}">
                         <StackPanel>
                             <TextBlock Text="未通过真实回放"
@@ -433,118 +432,132 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- 输入：上一层卡产物，多张并排 -->
-                    <StackPanel Margin="0,4,0,0"
-                                Visibility="{Binding HasInputs, Converter={StaticResource BoolToVis}}">
-                        <TextBlock Text="输入（上一层卡产物）"
-                                   FontSize="12"
-                                   FontWeight="Bold"
-                                   Foreground="#4527A0"
-                                   Margin="0,0,0,6" />
-
-                        <ItemsControl ItemsSource="{Binding Inputs}"
-                                      ItemTemplate="{StaticResource WorkOrderInputTemplate}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <WrapPanel Orientation="Horizontal" />
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                        </ItemsControl>
-                    </StackPanel>
-
-                    <!-- 前态：输入之后、可见步骤之前；不是输入链 -->
-                    <StackPanel Margin="0,4,0,0"
-                                Visibility="{Binding HasPreState, Converter={StaticResource BoolToVis}}">
-                        <TextBlock Text="{Binding PreStateSectionTitle}"
-                                   FontSize="12"
-                                   FontWeight="Bold"
-                                   Foreground="#5E35B1"
-                                   Margin="0,0,0,6" />
-
-                        <Border Background="#F6F4FF"
-                                BorderBrush="#B39DDD"
-                                BorderThickness="1"
-                                CornerRadius="8"
-                                Padding="8"
-                                HorizontalAlignment="Left">
-                            <Image Source="{Binding PreState.Preview}"
-                                   Width="{Binding PreState.Width}"
-                                   Height="{Binding PreState.Height}"
-                                   Stretch="Fill"
-                                   RenderOptions.BitmapScalingMode="HighQuality"
-                                   SnapsToDevicePixels="True" />
-                        </Border>
-                    </StackPanel>
-
-                    <!-- 可见步骤：操作名 + 该步输出图形 -->
-                    <StackPanel Margin="0,4,0,0"
-                                Visibility="{Binding HasSteps, Converter={StaticResource BoolToVis}}">
-                        <TextBlock Text="{Binding StepsTitle}"
-                                   FontSize="12"
-                                   FontWeight="Bold"
-                                   Foreground="#4527A0"
-                                   Margin="0,0,0,6" />
-
-                        <ItemsControl ItemsSource="{Binding Steps}"
-                                      ItemTemplate="{StaticResource WorkOrderStepTemplate}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <WrapPanel Orientation="Horizontal" />
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                        </ItemsControl>
-                    </StackPanel>
-
-                    <TextBlock Text="没有可见步骤：旋转 / 废料 / 纯支撑交接等结构步骤已在 Core 中标记为隐藏。"
-                               FontSize="12"
-                               Foreground="#6B6B76"
-                               TextWrapping="Wrap"
-                               Margin="0,6,0,0"
-                               Visibility="{Binding ShowEmptySteps, Converter={StaticResource BoolToVis}}" />
-
-                    <!-- 输出：醒目边框 + 角卡小字 -->
-                    <StackPanel Margin="0,8,0,0">
-                        <StackPanel Orientation="Horizontal"
-                                    Margin="0,0,0,6">
-                            <TextBlock Text="输出"
+                    <!--
+                        卡内区块横向流式排列：
+                        输入组 → 前态 → 可见步骤 → 输出 → 角卡小字。
+                        每个区块保留自己的小标题与边框；空间不足时 CardFlowPanel 自动换行，
+                        区块过宽时还会在自己的内部折行（例如步骤组），不会被卡片裁切。
+                    -->
+                    <controls:CardFlowPanel ItemGap="12"
+                                            LineGap="8"
+                                            Margin="0,8,0,0">
+                        <!-- 输入：上一层卡产物，多张并排 -->
+                        <StackPanel Visibility="{Binding HasInputs, Converter={StaticResource BoolToVis}}">
+                            <TextBlock Text="输入（上一层卡产物）"
                                        FontSize="12"
                                        FontWeight="Bold"
-                                       Foreground="#4527A0" />
+                                       Foreground="#4527A0"
+                                       Margin="0,0,0,6" />
 
-                            <TextBlock Text="{Binding OutputCaption}"
-                                       FontSize="11"
-                                       Foreground="#6B6B76"
-                                       Margin="6,0,0,0"
-                                       VerticalAlignment="Center"
-                                       Visibility="{Binding HasOutputCaption, Converter={StaticResource BoolToVis}}" />
+                            <ItemsControl ItemsSource="{Binding Inputs}"
+                                          ItemTemplate="{StaticResource WorkOrderInputTemplate}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel Orientation="Horizontal" />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                            </ItemsControl>
                         </StackPanel>
 
-                        <Border Background="#FAF8FF"
-                                BorderBrush="#512BD4"
-                                BorderThickness="2"
-                                CornerRadius="10"
-                                Padding="8"
-                                HorizontalAlignment="Left">
-                            <Image Source="{Binding Output.Preview}"
-                                   Width="{Binding Output.Width}"
-                                   Height="{Binding Output.Height}"
-                                   Stretch="Fill"
-                                   RenderOptions.BitmapScalingMode="HighQuality"
-                                   SnapsToDevicePixels="True" />
-                        </Border>
+                        <!-- 前态：输入之后、可见步骤之前；虚线紫框，不是输入链 -->
+                        <StackPanel Visibility="{Binding HasPreState, Converter={StaticResource BoolToVis}}">
+                            <TextBlock Text="{Binding PreStateSectionTitle}"
+                                       FontSize="12"
+                                       FontWeight="Bold"
+                                       Foreground="#5E35B1"
+                                       Margin="0,0,0,6" />
 
+                            <Grid HorizontalAlignment="Left">
+                                <Rectangle RadiusX="8"
+                                           RadiusY="8"
+                                           Fill="#F6F4FF"
+                                           Stroke="#B39DDD"
+                                           StrokeThickness="1"
+                                           StrokeDashArray="4 3" />
+
+                                <Image Margin="9"
+                                       Source="{Binding PreState.Preview}"
+                                       Width="{Binding PreState.Width}"
+                                       Height="{Binding PreState.Height}"
+                                       Stretch="Fill"
+                                       RenderOptions.BitmapScalingMode="HighQuality"
+                                       SnapsToDevicePixels="True" />
+                            </Grid>
+                        </StackPanel>
+
+                        <!-- 可见步骤：操作名 + 该步输出图形 -->
+                        <StackPanel Visibility="{Binding HasSteps, Converter={StaticResource BoolToVis}}">
+                            <TextBlock Text="{Binding StepsTitle}"
+                                       FontSize="12"
+                                       FontWeight="Bold"
+                                       Foreground="#4527A0"
+                                       Margin="0,0,0,6" />
+
+                            <ItemsControl ItemsSource="{Binding Steps}"
+                                          ItemTemplate="{StaticResource WorkOrderStepTemplate}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel Orientation="Horizontal" />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                            </ItemsControl>
+                        </StackPanel>
+
+                        <!-- 已验证但没有可见步骤时的说明，占「步骤」的位置 -->
+                        <TextBlock Text="没有可见步骤：旋转 / 废料 / 纯支撑交接等结构步骤已在 Core 中标记为隐藏。"
+                                   FontSize="12"
+                                   Foreground="#6B6B76"
+                                   TextWrapping="Wrap"
+                                   MaxWidth="340"
+                                   VerticalAlignment="Top"
+                                   Visibility="{Binding ShowEmptySteps, Converter={StaticResource BoolToVis}}" />
+
+                        <!-- 输出：2px 主色醒目边框 -->
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal"
+                                        Margin="0,0,0,6">
+                                <TextBlock Text="输出"
+                                           FontSize="12"
+                                           FontWeight="Bold"
+                                           Foreground="#4527A0" />
+
+                                <TextBlock Text="{Binding OutputCaption}"
+                                           FontSize="11"
+                                           Foreground="#6B6B76"
+                                           Margin="6,0,0,0"
+                                           VerticalAlignment="Center"
+                                           Visibility="{Binding HasOutputCaption, Converter={StaticResource BoolToVis}}" />
+                            </StackPanel>
+
+                            <Border Background="#FAF8FF"
+                                    BorderBrush="#512BD4"
+                                    BorderThickness="2"
+                                    CornerRadius="10"
+                                    Padding="8"
+                                    HorizontalAlignment="Left">
+                                <Image Source="{Binding Output.Preview}"
+                                       Width="{Binding Output.Width}"
+                                       Height="{Binding Output.Height}"
+                                       Stretch="Fill"
+                                       RenderOptions.BitmapScalingMode="HighQuality"
+                                       SnapsToDevicePixels="True" />
+                            </Border>
+                        </StackPanel>
+
+                        <!-- 角卡小字：Q1 目标角 / Q2 右柱 / Q4 左柱 -->
                         <TextBlock Text="{Binding CornerCaption}"
                                    FontSize="11"
                                    Foreground="#6B6B76"
                                    TextWrapping="Wrap"
-                                   Margin="0,6,0,0"
+                                   MaxWidth="220"
+                                   VerticalAlignment="Top"
                                    Visibility="{Binding HasCornerCaption, Converter={StaticResource BoolToVis}}" />
-                    </StackPanel>
+                    </controls:CardFlowPanel>
                 </StackPanel>
             </Border>
         </DataTemplate>
 
-        <!-- 一层工序卡片：左侧强调色条 + 层标题（带张数）+ 横向卡片列表 -->
+        <!-- 一层工序卡片：左侧强调色条 + 层标题（带张数）+ 纵向卡片列表（一行一张） -->
         <DataTemplate x:Key="WorkOrderCardLayerTemplate">
             <Border Background="#FBFAFF"
                     BorderBrush="#E6E2F2"
@@ -580,10 +593,8 @@
                                       ItemTemplate="{StaticResource WorkOrderCardTemplate}">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
-                                    <!-- 宽屏一行两张，窄屏 / 图形过宽时自动退回一行一张；尺寸来自 CardMetrics -->
-                                    <controls:WorkOrderCardPanel ItemGap="12"
-                                                                 MinCardWidth="{Binding CardMinWidth}"
-                                                                 MaxColumns="2" />
+                                    <!-- 单卡变宽后一层每行只放一张；卡内区块由 CardFlowPanel 横向排列 -->
+                                    <controls:WorkOrderCardPanel ItemGap="12" />
                                 </ItemsPanelTemplate>
                             </ItemsControl.ItemsPanel>
                         </ItemsControl>
@@ -1097,7 +1108,7 @@
 
                                         <TextBlock Style="{StaticResource Text.Hint}"
                                                    Margin="0,6,0,0"
-                                                   Text="按「交换工序 → 半边工序 → 角工序」三层从外到内平铺，同一层内卡片横向成行，窄屏自动换行；每张卡显示标题、验证标记、输入（上一层卡产物）、前态、可见步骤与输出。前态画在输入之后、步骤之前（v4 半边卡 = 拆柱后（跌落前），角卡 = 工序起点）；v4 半边卡的可见步骤固定是「交换 → 拆柱 → 跌落」，没有碎晶步。旋转 / 废料 / 纯支撑交接等隐藏步骤不渲染；未验证的卡不显示输入链，只显示 Note。角卡输出已归一化到 Q1：Q1 目标角、Q2 右柱、Q4 左柱（n = 4）。" />
+                                                   Text="按「交换工序 → 半边工序 → 角工序」三层从外到内平铺，同一层内一行一张卡；每张卡内部按「输入 → 前态 → 可见步骤 → 输出」横向流式排列，空间不足时卡内自动换行。每张卡显示标题、验证标记、输入（上一层卡产物）、前态、可见步骤与输出。前态画在输入之后、步骤之前（v4 半边卡 = 拆柱后（跌落前），角卡 = 工序起点）；v4 半边卡的可见步骤固定是「交换 → 拆柱 → 跌落」，没有碎晶步。旋转 / 废料 / 纯支撑交接等隐藏步骤不渲染；未验证的卡不显示输入链，只显示 Note。角卡输出已归一化到 Q1：Q1 目标角、Q2 右柱、Q4 左柱（n = 4）。" />
 
                                         <ItemsControl x:Name="WorkOrderCardsRoot"
                                                       ItemsSource="{Binding CardVisuals.Layers}"
