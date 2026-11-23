@@ -24,13 +24,21 @@ public partial class WorkspacePage
 
     /// <summary>
     /// 旋转工具条按钮：无选中节点时在 <see cref="UpdateActionButtons"/> 里禁用。
-    /// 工作区的节点运算目前都不进撤销栈（MAUI 工作区没有撤销按钮，
-    /// Web 的撤销由 Web 自己的 store 提供），这里与 下落 / 顶针 / 切割 一样，
-    /// 直接改图后落盘并触发重绘。
+    /// 与 下落 / 顶针 / 切割 一样，整次操作（新建结果节点 + 连线 + 选中）
+    /// 包在一次快照里，撤销时整图回滚。
     /// </summary>
     private void OnRotateNode(
         object? sender,
         EventArgs e)
+    {
+        RunWithUndo("旋转", RotateSelectedNode);
+    }
+
+    /// <summary>
+    /// 把选中节点的图形顺时针旋转 1 个象限并生成结果节点。
+    /// 幂等：同一源节点已经旋转过时只定位到已有结果（图没变，不进撤销栈）。
+    /// </summary>
+    private void RotateSelectedNode()
     {
         if (_store?.SelectedNode is not WorkspaceNode node)
         {

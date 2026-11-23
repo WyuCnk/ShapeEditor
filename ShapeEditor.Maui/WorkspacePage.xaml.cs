@@ -136,6 +136,9 @@ public partial class WorkspacePage : ContentPage
     private void RenderCore()
     {
 
+        // 工作区可能在别处被换掉（切换 / 新建 / 删除 / 导入）：旧快照到这里作废
+        SyncUndoHistoryProject();
+
         RenderTabs();
         RenderMaterials();
         RenderCanvas();
@@ -195,6 +198,9 @@ public partial class WorkspacePage : ContentPage
         // 等待第二输入时也要能再点一次「交换」取消
         ExchangeButton.IsEnabled = hasSelection || _exchangeFirstId is not null;
 
+        // 与 Web 一致：栈里没有快照就禁用撤销
+        UndoButton.IsEnabled = CanUndo;
+
         CopyButton.IsEnabled = hasSelection;
         DeleteButton.IsEnabled = hasSelection;
 
@@ -233,7 +239,7 @@ public partial class WorkspacePage : ContentPage
 
             string id = project.Id;
 
-            button.Clicked += (_, _) => _store.ActivateProject(id);
+            button.Clicked += (_, _) => ActivateProject(id);
 
             TabBar.Add(button);
 
@@ -274,7 +280,13 @@ public partial class WorkspacePage : ContentPage
             TextColor = Accent
         };
 
-        add.Clicked += (_, _) => _store!.CreateProject();
+        add.Clicked += (_, _) =>
+        {
+            _store!.CreateProject();
+
+            // 新建即切到一个空工作区，旧快照不再适用（与 Web 一致）
+            ClearUndoHistory();
+        };
 
         TabBar.Add(add);
 
@@ -1205,6 +1217,8 @@ public partial class WorkspacePage : ContentPage
         double x,
         double y)
     {
+        WorkspaceGraphSnapshot before = CaptureSnapshot();
+
         try
         {
             ImportMaterialCore(item, x, y);
@@ -1213,6 +1227,9 @@ public partial class WorkspacePage : ContentPage
         {
             Show("导入失败：" + exception.Message);
         }
+
+        // 导入被拒（象限数不符等）时图没变，不会留下历史
+        CommitGraphEdit("导入素材", before);
     }
 
     private void ImportMaterialCore(
@@ -1344,19 +1361,28 @@ public partial class WorkspacePage : ContentPage
         object? sender,
         EventArgs e)
     {
-        ApplySingleOperation("collapse");
+        RunWithUndo("下落", () => ApplySingleOperation("collapse"));
     }
 
     private void OnPinNode(
         object? sender,
         EventArgs e)
     {
-        ApplySingleOperation("pin");
+        RunWithUndo("顶针", () => ApplySingleOperation("pin"));
     }
 
     private void OnCutNode(
         object? sender,
         EventArgs e)
+    {
+        RunWithUndo("切割", CutSelectedNode);
+    }
+
+    /// <summary>
+    /// 切割选中节点：先切成东西两半，再把两个结果摆到源节点下方。
+    /// 撤销由外层 <see cref="OnCutNode"/> 的快照负责。
+    /// </summary>
+    private void CutSelectedNode()
     {
         if (_store!.SelectedNode is not WorkspaceNode node)
         {
@@ -1483,6 +1509,12 @@ public partial class WorkspacePage : ContentPage
     /// 结果放在它右侧约 80px（Core 的 SetNodePosition 会做 10px 吸附）。
     /// </summary>
     private void CompleteStack(
+        WorkspaceNode second)
+    {
+        RunWithUndo("堆叠", () => CompleteStackCore(second));
+    }
+
+    private void CompleteStackCore(
         WorkspaceNode second)
     {
         if (_store is null || _stackFirstId is null)
@@ -1632,6 +1664,11 @@ public partial class WorkspacePage : ContentPage
         object? sender,
         EventArgs e)
     {
+        RunWithUndo("粘贴节点", PasteNode);
+    }
+
+    private void PasteNode()
+    {
         if (_store!.SelectedNode is null || _clipboard is null)
         {
             return;
@@ -1695,7 +1732,12 @@ public partial class WorkspacePage : ContentPage
             }
         }
 
+        // 确认之后才取快照：取消的删除不该留下一条空历史
+        WorkspaceGraphSnapshot before = CaptureSnapshot();
+
         _store.DeleteNode(nodeId);
+
+        CommitGraphEdit("删除节点", before);
     }
 
     private WorkspaceNodeBox? FindBox(
@@ -1714,12 +1756,33 @@ public partial class WorkspacePage : ContentPage
         object? sender,
         EventArgs e)
     {
-        _store!.CreateNode();
+        RunWithUndo("新建节点", () =>
+        {
+            _store!.CreateNode();
+        });
+    }
+
+    /// <summary>
+    /// 切换工作区标签：真的切换了才清空撤销栈（点当前标签不算，与 Web 一致）。
+    /// </summary>
+    private void ActivateProject(
+        string id)
+    {
+        string? previous = _store?.Active?.Id;
+
+        _store!.ActivateProject(id);
+
+        if (_store.Active?.Id != previous)
+        {
+            ClearUndoHistory();
+        }
     }
 
     /// <summary>
     /// 按依赖关系重新排列所有节点；Store 会落盘并触发一次重绘，
     /// 这里再显式 Render 一次，保证坐标与卡片位置立即同步。
+    ///
+    /// 只有真的挪动了节点（图结构 / 坐标变化）才进撤销栈。
     /// </summary>
     private void OnAutoLayout(
         object? sender,
@@ -1730,7 +1793,11 @@ public partial class WorkspacePage : ContentPage
             return;
         }
 
+        WorkspaceGraphSnapshot before = CaptureSnapshot();
+
         _store.AutoLayout();
+
+        CommitGraphEdit("自动布局", before);
 
         Render();
     }
@@ -1743,6 +1810,8 @@ public partial class WorkspacePage : ContentPage
         {
             return;
         }
+
+        WorkspaceGraphSnapshot before = CaptureSnapshot();
 
         CollapseMode mode = _store.Mode == CollapseMode.IncludeCycles
             ? CollapseMode.FloorOnly
@@ -1767,6 +1836,8 @@ public partial class WorkspacePage : ContentPage
             _rendering = wasRendering;
         }
 
+        CommitGraphEdit("切换下落规则", before);
+
         Render();
 
         if (result.Failed > 0)
@@ -1783,6 +1854,8 @@ public partial class WorkspacePage : ContentPage
         {
             return;
         }
+
+        WorkspaceGraphSnapshot before = CaptureSnapshot();
 
         (int Updated, int Failed) result = (0, 0);
 
@@ -1802,6 +1875,9 @@ public partial class WorkspacePage : ContentPage
         {
             _rendering = wasRendering;
         }
+
+        // 输入没变（SetMaxLayers 会夹取并提前返回）时不会留下历史
+        CommitGraphEdit("修改高度上限", before);
 
         Render();
 
@@ -1829,7 +1905,11 @@ public partial class WorkspacePage : ContentPage
 
         if (confirmed)
         {
+            WorkspaceGraphSnapshot before = CaptureSnapshot();
+
             _store.ClearNodes();
+
+            CommitGraphEdit("清空画布", before);
         }
     }
 
@@ -1894,7 +1974,15 @@ public partial class WorkspacePage : ContentPage
             return;
         }
 
+        string? previous = _store.Active?.Id;
+
         _store.DeleteProject(id);
+
+        // 删掉当前工作区会切到另一个，旧快照不再适用
+        if (_store.Active?.Id != previous)
+        {
+            ClearUndoHistory();
+        }
 
         Render();
     }

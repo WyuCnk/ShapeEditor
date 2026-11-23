@@ -74,8 +74,15 @@ public partial class WorkspacePage
     ///
     /// 摆放规则与 Web 版一致：左结果 X − 260（最小 24）、右结果 X + 260，
     /// 两个结果的 Y 都是源 Y + 420（源取第二个点击的节点）。
+    /// 两个结果的创建与摆放包在一次快照里，撤销时一起回滚。
     /// </summary>
     private void CompleteExchange(
+        WorkspaceNode second)
+    {
+        RunWithUndo("交换", () => CompleteExchangeCore(second));
+    }
+
+    private void CompleteExchangeCore(
         WorkspaceNode second)
     {
         if (_store is null || _exchangeFirstId is null)

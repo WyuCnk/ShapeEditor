@@ -73,6 +73,15 @@
                         IsEnabled="False"
                         Clicked="OnExchangeNode" />
 
+                <!-- 撤销：快照式整图回滚，栈为空时禁用（与 Web 的 disabled 条件一致） -->
+                <Button x:Name="UndoButton"
+                        Text="撤销"
+                        FontSize="12"
+                        HeightRequest="32"
+                        CornerRadius="8"
+                        IsEnabled="False"
+                        Clicked="OnUndo" />
+
                 <Button x:Name="CopyButton"
                         Text="复制"
                         FontSize="12"
