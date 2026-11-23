@@ -94,6 +94,77 @@ public static class ShapeOps
     }
 
     /// <summary>
+    /// 左右镜像：同一层内相邻象限成对交换（0↔1、2↔3、4↔5 …，即 q 与 q^1）。
+    /// 层序、象限数与每格的类型 / 形状码 / 颜色都保持不变。
+    /// 返回新图形，不修改入参。
+    /// </summary>
+    public static ShapeDocument MirrorHorizontal(
+        ShapeDocument document)
+    {
+        ShapeDocument result = new(
+            document.LayerCount,
+            document.PartCount);
+
+        for (int layer = 0;
+             layer < document.LayerCount;
+             layer++)
+        {
+            for (int part = 0;
+                 part < document.PartCount;
+                 part++)
+            {
+                /*
+                 * 合法图形的象限数一定是偶数，q^1 必然落在范围内；
+                 * 万一传入奇数象限的非常规文档，最后一个象限没有配对，
+                 * 原地保留，避免越界。
+                 */
+                int paired = part ^ 1;
+
+                if (paired >= document.PartCount)
+                {
+                    paired = part;
+                }
+
+                result[layer, part] =
+                    document[layer, paired].Clone();
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// 上下镜像：整层倒序（L1↔Ln、L2↔L(n−1) …）。
+    /// 每层的象限顺序与逐格内容保持不变。
+    /// 返回新图形，不修改入参。
+    /// </summary>
+    public static ShapeDocument MirrorVertical(
+        ShapeDocument document)
+    {
+        ShapeDocument result = new(
+            document.LayerCount,
+            document.PartCount);
+
+        for (int layer = 0;
+             layer < document.LayerCount;
+             layer++)
+        {
+            int mirroredLayer =
+                document.LayerCount - 1 - layer;
+
+            for (int part = 0;
+                 part < document.PartCount;
+                 part++)
+            {
+                result[mirroredLayer, part] =
+                    document[layer, part].Clone();
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// 只保留从 from 开始的 count 个连续象限（环形），其余清空。
     /// 象限数与层数保持不变。
     /// </summary>

@@ -108,6 +108,8 @@ public sealed partial class WorkspaceStore
         _nodeCache.Clear();
         SelectedNode = null;
 
+        ClearUndoHistory();
+
         PersistGraph();
     }
 

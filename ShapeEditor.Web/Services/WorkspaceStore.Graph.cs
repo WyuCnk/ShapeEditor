@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.JSInterop;
 using ShapeEditor.Core;
+using ShapeEditor.Core.Analysis.Production;
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Physics;
 using ShapeEditor.Core.Workspaces;
@@ -20,6 +21,16 @@ public sealed partial class WorkspaceStore
     private readonly Dictionary<string, ShapeDocument> _nodeCache = new();
 
     private readonly ShortCodeExporter _nodeExporter = new();
+
+    /// <summary>
+    /// 画布修改前的快照栈。撤销只回滚当前工作区的节点 / 连线 / 上限 / 下落规则，
+    /// 素材库与工作区列表不参与。
+    /// </summary>
+    private readonly Stack<GraphSnapshot> _undoStack = new();
+
+    private const int MaxUndoCount = 100;
+
+    public bool CanUndo => _undoStack.Count > 0;
 
     public IReadOnlyList<WorkspaceNode> Nodes => _nodes;
 
@@ -42,6 +53,8 @@ public sealed partial class WorkspaceStore
             return;
         }
 
+        SaveUndoState();
+
         Mode = mode;
 
         SnapshotActive();
@@ -58,6 +71,8 @@ public sealed partial class WorkspaceStore
         {
             return;
         }
+
+        SaveUndoState();
 
         MaxLayers = value;
 
@@ -187,6 +202,8 @@ public sealed partial class WorkspaceStore
             Label = "素材节点"
         };
 
+        SaveUndoState();
+
         _nodes.Add(node);
 
         PersistGraph();
@@ -206,6 +223,8 @@ public sealed partial class WorkspaceStore
         };
 
         (node.Row, node.Col) = FindFreeCell(row, col);
+
+        SaveUndoState();
 
         _nodes.Add(node);
 
@@ -241,6 +260,8 @@ public sealed partial class WorkspaceStore
         }
 
         LastError = null;
+
+        SaveUndoState();
 
         int removed = DeleteDownstream(nodeId);
 
@@ -313,6 +334,57 @@ public sealed partial class WorkspaceStore
             ShapePhysics.Pin(document, mode));
     }
 
+    /// <summary>
+    /// 旋转：把当前节点的图形顺时针旋转 1 个象限，生成一个新的「旋转」步骤。
+    /// 旋转只重排象限，不改变层数与象限数，因此不需要走 <see cref="ApplyLimit"/>。
+    /// </summary>
+    public NodeActionResult ApplyRotate(string nodeId)
+    {
+        WorkspaceNode? node = FindNode(nodeId);
+
+        if (node is null)
+        {
+            return new NodeActionResult(false, null, "节点不存在。");
+        }
+
+        string key = $"rotate:{nodeId}";
+
+        WorkspaceNode? existing = _nodes.FirstOrDefault(entry => entry.OpKey == key);
+
+        if (existing is not null)
+        {
+            return new NodeActionResult(
+                false,
+                existing,
+                "该节点已经旋转过，已定位到结果。");
+        }
+
+        ShapeDocument? document = GetNodeDocument(node);
+
+        if (document is null)
+        {
+            return new NodeActionResult(false, null, "该节点还没有图形。");
+        }
+
+        SaveUndoState();
+
+        ShapeDocument rotated = ShapeOps.Rotate(document, 1);
+
+        WorkspaceNode created = AddResultNode(
+            node,
+            rotated,
+            key,
+            "旋转",
+            colOffset: 0);
+
+        AddEdge(nodeId, created.Id, "旋转");
+
+        PersistGraph();
+        Changed?.Invoke();
+
+        return new NodeActionResult(true, created, "已生成旋转结果。");
+    }
+
     public NodeActionResult ApplyCut(string nodeId, CollapseMode mode)
     {
         WorkspaceNode? node = FindNode(nodeId);
@@ -349,6 +421,8 @@ public sealed partial class WorkspaceStore
         {
             return new NodeActionResult(false, null, cut.Error ?? "切割失败。");
         }
+
+        SaveUndoState();
 
         WorkspaceNode west = AddResultNode(
             node,
@@ -413,6 +487,8 @@ public sealed partial class WorkspaceStore
             return new NodeActionResult(false, null, result.Error ?? "运算失败。");
         }
 
+        SaveUndoState();
+
         ShapeDocument limited = ApplyLimit(result.Document);
 
         WorkspaceNode created = AddResultNode(
@@ -470,6 +546,8 @@ public sealed partial class WorkspaceStore
             Label = currentIsTop ? "下方输入" : "上方输入"
         };
 
+        SaveUndoState();
+
         _nodes.Add(slot);
 
         PersistGraph();
@@ -491,6 +569,8 @@ public sealed partial class WorkspaceStore
         {
             return;
         }
+
+        SaveUndoState();
 
         slot.TargetId = targetNodeId;
 
@@ -523,6 +603,12 @@ public sealed partial class WorkspaceStore
         if (outcome.First.Node is null)
         {
             return (outcome.First, outcome.Second);
+        }
+
+        if (outcome.AddedNodes.Count > 0 ||
+            outcome.AddedEdges.Count > 0)
+        {
+            SaveUndoState();
         }
 
         _nodes.AddRange(outcome.AddedNodes);
@@ -582,6 +668,8 @@ public sealed partial class WorkspaceStore
         {
             return new NodeActionResult(false, null, result.Error ?? "堆叠失败。");
         }
+
+        SaveUndoState();
 
         WorkspaceNode created = AddResultNode(
             first,
@@ -679,6 +767,8 @@ public sealed partial class WorkspaceStore
             return new NodeActionResult(false, null, result.Error ?? "堆叠失败。");
         }
 
+        SaveUndoState();
+
         ShapeDocument limited = ApplyLimit(result.Document);
 
         WorkspaceNode created = AddResultNode(
@@ -735,6 +825,8 @@ public sealed partial class WorkspaceStore
     /// </summary>
     public int DeleteNode(string nodeId)
     {
+        SaveUndoState();
+
         List<WorkspaceNode> downstream = Downstream(nodeId);
 
         var cascade = new HashSet<string>(downstream.Select(node => node.Id))
@@ -816,6 +908,8 @@ public sealed partial class WorkspaceStore
             return;
         }
 
+        SaveUndoState();
+
         edge.LabelT = edge.LabelT switch
         {
             < 0.4 => 0.5,
@@ -842,8 +936,22 @@ public sealed partial class WorkspaceStore
             return;
         }
 
-        node.X = Math.Round(x / 10) * 10;
-        node.Y = Math.Round(y / 10) * 10;
+        double snappedX = Math.Round(x / 10) * 10;
+        double snappedY = Math.Round(y / 10) * 10;
+
+        if (node.X == snappedX &&
+            node.Y == snappedY)
+        {
+            return;
+        }
+
+        /*
+         * 坐标微调不单独记撤销：工具栏生成结果后都会紧跟着自动摆放，
+         * 如果这里也压快照，一次「旋转」就要按两次撤销才能回退。
+         * 撤销只回滚图形 / 节点结构，拖动位置保持现状。
+         */
+        node.X = snappedX;
+        node.Y = snappedY;
 
         PersistGraph();
         Changed?.Invoke();
@@ -868,7 +976,7 @@ public sealed partial class WorkspaceStore
                 _nodes,
                 _edges);
 
-        int moved = 0;
+        var moves = new List<(WorkspaceNode Node, double X, double Y)>();
 
         foreach (WorkspaceNode node in _nodes)
         {
@@ -883,9 +991,19 @@ public sealed partial class WorkspaceStore
 
             if (node.X != x || node.Y != y)
             {
-                moved++;
+                moves.Add((node, x, y));
             }
+        }
 
+        if (moves.Count == 0)
+        {
+            return 0;
+        }
+
+        SaveUndoState();
+
+        foreach ((WorkspaceNode node, double x, double y) in moves)
+        {
             node.X = x;
             node.Y = y;
         }
@@ -893,7 +1011,7 @@ public sealed partial class WorkspaceStore
         PersistGraph();
         Changed?.Invoke();
 
-        return moved;
+        return moves.Count;
     }
 
     /// <summary>
@@ -946,6 +1064,11 @@ public sealed partial class WorkspaceStore
 
     public void ClearGraph()
     {
+        if (_nodes.Count > 0 || _edges.Count > 0)
+        {
+            SaveUndoState();
+        }
+
         _nodes.Clear();
         _edges.Clear();
         _nodeCache.Clear();
@@ -953,6 +1076,146 @@ public sealed partial class WorkspaceStore
 
         PersistGraph();
         Changed?.Invoke();
+    }
+
+    #endregion
+
+    #region 撤销
+
+    /// <summary>
+    /// 撤销最近一次画布修改（生成结果、删除、移动、清空等）。
+    /// 工作区切换与素材库操作会清空历史，不跨工作区撤销。
+    /// </summary>
+    public void Undo()
+    {
+        if (_undoStack.Count == 0)
+        {
+            return;
+        }
+
+        RestoreSnapshot(_undoStack.Pop());
+    }
+
+    /// <summary>
+    /// 在真正修改节点 / 连线之前调用，压入当前状态。
+    /// 每次新修改都会丢弃更早的快照，无法重做。
+    /// </summary>
+    private void SaveUndoState()
+    {
+        if (_active is null)
+        {
+            return;
+        }
+
+        _undoStack.Push(CaptureSnapshot());
+
+        while (_undoStack.Count > MaxUndoCount)
+        {
+            // Stack.ToArray 从栈顶开始，丢弃数组末尾的最旧快照。
+            GraphSnapshot[] items = _undoStack.ToArray();
+
+            _undoStack.Clear();
+
+            for (int index = items.Length - 2;
+                 index >= 0;
+                 index--)
+            {
+                _undoStack.Push(items[index]);
+            }
+        }
+    }
+
+    private GraphSnapshot CaptureSnapshot()
+    {
+        return new GraphSnapshot
+        {
+            Nodes = _nodes.Select(CloneNode).ToList(),
+            Edges = _edges
+                .Select(edge => new WorkspaceEdge
+                {
+                    FromId = edge.FromId,
+                    ToId = edge.ToId,
+                    Label = edge.Label,
+                    LabelT = edge.LabelT
+                })
+                .ToList(),
+            MaxLayers = MaxLayers,
+            Mode = Mode,
+            SelectedNodeId = SelectedNode?.Id
+        };
+    }
+
+    private void RestoreSnapshot(
+        GraphSnapshot snapshot)
+    {
+        _nodes = snapshot.Nodes;
+        _edges = snapshot.Edges;
+        MaxLayers = snapshot.MaxLayers;
+        Mode = snapshot.Mode;
+
+        if (_active is not null)
+        {
+            _active.Nodes = _nodes;
+            _active.Edges = _edges;
+            _active.MaxLayers = MaxLayers;
+            _active.Mode = Mode;
+        }
+
+        _nodeCache.Clear();
+
+        SelectedNode = snapshot.SelectedNodeId is null
+            ? null
+            : FindNode(snapshot.SelectedNodeId);
+
+        PersistGraph();
+        Changed?.Invoke();
+    }
+
+    private static WorkspaceNode CloneNode(
+        WorkspaceNode node)
+    {
+        return new WorkspaceNode
+        {
+            Id = node.Id,
+            Kind = node.Kind,
+            Code = node.Code,
+            Format = node.Format,
+            Layers = node.Layers,
+            Parts = node.Parts,
+            IsResult = node.IsResult,
+            OpKey = node.OpKey,
+            TargetId = node.TargetId,
+            BaseId = node.BaseId,
+            InputAId = node.InputAId,
+            InputBId = node.InputBId,
+            StackBaseIsTop = node.StackBaseIsTop,
+            TopInput = node.TopInput,
+            Seq = node.Seq,
+            Row = node.Row,
+            Col = node.Col,
+            X = node.X,
+            Y = node.Y,
+            Label = node.Label
+        };
+    }
+
+    /// <summary>工作区切换后旧快照不再适用，直接清空。</summary>
+    private void ClearUndoHistory()
+    {
+        _undoStack.Clear();
+    }
+
+    private sealed class GraphSnapshot
+    {
+        public List<WorkspaceNode> Nodes { get; init; } = new();
+
+        public List<WorkspaceEdge> Edges { get; init; } = new();
+
+        public int MaxLayers { get; init; }
+
+        public CollapseMode Mode { get; init; }
+
+        public string? SelectedNodeId { get; init; }
     }
 
     #endregion
@@ -1074,6 +1337,10 @@ public sealed partial class WorkspaceStore
                         computed = ShapePhysics.Cut(document, mode).East;
                         break;
 
+                    case "rotate":
+                        computed = ShapeOps.Rotate(document, 1);
+                        break;
+
                     default:
                         computed = ShapePhysics.Collapse(document, mode).Document;
                         break;
@@ -1186,6 +1453,8 @@ public sealed partial class WorkspaceStore
         {
             return;
         }
+
+        SaveUndoState();
 
         slot.Code = code;
         slot.Format = format;
@@ -1309,6 +1578,8 @@ public sealed partial class WorkspaceStore
         MaxLayers = _active.MaxLayers;
 
         _nodeCache.Clear();
+
+        ClearUndoHistory();
     }
 
     private void SnapshotActive()

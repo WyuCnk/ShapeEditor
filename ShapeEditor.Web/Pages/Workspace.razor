@@ -41,10 +41,16 @@
                     @onclick='() => ApplyFromToolbar("cut")'>切割</button>
 
             <button class="mini-button" disabled="@(Store.SelectedNode is null)"
+                    @onclick='() => ApplyFromToolbar("rotate")'>旋转</button>
+
+            <button class="mini-button" disabled="@(Store.SelectedNode is null)"
                     @onclick="BeginStackFromToolbar">堆叠</button>
 
             <button class="mini-button" disabled="@(Store.SelectedNode is null)"
                     @onclick="BeginExchangeFromToolbar">交换</button>
+
+            <button class="mini-button" disabled="@(!Store.CanUndo)"
+                    @onclick="Store.Undo">撤销</button>
 
             <button class="mini-button" disabled="@(!HasSelectableShape)"
                     @onclick="OpenSelectedInEditor">加到编辑区</button>
@@ -396,6 +402,7 @@
         {
             "pin" => Store.ApplyPin(source.Id, Store.Mode),
             "cut" => Store.ApplyCut(source.Id, Store.Mode),
+            "rotate" => Store.ApplyRotate(source.Id),
             _ => Store.ApplyCollapse(source.Id, Store.Mode)
         };
 

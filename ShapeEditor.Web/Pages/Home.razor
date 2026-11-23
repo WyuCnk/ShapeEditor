@@ -1,5 +1,6 @@
 @page "/"
 
+@using ShapeEditor.Core.Analysis.Production
 @using ShapeEditor.Core.Models
 @using ShapeEditor.Core.Services
 @using ShapeEditor.Core.Theme
@@ -242,6 +243,8 @@
                     <button @onclick="MoveDown">下移</button>
                     <button @onclick="MoveLeft">左移↻</button>
                     <button @onclick="MoveRight">右移↻</button>
+                    <button class="mirror-button" @onclick="MirrorHorizontal">左右镜像</button>
+                    <button class="mirror-button" @onclick="MirrorVertical">上下镜像</button>
                 </div>
             </section>
         }
@@ -970,6 +973,47 @@
         SaveUndoState();
 
         Document.MoveRightCircular();
+
+        ClearSelection();
+        await SaveDocumentAsync();
+        await RequestCanvasRender();
+    }
+
+    /// <summary>
+    /// 左右镜像：相邻象限成对交换（Q1↔Q2、Q3↔Q4 …）。
+    /// 与上移 / 下移一致：先存撤销快照，再换文档、重绘并自动保存；
+    /// 短代码输入框同步成镜像后的代码。
+    /// </summary>
+    private async Task MirrorHorizontal()
+    {
+        SaveUndoState();
+
+        Document = ShapeOps.MirrorHorizontal(Document);
+
+        Code = Exporter.Export(
+            Document,
+            _codeFormat,
+            omitTopEmptyLayers: true);
+
+        ClearSelection();
+        await SaveDocumentAsync();
+        await RequestCanvasRender();
+    }
+
+    /// <summary>
+    /// 上下镜像：层序整体反转（L1↔Ln）。
+    /// 撤销、短代码同步与自动保存行为同左右镜像。
+    /// </summary>
+    private async Task MirrorVertical()
+    {
+        SaveUndoState();
+
+        Document = ShapeOps.MirrorVertical(Document);
+
+        Code = Exporter.Export(
+            Document,
+            _codeFormat,
+            omitTopEmptyLayers: true);
 
         ClearSelection();
         await SaveDocumentAsync();

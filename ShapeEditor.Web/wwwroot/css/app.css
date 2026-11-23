@@ -538,6 +538,11 @@ button {
         padding-inline: 5px;
     }
 
+    /* 镜像按钮各占两格，第二行正好铺满 4 列网格 */
+    .move-grid button.mirror-button {
+        grid-column: span 2;
+    }
+
 
 /* =========================================================
    桌面布局：左侧画布，右侧工具

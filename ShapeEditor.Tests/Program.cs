@@ -122,6 +122,11 @@ internal static class Program
             ("存档:拒绝坏 JSON", SaveFileTests.RejectsBrokenJson),
             ("存档:尺寸上限", SaveFileTests.DimensionLimitMatchesParsers),
 
+            ("镜像:4 象限左右", MirrorTests.MirrorHorizontalFourQuadrants),
+            ("镜像:4 象限上下", MirrorTests.MirrorVerticalFourQuadrants),
+            ("镜像:6 象限左右", MirrorTests.MirrorHorizontalSixQuadrants),
+            ("镜像:6 象限上下", MirrorTests.MirrorVerticalSixQuadrants),
+
             ("编辑器:形状画笔", EditorViewModelTests.PaintWithShapeBrush),
             ("编辑器:形状+颜色", EditorViewModelTests.CombinedBrushAppliesColor),
             ("编辑器:撤销", EditorViewModelTests.UndoRestoresPreviousState),
