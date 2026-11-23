@@ -78,13 +78,12 @@ public partial class WorkspacePage
             Label = RotateLabel,
 
             /*
-             * OpKey 故意留空：Core 的 RecomputeAll 只认 pin / cutw / cute / stack /
-             * 交换这几种键，其余一律按「下落」重算。旋转结果一旦带上 OpKey，
-             * 切换下落规则或高度上限时就会被错误地当成下落结果。
-             * 父节点记在 InputAId 上，既方便识别重复旋转，也为将来 Core 支持
-             * rotate 重算留好数据。
+             * OpKey = rotate:{源节点 Id}：Core 的 RecomputeAll 已识别 rotate，
+             * 父节点重算后会按「父节点图形顺时针 1 象限」刷新本节点；
+             * 层数与象限数保持不变。
+             * 父节点同时记在 InputAId 上，兼容早期没写 OpKey 的旧节点识别。
              */
-            OpKey = null,
+            OpKey = $"rotate:{node.Id}",
             InputAId = node.Id,
             Code = _rotateExporter.Export(rotated, omitTopEmptyLayers: true),
             Format = ShortCodeFormat.Full,
@@ -111,7 +110,7 @@ public partial class WorkspacePage
 
     /// <summary>
     /// 找某个源节点已经生成的旋转结果。
-    /// 识别依据是「父节点 + 标题」，不依赖 OpKey（见 <see cref="OnRotateNode"/> 的说明）。
+    /// 先认新 OpKey（rotate:{源节点 Id}），再兼容早期「父节点 + 标题」的旧节点。
     /// </summary>
     private WorkspaceNode? FindRotateResult(
         string parentId)
@@ -121,11 +120,14 @@ public partial class WorkspacePage
             return null;
         }
 
+        string key = $"rotate:{parentId}";
+
         foreach (WorkspaceNode node in _store.Nodes)
         {
             if (node.Id != parentId &&
-                node.InputAId == parentId &&
-                node.Label == RotateLabel)
+                (node.OpKey == key ||
+                 (node.InputAId == parentId &&
+                  node.Label == RotateLabel)))
             {
                 return node;
             }

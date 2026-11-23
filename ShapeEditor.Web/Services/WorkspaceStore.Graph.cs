@@ -337,6 +337,9 @@ public sealed partial class WorkspaceStore
     /// <summary>
     /// 旋转：把当前节点的图形顺时针旋转 1 个象限，生成一个新的「旋转」步骤。
     /// 旋转只重排象限，不改变层数与象限数，因此不需要走 <see cref="ApplyLimit"/>。
+    ///
+    /// OpKey 写成 rotate:{源节点 Id}，RecomputeAll 会按旋转规则重算；
+    /// 幂等判断同时兼容早期没写 OpKey 的旧节点（源节点 + 旋转连线）。
     /// </summary>
     public NodeActionResult ApplyRotate(string nodeId)
     {
@@ -349,7 +352,14 @@ public sealed partial class WorkspaceStore
 
         string key = $"rotate:{nodeId}";
 
-        WorkspaceNode? existing = _nodes.FirstOrDefault(entry => entry.OpKey == key);
+        WorkspaceNode? existing = _nodes.FirstOrDefault(entry =>
+            entry.OpKey == key ||
+            (entry.Id != nodeId &&
+             entry.Label == "旋转" &&
+             _edges.Any(edge =>
+                 edge.FromId == nodeId &&
+                 edge.ToId == entry.Id &&
+                 edge.Label == "旋转")));
 
         if (existing is not null)
         {

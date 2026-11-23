@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text.Json;
 using ShapeEditor.Core;
+using ShapeEditor.Core.Analysis.Production;
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Physics;
 using ShapeEditor.Core.Services;
@@ -1457,6 +1458,13 @@ public sealed class WorkspaceStore
             "pin" => ShapePhysics.Pin(document, Mode).Document,
             "cutw" => ShapePhysics.Cut(document, Mode).West,
             "cute" => ShapePhysics.Cut(document, Mode).East,
+
+            /*
+             * 旋转：按父节点当前图形顺时针转 1 个象限。
+             * 旋转只重排象限，层数与象限数都不变；
+             * 父节点缺失时与其它单输入 OpKey 一样返回 null，计入 failed。
+             */
+            "rotate" => ShapeOps.Rotate(document, 1),
             _ => ShapePhysics.Collapse(document, Mode).Document
         };
     }

@@ -909,8 +909,9 @@ public sealed class WorkspaceViewModel : ObservableObject
     /// 与 Web 的 ApplyRotate 对齐：结果标题「旋转」、连线标签「旋转」、
     /// 排在源节点正下方；旋转只重排象限，不改变层数与象限数。
     ///
-    /// 这里不写 OpKey：Core 的 WorkspaceStore.RecomputeAll 还不认识 rotate，
-    /// 写了会被当成 collapse 重算，反而覆盖旋转结果；幂等判断改用「源节点 + 旋转连线」。
+    /// OpKey 写成 rotate:{源节点 Id}：Core 的 WorkspaceStore.RecomputeAll
+    /// 已能按旋转规则重算，父节点刷新后旋转结果会跟着刷新；
+    /// 幂等判断同时兼容早期没写 OpKey 的旧节点（源节点 + 旋转连线）。
     /// </summary>
     private void ApplyRotate(
         object? parameter)
@@ -979,6 +980,8 @@ public sealed class WorkspaceViewModel : ObservableObject
 
         created.Label = "旋转";
 
+        created.OpKey = $"rotate:{source.Id}";
+
         created.InputAId = source.Id;
 
         /*
@@ -1003,19 +1006,22 @@ public sealed class WorkspaceViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 找出该源节点已经生成过的旋转结果（按「源节点 + 旋转连线」判断，
-    /// 不依赖 OpKey，见 <see cref="ApplyRotate"/> 的说明）。
+    /// 找出该源节点已经生成过的旋转结果。
+    /// 先认新 OpKey（rotate:{源节点 Id}），再兼容早期「源节点 + 旋转连线」的旧节点。
     /// </summary>
     private WorkspaceNode? FindRotateResult(
         WorkspaceNode source)
     {
+        string key = $"rotate:{source.Id}";
+
         return _store.Nodes.FirstOrDefault(node =>
             node.Id != source.Id &&
-            node.Label == "旋转" &&
-            _store.Edges.Any(edge =>
-                edge.FromId == source.Id &&
-                edge.ToId == node.Id &&
-                edge.Label == "旋转"));
+            (node.OpKey == key ||
+             (node.Label == "旋转" &&
+              _store.Edges.Any(edge =>
+                  edge.FromId == source.Id &&
+                  edge.ToId == node.Id &&
+                  edge.Label == "旋转"))));
     }
 
     /// <summary>
