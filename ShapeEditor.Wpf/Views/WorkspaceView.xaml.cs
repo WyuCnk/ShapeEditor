@@ -613,8 +613,8 @@ public partial class WorkspaceView : UserControl
 
     /// <summary>
     /// 工作区快捷键：
-    /// Ctrl+C 复制选中节点的图形，Ctrl+V 粘贴，Delete 删除选中节点，
-    /// Esc 取消堆叠/交换待选。
+    /// Ctrl+C 复制选中节点的图形，Ctrl+V 粘贴，Ctrl+Z 撤销最近一次生成节点，
+    /// Delete 删除选中节点，Esc 取消堆叠/交换待选。
     ///
     /// 全部复用 ViewModel 已有的公开命令/方法，不复制实现；
     /// 焦点在文本框时直接返回，避免影响文字输入和文本框自带的复制粘贴。
@@ -646,6 +646,13 @@ public partial class WorkspaceView : UserControl
 
             case Key.V when control:
                 viewModel.PasteCommand.Execute(null);
+
+                e.Handled = true;
+
+                break;
+
+            case Key.Z when control:
+                viewModel.Undo();
 
                 e.Handled = true;
 

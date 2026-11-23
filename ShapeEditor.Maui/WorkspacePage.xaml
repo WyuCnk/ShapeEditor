@@ -48,6 +48,15 @@
                         IsEnabled="False"
                         Clicked="OnCutNode" />
 
+                <!-- 旋转：生成顺时针 1 象限的「旋转」结果节点 -->
+                <Button x:Name="RotateButton"
+                        Text="旋转"
+                        FontSize="12"
+                        HeightRequest="32"
+                        CornerRadius="8"
+                        IsEnabled="False"
+                        Clicked="OnRotateNode" />
+
                 <Button x:Name="StackButton"
                         Text="堆叠"
                         FontSize="12"

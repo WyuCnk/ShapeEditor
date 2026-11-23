@@ -3,6 +3,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Media;
 using Microsoft.Win32;
+using ShapeEditor.Core.Analysis.Production;
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Physics;
 using ShapeEditor.Core.Services;
@@ -15,7 +16,7 @@ namespace ShapeEditor.Wpf.ViewModels;
 /// <summary>
 /// 工作区页面：多工作区、素材库、制作路径图。
 ///
-/// 节点卡片只负责显示；下落、顶针、切割、堆叠、交换、复制、粘贴、删除
+/// 节点卡片只负责显示；下落、顶针、切割、旋转、堆叠、交换、复制、粘贴、删除、撤销
 /// 全部集中到标签行下方的工具条。
 /// </summary>
 public sealed class WorkspaceViewModel : ObservableObject
@@ -28,6 +29,8 @@ public sealed class WorkspaceViewModel : ObservableObject
 
     private const string ExchangeHint =
         "交换：再点一个节点作为第二个输入，Esc 取消。数据目录：";
+
+    private const int MaxUndoCount = 100;
 
     /// <summary>素材拖放时使用的数据格式，值为素材 Id。</summary>
     public const string MaterialDragFormat = "ShapeEditor.Material";
@@ -65,6 +68,13 @@ public sealed class WorkspaceViewModel : ObservableObject
 
     private string _hintText = DefaultHint;
 
+    /// <summary>
+    /// 工作区撤销栈：记录每次「生成节点」前已有的节点 Id，
+    /// 撤销时把这次新建的节点删掉（Core 的 Store 没有快照 / Save 公开入口，
+    /// 因此只回滚本层新增的结果节点，不回滚删除与拖动）。
+    /// </summary>
+    private readonly Stack<WorkspaceUndoEntry> _undoStack = new();
+
     public WorkspaceViewModel(
         WorkspaceStore? store = null)
     {
@@ -75,6 +85,8 @@ public sealed class WorkspaceViewModel : ObservableObject
         CollapseCommand = new RelayCommand(p => ApplyNode(p, "collapse"));
         PinCommand = new RelayCommand(p => ApplyNode(p, "pin"));
         CutCommand = new RelayCommand(p => ApplyNode(p, "cut"));
+        RotateCommand = new RelayCommand(p => ApplyRotate(p));
+        UndoCommand = new RelayCommand(Undo);
         StackCommand = new RelayCommand(_ => BeginStackFromToolbar());
         ExchangeCommand = new RelayCommand(_ => BeginExchangeFromToolbar());
         CopyCommand = new RelayCommand(_ => CopySelected());
@@ -120,6 +132,12 @@ public sealed class WorkspaceViewModel : ObservableObject
     public System.Windows.Input.ICommand PinCommand { get; }
 
     public System.Windows.Input.ICommand CutCommand { get; }
+
+    /// <summary>旋转：对选中节点顺时针旋转 1 个象限，生成「旋转」结果节点。</summary>
+    public System.Windows.Input.ICommand RotateCommand { get; }
+
+    /// <summary>撤销最近一次生成节点的操作。</summary>
+    public System.Windows.Input.ICommand UndoCommand { get; }
 
     public System.Windows.Input.ICommand StackCommand { get; }
 
@@ -169,6 +187,8 @@ public sealed class WorkspaceViewModel : ObservableObject
             _selectedTab = value;
 
             OnPropertyChanged();
+
+            ClearUndoHistory();
 
             if (value is not null)
             {
@@ -247,6 +267,9 @@ public sealed class WorkspaceViewModel : ObservableObject
         get => _hintText;
         private set => SetProperty(ref _hintText, value);
     }
+
+    /// <summary>是否有可撤销的「生成节点」操作。</summary>
+    public bool CanUndo => _undoStack.Count > 0;
 
     public bool IsCycleMode => _store.Mode == CollapseMode.IncludeCycles;
 
@@ -332,6 +355,13 @@ public sealed class WorkspaceViewModel : ObservableObject
 
     public void Refresh()
     {
+        if (_undoStack.Count > 0 &&
+            _undoStack.Peek().ProjectId != (_store.Active?.Id ?? ""))
+        {
+            // 工作区被外部切换（例如新建工作区）后，旧撤销记录不再适用
+            ClearUndoHistory();
+        }
+
         if (_stackFirstId is not null && _store.FindNode(_stackFirstId) is null)
         {
             // 第一个输入被删除或切换了工作区，堆叠待选自动取消
@@ -526,6 +556,121 @@ public sealed class WorkspaceViewModel : ObservableObject
         _store.SelectNode(node.Node);
     }
 
+    #region 撤销
+
+    /// <summary>
+    /// 操作前先记下已有的节点 Id；操作完成后用差集找出这次新建的节点。
+    /// </summary>
+    private HashSet<string> CaptureNodeIds()
+    {
+        return _store.Nodes
+            .Select(node => node.Id)
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// 把一次「生成节点」记进撤销栈。没有新建节点（例如定位到已有结果）时不记。
+    ///
+    /// WPF 的 Core WorkspaceStore 没有公开的快照 / Save 接口，
+    /// 因此这里按「新增节点 Id」记录，撤销时用 DeleteNode 删除；
+    /// 与 Web 的整图快照不同，删除与拖动不在撤销范围内。
+    /// </summary>
+    private void RecordCreatedNodes(
+        string label,
+        HashSet<string> before,
+        string? selectedBefore)
+    {
+        string[] created = _store.Nodes
+            .Where(node => !before.Contains(node.Id))
+            .Select(node => node.Id)
+            .ToArray();
+
+        if (created.Length == 0)
+        {
+            return;
+        }
+
+        _undoStack.Push(new WorkspaceUndoEntry(
+            label,
+            created,
+            selectedBefore,
+            _store.Active?.Id ?? ""));
+
+        while (_undoStack.Count > MaxUndoCount)
+        {
+            WorkspaceUndoEntry[] items = _undoStack.ToArray();
+
+            _undoStack.Clear();
+
+            for (int index = items.Length - 2;
+                 index >= 0;
+                 index--)
+            {
+                _undoStack.Push(items[index]);
+            }
+        }
+
+        OnPropertyChanged(nameof(CanUndo));
+    }
+
+    /// <summary>
+    /// 撤销最近一次生成节点的操作：删掉这次新增的节点（含其下游连线），
+    /// 并尽量把选中状态还给操作前的节点。
+    /// </summary>
+    public void Undo()
+    {
+        if (_undoStack.Count == 0)
+        {
+            return;
+        }
+
+        WorkspaceUndoEntry entry = _undoStack.Pop();
+
+        OnPropertyChanged(nameof(CanUndo));
+
+        if (entry.ProjectId != (_store.Active?.Id ?? ""))
+        {
+            // 跨工作区的历史不再适用，直接丢弃
+            _undoStack.Clear();
+
+            OnPropertyChanged(nameof(CanUndo));
+
+            HintText = "已切换工作区，撤销历史已清空。数据目录：";
+
+            return;
+        }
+
+        for (int index = entry.CreatedNodeIds.Count - 1;
+             index >= 0;
+             index--)
+        {
+            _store.DeleteNode(entry.CreatedNodeIds[index]);
+        }
+
+        WorkspaceNode? previous = entry.SelectedNodeId is null
+            ? null
+            : _store.FindNode(entry.SelectedNodeId);
+
+        _store.SelectNode(previous);
+
+        HintText = $"已撤销：{entry.Label}。数据目录：";
+    }
+
+    /// <summary>切换工作区后旧撤销记录不再适用。</summary>
+    private void ClearUndoHistory()
+    {
+        if (_undoStack.Count == 0)
+        {
+            return;
+        }
+
+        _undoStack.Clear();
+
+        OnPropertyChanged(nameof(CanUndo));
+    }
+
+    #endregion
+
     /// <summary>
     /// 拖动过程中实时重算与当前节点相连的连线。
     ///
@@ -718,6 +863,10 @@ public sealed class WorkspaceViewModel : ObservableObject
             return;
         }
 
+        HashSet<string> before = CaptureNodeIds();
+
+        string? selectedBefore = _store.SelectedNode?.Id;
+
         NodeActionResult result = operation switch
         {
             "pin" => _store.ApplyPin(source.Id),
@@ -742,6 +891,131 @@ public sealed class WorkspaceViewModel : ObservableObject
         PositionResult(source, result.Node, operation);
 
         _store.SelectNode(result.Node);
+
+        RecordCreatedNodes(
+            operation switch
+            {
+                "pin" => "顶针",
+                "cut" => "切割",
+                _ => "下落"
+            },
+            before,
+            selectedBefore);
+    }
+
+    /// <summary>
+    /// 旋转：把选中节点的图形顺时针旋转 1 个象限，生成一个新的「旋转」步骤。
+    ///
+    /// 与 Web 的 ApplyRotate 对齐：结果标题「旋转」、连线标签「旋转」、
+    /// 排在源节点正下方；旋转只重排象限，不改变层数与象限数。
+    ///
+    /// 这里不写 OpKey：Core 的 WorkspaceStore.RecomputeAll 还不认识 rotate，
+    /// 写了会被当成 collapse 重算，反而覆盖旋转结果；幂等判断改用「源节点 + 旋转连线」。
+    /// </summary>
+    private void ApplyRotate(
+        object? parameter)
+    {
+        WorkspaceNode? source = ResolveNode(parameter);
+
+        if (source is null)
+        {
+            return;
+        }
+
+        WorkspaceNode? existing = FindRotateResult(source);
+
+        if (existing is not null)
+        {
+            _store.SelectNode(existing);
+
+            HintText = "该节点已经旋转过，已定位到结果。数据目录：";
+
+            return;
+        }
+
+        ShapeDocument? document = _store.GetEffectiveDocument(source);
+
+        if (document is null)
+        {
+            MessageBox.Show(
+                "请先选择一个有图形的节点，再点“旋转”。",
+                "旋转",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+
+            return;
+        }
+
+        ShapeDocument rotated = ShapeOps.Rotate(document, 1);
+
+        Size sourceSize = WorkspaceLayout.SizeFor(
+            source,
+            document,
+            FallbackParts);
+
+        Rect sourceBounds = WorkspaceLayout.BoundsFor(source, sourceSize);
+
+        double x = sourceBounds.Left;
+
+        double y = sourceBounds.Bottom + 56;
+
+        HashSet<string> before = CaptureNodeIds();
+
+        string? selectedBefore = _store.SelectedNode?.Id;
+
+        WorkspaceNode created = _store.CreateNodeAtPoint(x, y);
+
+        created.Code = _exporter.Export(
+            rotated,
+            omitTopEmptyLayers: true);
+
+        created.Format = ShortCodeFormat.Full;
+
+        created.Layers = rotated.LayerCount;
+
+        created.Parts = rotated.PartCount;
+
+        created.IsResult = true;
+
+        created.Label = "旋转";
+
+        created.InputAId = source.Id;
+
+        /*
+         * 连线直接写进当前工作区的公开集合；
+         * 随后的 SetNodePosition 会触发 Store 的 Save + Changed，
+         * 把节点字段与这条连线一起落盘。
+         */
+        _store.Active?.Edges.Add(new WorkspaceEdge
+        {
+            FromId = source.Id,
+            ToId = created.Id,
+            Label = "旋转"
+        });
+
+        _store.SetNodePosition(created.Id, x, y);
+
+        _store.SelectNode(created);
+
+        RecordCreatedNodes("旋转", before, selectedBefore);
+
+        HintText = "已生成旋转结果。数据目录：";
+    }
+
+    /// <summary>
+    /// 找出该源节点已经生成过的旋转结果（按「源节点 + 旋转连线」判断，
+    /// 不依赖 OpKey，见 <see cref="ApplyRotate"/> 的说明）。
+    /// </summary>
+    private WorkspaceNode? FindRotateResult(
+        WorkspaceNode source)
+    {
+        return _store.Nodes.FirstOrDefault(node =>
+            node.Id != source.Id &&
+            node.Label == "旋转" &&
+            _store.Edges.Any(edge =>
+                edge.FromId == source.Id &&
+                edge.ToId == node.Id &&
+                edge.Label == "旋转"));
     }
 
     /// <summary>
@@ -834,6 +1108,12 @@ public sealed class WorkspaceViewModel : ObservableObject
         }
 
         _store.DeleteNode(node.Id);
+
+        /*
+         * 撤销栈只记录「这次新建了哪些节点」，无法还原被删除的节点；
+         * 删除后旧记录可能指向不存在的节点，直接清空避免误撤销。
+         */
+        ClearUndoHistory();
     }
 
     /// <summary>
@@ -913,6 +1193,10 @@ public sealed class WorkspaceViewModel : ObservableObject
             return false;
         }
 
+        HashSet<string> before = CaptureNodeIds();
+
+        string? selectedBefore = _store.SelectedNode?.Id;
+
         WorkspaceNode node = _store.CreateNodeAtPoint(
             x,
             y);
@@ -935,6 +1219,8 @@ public sealed class WorkspaceViewModel : ObservableObject
         }
 
         _store.SelectNode(node);
+
+        RecordCreatedNodes("加入素材", before, selectedBefore);
 
         HintText = $"已把素材 #{node.Seq} 加入画布。数据目录：";
 
@@ -1143,6 +1429,10 @@ public sealed class WorkspaceViewModel : ObservableObject
         WorkspaceNode first,
         WorkspaceNode second)
     {
+        HashSet<string> before = CaptureNodeIds();
+
+        string? selectedBefore = _store.SelectedNode?.Id;
+
         NodeActionResult result = _store.ComputeStackOf(
             first.Id,
             second.Id,
@@ -1178,6 +1468,8 @@ public sealed class WorkspaceViewModel : ObservableObject
             : $"{result.Message}数据目录：";
 
         _store.SelectNode(result.Node);
+
+        RecordCreatedNodes("堆叠", before, selectedBefore);
     }
 
     /// <summary>
@@ -1232,6 +1524,10 @@ public sealed class WorkspaceViewModel : ObservableObject
         WorkspaceNode first,
         WorkspaceNode second)
     {
+        HashSet<string> before = CaptureNodeIds();
+
+        string? selectedBefore = _store.SelectedNode?.Id;
+
         (NodeActionResult firstResult, NodeActionResult secondResult) =
             _store.ComputeExchange(
                 first.Id,
@@ -1277,6 +1573,8 @@ public sealed class WorkspaceViewModel : ObservableObject
             : $"{firstResult.Message}数据目录：";
 
         _store.SelectNode(firstResult.Node);
+
+        RecordCreatedNodes("交换", before, selectedBefore);
     }
 
     /// <summary>
@@ -1362,6 +1660,10 @@ public sealed class WorkspaceViewModel : ObservableObject
             return;
         }
 
+        HashSet<string> before = CaptureNodeIds();
+
+        string? selectedBefore = _store.SelectedNode?.Id;
+
         WorkspaceNode node = _store.CreateNodeAtPoint(
             80,
             80);
@@ -1376,6 +1678,8 @@ public sealed class WorkspaceViewModel : ObservableObject
             _clipParts);
 
         _store.SelectNode(node);
+
+        RecordCreatedNodes("粘贴", before, selectedBefore);
 
         HintText = "已粘贴到 (80, 80)。数据目录：";
     }
@@ -1569,6 +1873,8 @@ public sealed class WorkspaceViewModel : ObservableObject
         if (answer == MessageBoxResult.OK)
         {
             _store.ClearNodes();
+
+            ClearUndoHistory();
         }
     }
 
@@ -1603,6 +1909,16 @@ public sealed class WorkspaceViewModel : ObservableObject
 
     #endregion
 }
+
+/// <summary>
+/// 工作区撤销栈的一条记录：这次操作新建了哪些节点，
+/// 以及操作前选中的节点（撤销后尽量还原选中）。
+/// </summary>
+internal sealed record WorkspaceUndoEntry(
+    string Label,
+    IReadOnlyList<string> CreatedNodeIds,
+    string? SelectedNodeId,
+    string ProjectId);
 
 /// <summary>
 /// 标签页。

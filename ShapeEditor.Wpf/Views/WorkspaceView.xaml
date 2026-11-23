@@ -176,6 +176,19 @@
                     IsEnabled="{Binding HasSelectedNode}" />
 
             <Button Style="{StaticResource MiniButton}"
+                    Content="旋转"
+                    ToolTip="把选中节点顺时针旋转 90°，生成「旋转」结果节点"
+                    Command="{Binding RotateCommand}"
+                    CommandParameter="{Binding SelectedNode}"
+                    IsEnabled="{Binding HasSelectedNode}" />
+
+            <Button Style="{StaticResource MiniButton}"
+                    Content="撤销"
+                    ToolTip="撤销最近一次生成节点的操作（Ctrl+Z）"
+                    Command="{Binding UndoCommand}"
+                    IsEnabled="{Binding CanUndo}" />
+
+            <Button Style="{StaticResource MiniButton}"
                     Content="堆叠"
                     ToolTip="先选中第一个输入，点“堆叠”，再点第二个输入；Esc 取消"
                     Command="{Binding StackCommand}"

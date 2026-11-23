@@ -1,5 +1,6 @@
 using Microsoft.Maui.Controls;
 using Microsoft.Maui.Graphics;
+using ShapeEditor.Core.Analysis.Production;
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Services;
 
@@ -1544,6 +1545,56 @@ public partial class MainPage : ContentPage
         _document.MoveRightCircular();
 
         AfterDocumentChanged();
+    }
+
+    /// <summary>
+    /// 左右镜像：同一层内相邻象限成对交换（Q1↔Q2、Q3↔Q4 …）。
+    ///
+    /// 与上移 / 下移一致：先存撤销快照，再换文档、同步短代码、
+    /// 重绘并自动保存；层数与象限数不变，因此不需要同步尺寸输入框。
+    /// </summary>
+    private void MirrorHorizontalButton_Clicked(
+        object? sender,
+        EventArgs e)
+    {
+        SaveUndoState();
+
+        _document = ShapeOps.MirrorHorizontal(_document);
+
+        SyncCodeEntry();
+
+        AfterDocumentChanged();
+    }
+
+    /// <summary>
+    /// 上下镜像：层序整体反转（L1↔Ln、L2↔L(n−1) …）。
+    /// 撤销、短代码同步与自动保存行为同左右镜像。
+    /// </summary>
+    private void MirrorVerticalButton_Clicked(
+        object? sender,
+        EventArgs e)
+    {
+        SaveUndoState();
+
+        _document = ShapeOps.MirrorVertical(_document);
+
+        SyncCodeEntry();
+
+        AfterDocumentChanged();
+    }
+
+    /// <summary>
+    /// 把当前文档按当前代码格式导出，写回短代码输入框。
+    /// 镜像会换掉整个文档，输入框里的旧代码必须跟着换。
+    /// </summary>
+    private void SyncCodeEntry()
+    {
+        CodeEntry.Text = _exporter.Export(
+            _document,
+            _codeFormat,
+            omitTopEmptyLayers: true);
+
+        CodeErrorLabel.Text = "";
     }
 
     private void AfterDocumentChanged()

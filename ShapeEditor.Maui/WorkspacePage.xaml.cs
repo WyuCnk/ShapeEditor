@@ -187,6 +187,7 @@ public partial class WorkspacePage : ContentPage
         CollapseButton.IsEnabled = hasSelection;
         PinButton.IsEnabled = hasSelection;
         CutButton.IsEnabled = hasSelection;
+        RotateButton.IsEnabled = hasSelection;
 
         // 等待第二输入时也要能再点一次「堆叠」取消
         StackButton.IsEnabled = hasSelection || _stackFirstId is not null;

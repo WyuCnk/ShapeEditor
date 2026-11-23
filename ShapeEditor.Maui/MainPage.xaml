@@ -625,7 +625,9 @@ RowSpacing="2">
 
                 <Grid
             ColumnDefinitions="*,*,*,*"
-            ColumnSpacing="3">
+            RowDefinitions="Auto,Auto"
+            ColumnSpacing="3"
+            RowSpacing="3">
 
                     <Button
                 Text="上移"
@@ -649,6 +651,23 @@ RowSpacing="2">
                 Text="右移↻"
                 Style="{StaticResource CompactButtonStyle}"
                 Clicked="MoveRightButton_Clicked"/>
+
+                    <!-- 镜像：与上移 / 下移同一套撤销、短代码同步与自动保存 -->
+                    <Button
+                Grid.Row="1"
+                Grid.Column="0"
+                Grid.ColumnSpan="2"
+                Text="左右镜像"
+                Style="{StaticResource CompactButtonStyle}"
+                Clicked="MirrorHorizontalButton_Clicked"/>
+
+                    <Button
+                Grid.Row="1"
+                Grid.Column="2"
+                Grid.ColumnSpan="2"
+                Text="上下镜像"
+                Style="{StaticResource CompactButtonStyle}"
+                Clicked="MirrorVerticalButton_Clicked"/>
                 </Grid>
             </VerticalStackLayout>
 

@@ -4,6 +4,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
+using ShapeEditor.Core.Analysis.Production;
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Services;
 using ShapeEditor.Core.Theme;
@@ -153,6 +154,8 @@ public sealed class EditorViewModel : ObservableObject
         MoveDownCommand = new RelayCommand(MoveDown);
         MoveLeftCommand = new RelayCommand(MoveLeft);
         MoveRightCommand = new RelayCommand(MoveRight);
+        MirrorHorizontalCommand = new RelayCommand(MirrorHorizontal);
+        MirrorVerticalCommand = new RelayCommand(MirrorVertical);
         ClearCellCommand = new RelayCommand(ClearSelectedCell);
         AddToWorkspaceCommand = new RelayCommand(AddToWorkspace);
 
@@ -206,6 +209,12 @@ public sealed class EditorViewModel : ObservableObject
     public ICommand MoveLeftCommand { get; }
 
     public ICommand MoveRightCommand { get; }
+
+    /// <summary>左右镜像：同层相邻象限成对交换（Q1↔Q2、Q3↔Q4）。</summary>
+    public ICommand MirrorHorizontalCommand { get; }
+
+    /// <summary>上下镜像：层序整体反转（L1↔Ln）。</summary>
+    public ICommand MirrorVerticalCommand { get; }
 
     public ICommand ClearCellCommand { get; }
 
@@ -877,6 +886,51 @@ public sealed class EditorViewModel : ObservableObject
         Document.MoveRightCircular();
 
         AfterDocumentTransform();
+    }
+
+    /// <summary>
+    /// 左右镜像：同一层内相邻象限成对交换（Q1↔Q2、Q3↔Q4 …）。
+    ///
+    /// 与 Web 的 MirrorHorizontal 一致：先存撤销快照，再换成新图形、
+    /// 同步短代码，最后重绘并自动保存。
+    /// </summary>
+    public void MirrorHorizontal()
+    {
+        SaveUndoState();
+
+        Document = ShapeOps.MirrorHorizontal(Document);
+
+        SyncCodeAfterMirror();
+
+        AfterDocumentTransform();
+    }
+
+    /// <summary>
+    /// 上下镜像：整层倒序（L1↔Ln、L2↔L(n−1) …）。
+    ///
+    /// 撤销、短代码同步与自动保存行为同左右镜像。
+    /// </summary>
+    public void MirrorVertical()
+    {
+        SaveUndoState();
+
+        Document = ShapeOps.MirrorVertical(Document);
+
+        SyncCodeAfterMirror();
+
+        AfterDocumentTransform();
+    }
+
+    /// <summary>
+    /// 镜像改的是整个文档，短代码输入框要立即跟上，
+    /// 否则界面上的代码仍指向镜像前的图形（与 Web 一致）。
+    /// </summary>
+    private void SyncCodeAfterMirror()
+    {
+        Code = _exporter.Export(
+            Document,
+            Format,
+            omitTopEmptyLayers: true);
     }
 
     private void AfterDocumentTransform()

@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using ShapeEditor.Core.Analysis;
+using ShapeEditor.Core.Analysis.Production;
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Services;
 using ShapeEditor.Wpf.Controls;
@@ -101,6 +102,12 @@ public static class RenderRunner
 
             CheckWorkspaceExchange(
                 Path.Combine(outputDirectory, "workspace-exchange.txt"));
+
+            CheckEditorTransforms(
+                Path.Combine(outputDirectory, "editor-transforms.txt"));
+
+            CheckWorkspaceRotate(
+                Path.Combine(outputDirectory, "workspace-rotate.txt"));
 
             /*
              * 快捷键说明窗口用非模态 Show() 打开，
@@ -1565,6 +1572,276 @@ public static class RenderRunner
                 idempotent &&
                 cancelOk &&
                 recomputeOk;
+        }
+        catch (Exception exception)
+        {
+            lines.Add(exception.ToString());
+        }
+
+        lines.Insert(0, ok ? "PASS" : "FAIL");
+
+        File.WriteAllLines(path, lines);
+    }
+
+    /// <summary>
+    /// 编辑器镜像自检：左右镜像 Q1↔Q2、上下镜像层序反转、
+    /// 短代码同步、撤销回到镜像前。
+    /// </summary>
+    private static void CheckEditorTransforms(
+        string path)
+    {
+        var lines = new List<string>();
+
+        bool ok = false;
+
+        try
+        {
+            var viewModel = new EditorViewModel();
+
+            viewModel.Code = "CrP---Gu:ckckckck";
+
+            viewModel.ParseCode();
+
+            if (viewModel.HasError)
+            {
+                throw new InvalidOperationException(
+                    "示例短代码解析失败：" + viewModel.ErrorMessage);
+            }
+
+            var exporter = new ShortCodeExporter();
+
+            ShapeDocument before = viewModel.Document.Clone();
+
+            viewModel.MirrorHorizontal();
+
+            ShapeDocument horizontal = viewModel.Document;
+
+            bool horizontalCells =
+                before.LayerCount == horizontal.LayerCount &&
+                before.PartCount == horizontal.PartCount;
+
+            if (horizontalCells)
+            {
+                for (int layer = 0;
+                     layer < before.LayerCount && horizontalCells;
+                     layer++)
+                {
+                    for (int part = 0;
+                         part < before.PartCount && horizontalCells;
+                         part++)
+                    {
+                        horizontalCells = ShapeOps.SameCell(
+                            before[layer, part],
+                            horizontal[layer, part ^ 1]);
+                    }
+                }
+            }
+
+            bool horizontalCode =
+                viewModel.Code == exporter.Export(
+                    horizontal,
+                    ShortCodeFormat.Full,
+                    omitTopEmptyLayers: true);
+
+            lines.Add($"左右镜像单元格互换：{(horizontalCells ? "成功" : "失败")}");
+
+            lines.Add($"左右镜像短代码同步：{(horizontalCode ? "成功" : "失败")}");
+
+            viewModel.Undo();
+
+            bool horizontalUndo = ShapeOps.Same(before, viewModel.Document);
+
+            lines.Add($"左右镜像撤销：{(horizontalUndo ? "成功" : "失败")}");
+
+            // 上下镜像：重新解析原始图形，排除上一步撤销留下的状态
+            viewModel.Code = "CrP---Gu:ckckckck";
+
+            viewModel.ParseCode();
+
+            before = viewModel.Document.Clone();
+
+            viewModel.MirrorVertical();
+
+            ShapeDocument vertical = viewModel.Document;
+
+            bool verticalCells =
+                before.LayerCount == vertical.LayerCount &&
+                before.PartCount == vertical.PartCount;
+
+            if (verticalCells)
+            {
+                for (int layer = 0;
+                     layer < before.LayerCount && verticalCells;
+                     layer++)
+                {
+                    int mirroredLayer = before.LayerCount - 1 - layer;
+
+                    for (int part = 0;
+                         part < before.PartCount && verticalCells;
+                         part++)
+                    {
+                        verticalCells = ShapeOps.SameCell(
+                            before[layer, part],
+                            vertical[mirroredLayer, part]);
+                    }
+                }
+            }
+
+            bool verticalCode =
+                viewModel.Code == exporter.Export(
+                    vertical,
+                    ShortCodeFormat.Full,
+                    omitTopEmptyLayers: true);
+
+            lines.Add($"上下镜像层序反转：{(verticalCells ? "成功" : "失败")}");
+
+            lines.Add($"上下镜像短代码同步：{(verticalCode ? "成功" : "失败")}");
+
+            viewModel.Undo();
+
+            bool verticalUndo = ShapeOps.Same(before, viewModel.Document);
+
+            lines.Add($"上下镜像撤销：{(verticalUndo ? "成功" : "失败")}");
+
+            ok =
+                horizontalCells &&
+                horizontalCode &&
+                horizontalUndo &&
+                verticalCells &&
+                verticalCode &&
+                verticalUndo;
+        }
+        catch (Exception exception)
+        {
+            lines.Add(exception.ToString());
+        }
+
+        lines.Insert(0, ok ? "PASS" : "FAIL");
+
+        File.WriteAllLines(path, lines);
+    }
+
+    /// <summary>
+    /// 工作区旋转自检：生成「旋转」节点（顺时针 90°）、连线标签、
+    /// 排在源节点下方、短代码正确，并且撤销能删掉这个新节点。
+    /// </summary>
+    private static void CheckWorkspaceRotate(
+        string path)
+    {
+        var lines = new List<string>();
+
+        bool ok = false;
+
+        try
+        {
+            string storePath = Path.Combine(
+                Path.GetTempPath(),
+                $"shape-workspace-rotate-{Guid.NewGuid():N}.json");
+
+            var store = new WorkspaceStore(storePath);
+
+            var viewModel = new WorkspaceViewModel(store);
+
+            WorkspaceNode source = store.CreateNodeAtPoint(80, 60);
+
+            store.ReplaceNodeShape(
+                source.Id,
+                "CrP---Gu:ckckckck",
+                ShortCodeFormat.Full,
+                4,
+                4);
+
+            store.SelectNode(source);
+
+            WorkspaceNodeViewModel? sourceView = viewModel.Nodes
+                .FirstOrDefault(node => node.Id == source.Id);
+
+            if (sourceView is null)
+            {
+                throw new InvalidOperationException("旋转源节点没有出现在视图集合中。");
+            }
+
+            ShapeDocument? sourceDocument = store.GetEffectiveDocument(source);
+
+            if (sourceDocument is null)
+            {
+                throw new InvalidOperationException("旋转源节点没有图形。");
+            }
+
+            ShapeDocument expected = ShapeOps.Rotate(sourceDocument, 1);
+
+            Rect sourceBounds = WorkspaceLayout.BoundsFor(
+                source,
+                WorkspaceLayout.SizeFor(source, sourceDocument, 4));
+
+            double expectedX = Math.Round(sourceBounds.Left / 10) * 10;
+
+            double expectedY = Math.Round((sourceBounds.Bottom + 56) / 10) * 10;
+
+            viewModel.RotateCommand.Execute(sourceView);
+
+            WorkspaceNode? created = store.Nodes.FirstOrDefault(
+                node => node.Id != source.Id && node.Label == "旋转");
+
+            ShapeDocument? rotated = created is null
+                ? null
+                : store.GetEffectiveDocument(created);
+
+            bool titleOk = created is not null && created.Label == "旋转";
+
+            bool shapeOk =
+                rotated is not null &&
+                ShapeOps.Same(expected, rotated);
+
+            bool codeOk =
+                created is not null &&
+                created.Code == new ShortCodeExporter().Export(
+                    expected,
+                    ShortCodeFormat.Full,
+                    omitTopEmptyLayers: true);
+
+            bool edgeOk =
+                created is not null &&
+                store.Edges.Any(edge =>
+                    edge.FromId == source.Id &&
+                    edge.ToId == created.Id &&
+                    edge.Label == "旋转");
+
+            bool positionOk =
+                created is not null &&
+                Math.Abs((created.X ?? -1) - expectedX) < 0.1 &&
+                Math.Abs((created.Y ?? -1) - expectedY) < 0.1;
+
+            bool canUndo = viewModel.CanUndo;
+
+            viewModel.Undo();
+
+            bool undoOk =
+                created is not null &&
+                store.FindNode(created.Id) is null &&
+                store.FindNode(source.Id) is not null &&
+                !viewModel.CanUndo;
+
+            lines.Add($"旋转节点标题：{created?.Label ?? "缺失"}（{(titleOk ? "成功" : "失败")}）");
+
+            lines.Add($"顺时针 90°：{(shapeOk ? "成功" : "失败")}");
+
+            lines.Add($"短代码：{(codeOk ? "成功" : "失败")}");
+
+            lines.Add($"连线「旋转」：{(edgeOk ? "成功" : "失败")}");
+
+            lines.Add($"排在源节点下方：{(positionOk ? "成功" : "失败")}（期望 X={expectedX:0.##}，Y={expectedY:0.##}）");
+
+            lines.Add($"撤销：{(undoOk ? "成功" : "失败")}（撤销前可撤销：{(canUndo ? "是" : "否")}）");
+
+            ok =
+                titleOk &&
+                shapeOk &&
+                codeOk &&
+                edgeOk &&
+                positionOk &&
+                canUndo &&
+                undoOk;
         }
         catch (Exception exception)
         {

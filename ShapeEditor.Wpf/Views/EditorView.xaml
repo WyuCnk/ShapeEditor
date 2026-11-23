@@ -213,6 +213,18 @@
                                         Style="{StaticResource Button.Secondary}"
                                         Margin="3"
                                         ToolTip="同层象限循环右移（→）" />
+
+                                <Button Content="左右镜像"
+                                        Command="{Binding MirrorHorizontalCommand}"
+                                        Style="{StaticResource Button.Secondary}"
+                                        Margin="3"
+                                        ToolTip="同层相邻象限成对交换（Q1↔Q2、Q3↔Q4）" />
+
+                                <Button Content="上下镜像"
+                                        Command="{Binding MirrorVerticalCommand}"
+                                        Style="{StaticResource Button.Secondary}"
+                                        Margin="3"
+                                        ToolTip="层序整体反转（L1↔Ln），每层内容不变" />
                             </UniformGrid>
                         </StackPanel>
 
