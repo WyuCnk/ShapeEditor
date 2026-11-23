@@ -5,6 +5,8 @@ using ShapeEditor.Core.Analysis.Production;
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Physics;
 using ShapeEditor.Core.Services;
+using ShapeEditor.Presentation.Cards;
+using ShapeEditor.Wpf.Cards;
 using ShapeEditor.Wpf.Rendering;
 
 namespace ShapeEditor.Wpf.ViewModels;
@@ -64,6 +66,21 @@ public sealed class AnalysisViewModel : ObservableObject
 
     private ProductionPathGraph? _pathGraph;
 
+    /// <summary>
+    /// 三层工序卡片的数据投影（Presentation）。分析时按 <see cref="_document"/> 建一次并缓存，
+    /// 切换下落规则不会重跑 <see cref="CardBuilder"/>。
+    /// </summary>
+    private WorkOrderCardPresentation? _cards;
+
+    /// <summary>
+    /// 窗口与导出图共用的卡片视图（含 30px 预览图）。与 <see cref="_cards"/> 同源，
+    /// 导出时直接遍历这一份，不再重新建卡或重新画图。
+    /// </summary>
+    private WorkOrderCardVisualSet? _cardVisuals;
+
+    /// <summary><see cref="_cards"/> / <see cref="_cardVisuals"/> 对应的图形，用于失效判断。</summary>
+    private ShapeDocument? _cardsDocument;
+
     private string _pathSummary = "";
 
     /// <summary>制作路径结论的小字补充（目前只有「未覆盖」用）。</summary>
@@ -101,6 +118,9 @@ public sealed class AnalysisViewModel : ObservableObject
     private bool _isPathExchangeExpanded = true;
 
     private bool _isPathAnglesExpanded;
+
+    /// <summary>「工序卡片」区块默认展开。</summary>
+    private bool _isCardsExpanded = true;
 
     public AnalysisViewModel(
         string code,
@@ -225,6 +245,35 @@ public sealed class AnalysisViewModel : ObservableObject
     public bool HasPathGraph => _pathGraph is not null;
 
     /// <summary>
+    /// 三层工序卡片的数据投影；没有卡片（例如 n = 2）时为空。
+    /// 窗口与导出图共用这一份，不在导出时重新建卡。
+    /// </summary>
+    public WorkOrderCardPresentation? WorkOrderCards => _cards;
+
+    /// <summary>
+    /// 三层工序卡片的窗口 / 导出共用视图（含 30px 预览图）。
+    /// 与 <see cref="WorkOrderCards"/> 同源；为 null 时回退旧的制作路径渲染。
+    /// </summary>
+    public WorkOrderCardVisualSet? CardVisuals => _cardVisuals;
+
+    /// <summary>是否有三层工序卡片；有则用它替换旧的「交换工序」节点图与「角的工序」占位。</summary>
+    public bool HasWorkOrderCards => _cardVisuals is { HasCards: true };
+
+    /// <summary>
+    /// 旧「制作路径」区块（交换工序 + 角的工序）是否显示。
+    /// 有卡片集时整块让位给「工序卡片」，没有卡片（例如 n = 2）时保留。
+    /// </summary>
+    public bool ShowLegacyPathSection => HasPathSection && !HasWorkOrderCards;
+
+    /// <summary>工序卡片区块的汇总：总张数、分层张数与验证进度。</summary>
+    public string CardsSummary => _cardVisuals?.Summary ?? "没有工序卡片。";
+
+    /// <summary>整棵卡片树的说明（顶针 / 堆叠收尾、不可解原因）；没有时为空。</summary>
+    public string CardsNote => _cards?.Note ?? "";
+
+    public bool HasCardsNote => !string.IsNullOrWhiteSpace(CardsNote);
+
+    /// <summary>
     /// 全部交换方向（不截断），导出分析图时按轴分组使用。
     /// 奇数象限时为空。
     /// </summary>
@@ -238,8 +287,8 @@ public sealed class AnalysisViewModel : ObservableObject
     /// <summary>
     /// 当前下落规则下的制作路径结果。
     ///
-    /// 与页面展示、导出分析图共用同一份结果：在 <see cref="Analyze"/>
-    /// 里随稳定性、半边一起重算，切换下落规则后不会残留旧路径。
+    /// 与页面展示、导出分析图共用同一份结果：没有卡片集时在 <see cref="Analyze"/>
+    /// 里随稳定性、半边一起重算；有卡片集时为空（卡片已覆盖交换工序与角的工序）。
     /// </summary>
     public ProductionPathResult? GetProductionPath()
     {
@@ -306,6 +355,13 @@ public sealed class AnalysisViewModel : ObservableObject
     {
         get => _isPathAnglesExpanded;
         set => SetProperty(ref _isPathAnglesExpanded, value);
+    }
+
+    /// <summary>「工序卡片」区块默认展开；隐藏时只保留汇总，与 Web 一致。</summary>
+    public bool IsCardsExpanded
+    {
+        get => _isCardsExpanded;
+        set => SetProperty(ref _isCardsExpanded, value);
     }
 
     #endregion
@@ -419,10 +475,26 @@ public sealed class AnalysisViewModel : ObservableObject
         _half = HalfStabilityAnalyzer.Analyze(_document, _mode);
 
         /*
-         * 下落规则变了，制作路径必须跟稳定性、半边一起重算；
-         * 这里立即搜索一次，窗口展示与导出分析图使用同一份结果。
+         * 工序卡片只依赖图形本身，不依赖下落规则：按图形引用缓存，
+         * 切换下落规则时直接复用，不重复调用 CardBuilder。
+         *
+         * 有卡片集时，旧的「交换工序」节点图与「角的工序」占位由卡片替换，
+         * 不再运行 ProductionPathParser；没有卡片（例如 n = 2）才回退旧路径。
          */
-        UpdateProductionPath();
+        EnsureWorkOrderCards();
+
+        if (HasWorkOrderCards)
+        {
+            ClearProductionPath();
+        }
+        else
+        {
+            /*
+             * 下落规则变了，制作路径必须跟稳定性、半边一起重算；
+             * 这里立即搜索一次，窗口展示与导出分析图使用同一份结果。
+             */
+            UpdateProductionPath();
+        }
 
         _properties = ShapePropertyAnalyzer.Analyze(
             _document,
@@ -483,6 +555,13 @@ public sealed class AnalysisViewModel : ObservableObject
         OnPropertyChanged(nameof(HasPathOutcomeNote));
         OnPropertyChanged(nameof(PathGraph));
         OnPropertyChanged(nameof(HasPathGraph));
+        OnPropertyChanged(nameof(WorkOrderCards));
+        OnPropertyChanged(nameof(CardVisuals));
+        OnPropertyChanged(nameof(HasWorkOrderCards));
+        OnPropertyChanged(nameof(ShowLegacyPathSection));
+        OnPropertyChanged(nameof(CardsSummary));
+        OnPropertyChanged(nameof(CardsNote));
+        OnPropertyChanged(nameof(HasCardsNote));
         OnPropertyChanged(nameof(HasPathSection));
         OnPropertyChanged(nameof(HasProductionPath));
         OnPropertyChanged(nameof(HasHalfDirections));
@@ -514,6 +593,82 @@ public sealed class AnalysisViewModel : ObservableObject
 
             HalfAxisGroups.Add(new HalfAxisGroupViewModel(group.Key, visible));
         }
+    }
+
+    /// <summary>
+    /// 为当前图形构建一次三层工序卡片，并投影成窗口 / 导出共用视图。
+    ///
+    /// <para>
+    /// 缓存键是 <see cref="ShapeDocument"/> 的引用：切换下落规则不会重建卡片，
+    /// 只有解析出新图形时才重新调用 <see cref="CardBuilder.Build(ShapeDocument)"/>。
+    /// </para>
+    /// <para>
+    /// 建卡失败不应该让整页分析失败：吞掉异常并回退旧的「制作路径」渲染，
+    /// 页面至少不会变成空白（与 Web 的处理一致）。
+    /// </para>
+    /// </summary>
+    private void EnsureWorkOrderCards()
+    {
+        if (_document is null)
+        {
+            ClearWorkOrderCards();
+
+            return;
+        }
+
+        if (ReferenceEquals(_cardsDocument, _document))
+        {
+            return;
+        }
+
+        _cardsDocument = _document;
+
+        _cards = null;
+
+        _cardVisuals = null;
+
+        try
+        {
+            WorkOrderCardSet set = CardBuilder.Build(_document);
+
+            _cards = WorkOrderCardPresentation.Create(set);
+
+            _cardVisuals = _cards is null
+                ? null
+                : WorkOrderCardVisualSet.Create(_cards);
+        }
+        catch
+        {
+            // 卡片构建失败只影响「工序卡片」区块，回退旧渲染即可。
+            _cards = null;
+
+            _cardVisuals = null;
+        }
+    }
+
+    /// <summary>清空卡片缓存（解析失败或换图形时）。</summary>
+    private void ClearWorkOrderCards()
+    {
+        _cards = null;
+
+        _cardVisuals = null;
+
+        _cardsDocument = null;
+    }
+
+    /// <summary>
+    /// 有卡片集时清空旧的制作路径结果：卡片已经覆盖交换工序与角的工序，
+    /// 不再保留另一份可能与之矛盾的节点图。
+    /// </summary>
+    private void ClearProductionPath()
+    {
+        _pathResult = null;
+
+        _pathGraph = null;
+
+        _pathSummary = "";
+
+        _pathOutcomeNote = "";
     }
 
     /// <summary>
@@ -587,13 +742,9 @@ public sealed class AnalysisViewModel : ObservableObject
 
         _half = null;
 
-        _pathResult = null;
+        ClearProductionPath();
 
-        _pathGraph = null;
-
-        _pathSummary = "";
-
-        _pathOutcomeNote = "";
+        ClearWorkOrderCards();
 
         _properties = ShapeProperty.None;
 
@@ -630,6 +781,13 @@ public sealed class AnalysisViewModel : ObservableObject
         OnPropertyChanged(nameof(HasPathOutcomeNote));
         OnPropertyChanged(nameof(PathGraph));
         OnPropertyChanged(nameof(HasPathGraph));
+        OnPropertyChanged(nameof(WorkOrderCards));
+        OnPropertyChanged(nameof(CardVisuals));
+        OnPropertyChanged(nameof(HasWorkOrderCards));
+        OnPropertyChanged(nameof(ShowLegacyPathSection));
+        OnPropertyChanged(nameof(CardsSummary));
+        OnPropertyChanged(nameof(CardsNote));
+        OnPropertyChanged(nameof(HasCardsNote));
         OnPropertyChanged(nameof(HasPathSection));
         OnPropertyChanged(nameof(HasProductionPath));
         OnPropertyChanged(nameof(HasHalfDirections));

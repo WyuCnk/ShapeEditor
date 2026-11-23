@@ -1,6 +1,7 @@
 <Window x:Class="ShapeEditor.Wpf.Views.AnalysisWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:ShapeEditor.Wpf.Controls"
         xmlns:local="clr-namespace:ShapeEditor.Wpf.Views"
         Title="图形分析"
         Width="1000"
@@ -228,6 +229,367 @@
                     </Grid>
                 </Grid>
             </Grid>
+        </DataTemplate>
+        <!--
+            工序卡片：输入 / 前态 / 可见步骤 / 输出都按 30px 单元格 1:1 绘制，
+            尺寸来自 Presentation 的 CardMetrics，与旧制作路径节点保持一致。
+        -->
+        <DataTemplate x:Key="WorkOrderInputTemplate">
+            <Border Background="#FAF8FF"
+                    BorderBrush="#E6E2F2"
+                    BorderThickness="1"
+                    CornerRadius="8"
+                    Padding="8"
+                    Margin="0,0,12,8">
+                <StackPanel>
+                    <TextBlock Text="{Binding Title}"
+                               FontSize="11"
+                               FontWeight="SemiBold"
+                               Foreground="#6B6B76"
+                               Margin="0,0,0,6" />
+
+                    <Image Source="{Binding Preview.Preview}"
+                           Width="{Binding Preview.Width}"
+                           Height="{Binding Preview.Height}"
+                           Stretch="Fill"
+                           RenderOptions.BitmapScalingMode="HighQuality"
+                           SnapsToDevicePixels="True" />
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+
+        <!-- 可见步骤：操作名 + 该步输出图形；「→」画在节点之后，换行时不会出现在行首。 -->
+        <DataTemplate x:Key="WorkOrderStepTemplate">
+            <StackPanel Orientation="Horizontal"
+                        Margin="0,0,0,8">
+                <Border Width="{Binding Width}"
+                        Height="{Binding Height}"
+                        Background="{Binding FillBrush}"
+                        BorderBrush="{Binding AccentBrush}"
+                        BorderThickness="1.5"
+                        CornerRadius="10"
+                        Padding="7"
+                        ClipToBounds="True">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="26" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Grid.Row="0"
+                                   Text="{Binding Operation}"
+                                   FontSize="11"
+                                   FontWeight="SemiBold"
+                                   Foreground="#4A3F72"
+                                   TextTrimming="CharacterEllipsis" />
+
+                        <Image Grid.Row="1"
+                               Source="{Binding Preview.Preview}"
+                               Width="{Binding Preview.Width}"
+                               Height="{Binding Preview.Height}"
+                               Stretch="Fill"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               RenderOptions.BitmapScalingMode="HighQuality"
+                               SnapsToDevicePixels="True" />
+                    </Grid>
+                </Border>
+
+                <TextBlock Text="→"
+                           Width="18"
+                           TextAlignment="Center"
+                           FontSize="16"
+                           FontWeight="Bold"
+                           Foreground="#512BD4"
+                           VerticalAlignment="Center"
+                           Visibility="{Binding ShowArrow, Converter={StaticResource BoolToVis}}" />
+            </StackPanel>
+        </DataTemplate>
+
+        <!--
+            一张工序卡：标题 + 种类 + 半边 Mode + 验证标记 → 未验证警示 + Note
+            → 输入（多张并排）→ 前态（PreStateTitle + 图形）→ 可见步骤
+            → 输出（醒目边框）→ 角卡 Q1/Q2/Q4 小字。
+            未验证的卡不显示输入链（Presentation 已清空 Inputs，这里再按 HasInputs 兜一层）。
+        -->
+        <DataTemplate x:Key="WorkOrderCardTemplate">
+            <Border VerticalAlignment="Top"
+                    CornerRadius="10"
+                    Padding="12"
+                    BorderThickness="1">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Background" Value="#FFFFFF" />
+                        <Setter Property="BorderBrush" Value="#E6E2F2" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Verified}" Value="False">
+                                <Setter Property="Background" Value="#FFFAFA" />
+                                <Setter Property="BorderBrush" Value="#E7B6B6" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+
+                <StackPanel>
+                    <!-- 标题行：标题、种类、半边 Mode、验证标记 -->
+                    <WrapPanel>
+                        <TextBlock Text="{Binding Title}"
+                                   FontSize="14"
+                                   FontWeight="SemiBold"
+                                   Foreground="#3A3A44"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,8,2" />
+
+                        <Border Background="#EFEAF9"
+                                CornerRadius="10"
+                                Padding="7,1"
+                                Margin="0,0,6,2"
+                                VerticalAlignment="Center">
+                            <TextBlock Text="{Binding KindText}"
+                                       FontSize="11"
+                                       FontWeight="SemiBold"
+                                       Foreground="#512BD4" />
+                        </Border>
+
+                        <Border Background="#EEF1FC"
+                                CornerRadius="10"
+                                Padding="7,1"
+                                Margin="0,0,6,2"
+                                VerticalAlignment="Center"
+                                Visibility="{Binding HasModeText, Converter={StaticResource BoolToVis}}">
+                            <TextBlock Text="{Binding ModeText}"
+                                       FontSize="11"
+                                       FontWeight="SemiBold"
+                                       Foreground="#3F51B5" />
+                        </Border>
+
+                        <Border CornerRadius="10"
+                                Padding="7,1"
+                                Margin="0,0,6,2"
+                                VerticalAlignment="Center">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Background" Value="#EAF7EE" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Verified}" Value="False">
+                                            <Setter Property="Background" Value="#FDEAEA" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+
+                            <TextBlock Text="{Binding VerifiedText}"
+                                       FontSize="11"
+                                       FontWeight="SemiBold">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Foreground" Value="#2E7D32" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Verified}" Value="False">
+                                                <Setter Property="Foreground" Value="#C62828" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Border>
+                    </WrapPanel>
+
+                    <!-- 旧版 B 类·碎晶半边卡：只兼容历史数据，正常渲染并加降级说明 -->
+                    <Border Background="#FFFAEB"
+                            BorderBrush="#C9A227"
+                            BorderThickness="3,0,0,0"
+                            CornerRadius="6"
+                            Padding="8,6"
+                            Margin="0,6,0,6"
+                            Visibility="{Binding HasLegacyNote, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Text="{Binding LegacyNote}"
+                                   FontSize="12"
+                                   Foreground="#7A6415"
+                                   TextWrapping="Wrap" />
+                    </Border>
+
+                    <!-- 未验证：红色警示 + Note；不画输入链 -->
+                    <Border Background="#FDF6F6"
+                            BorderBrush="#D64545"
+                            BorderThickness="3,0,0,0"
+                            CornerRadius="6"
+                            Padding="8,6"
+                            Margin="0,6,0,6"
+                            Visibility="{Binding ShowWarning, Converter={StaticResource BoolToVis}}">
+                        <StackPanel>
+                            <TextBlock Text="未通过真实回放"
+                                       FontSize="12"
+                                       FontWeight="Bold"
+                                       Foreground="#C62828" />
+
+                            <TextBlock Text="{Binding Note}"
+                                       FontSize="12"
+                                       LineHeight="18"
+                                       Foreground="#5B5B66"
+                                       TextWrapping="Wrap"
+                                       Margin="0,4,0,0"
+                                       Visibility="{Binding HasNote, Converter={StaticResource BoolToVis}}" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 输入：上一层卡产物，多张并排 -->
+                    <StackPanel Margin="0,4,0,0"
+                                Visibility="{Binding HasInputs, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Text="输入（上一层卡产物）"
+                                   FontSize="12"
+                                   FontWeight="Bold"
+                                   Foreground="#4527A0"
+                                   Margin="0,0,0,6" />
+
+                        <ItemsControl ItemsSource="{Binding Inputs}"
+                                      ItemTemplate="{StaticResource WorkOrderInputTemplate}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel Orientation="Horizontal" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                        </ItemsControl>
+                    </StackPanel>
+
+                    <!-- 前态：输入之后、可见步骤之前；不是输入链 -->
+                    <StackPanel Margin="0,4,0,0"
+                                Visibility="{Binding HasPreState, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Text="{Binding PreStateSectionTitle}"
+                                   FontSize="12"
+                                   FontWeight="Bold"
+                                   Foreground="#5E35B1"
+                                   Margin="0,0,0,6" />
+
+                        <Border Background="#F6F4FF"
+                                BorderBrush="#B39DDD"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="8"
+                                HorizontalAlignment="Left">
+                            <Image Source="{Binding PreState.Preview}"
+                                   Width="{Binding PreState.Width}"
+                                   Height="{Binding PreState.Height}"
+                                   Stretch="Fill"
+                                   RenderOptions.BitmapScalingMode="HighQuality"
+                                   SnapsToDevicePixels="True" />
+                        </Border>
+                    </StackPanel>
+
+                    <!-- 可见步骤：操作名 + 该步输出图形 -->
+                    <StackPanel Margin="0,4,0,0"
+                                Visibility="{Binding HasSteps, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Text="{Binding StepsTitle}"
+                                   FontSize="12"
+                                   FontWeight="Bold"
+                                   Foreground="#4527A0"
+                                   Margin="0,0,0,6" />
+
+                        <ItemsControl ItemsSource="{Binding Steps}"
+                                      ItemTemplate="{StaticResource WorkOrderStepTemplate}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel Orientation="Horizontal" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                        </ItemsControl>
+                    </StackPanel>
+
+                    <TextBlock Text="没有可见步骤：旋转 / 废料 / 纯支撑交接等结构步骤已在 Core 中标记为隐藏。"
+                               FontSize="12"
+                               Foreground="#6B6B76"
+                               TextWrapping="Wrap"
+                               Margin="0,6,0,0"
+                               Visibility="{Binding ShowEmptySteps, Converter={StaticResource BoolToVis}}" />
+
+                    <!-- 输出：醒目边框 + 角卡小字 -->
+                    <StackPanel Margin="0,8,0,0">
+                        <StackPanel Orientation="Horizontal"
+                                    Margin="0,0,0,6">
+                            <TextBlock Text="输出"
+                                       FontSize="12"
+                                       FontWeight="Bold"
+                                       Foreground="#4527A0" />
+
+                            <TextBlock Text="{Binding OutputCaption}"
+                                       FontSize="11"
+                                       Foreground="#6B6B76"
+                                       Margin="6,0,0,0"
+                                       VerticalAlignment="Center"
+                                       Visibility="{Binding HasOutputCaption, Converter={StaticResource BoolToVis}}" />
+                        </StackPanel>
+
+                        <Border Background="#FAF8FF"
+                                BorderBrush="#512BD4"
+                                BorderThickness="2"
+                                CornerRadius="10"
+                                Padding="8"
+                                HorizontalAlignment="Left">
+                            <Image Source="{Binding Output.Preview}"
+                                   Width="{Binding Output.Width}"
+                                   Height="{Binding Output.Height}"
+                                   Stretch="Fill"
+                                   RenderOptions.BitmapScalingMode="HighQuality"
+                                   SnapsToDevicePixels="True" />
+                        </Border>
+
+                        <TextBlock Text="{Binding CornerCaption}"
+                                   FontSize="11"
+                                   Foreground="#6B6B76"
+                                   TextWrapping="Wrap"
+                                   Margin="0,6,0,0"
+                                   Visibility="{Binding HasCornerCaption, Converter={StaticResource BoolToVis}}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+
+        <!-- 一层工序卡片：左侧强调色条 + 层标题（带张数）+ 横向卡片列表 -->
+        <DataTemplate x:Key="WorkOrderCardLayerTemplate">
+            <Border Background="#FBFAFF"
+                    BorderBrush="#E6E2F2"
+                    BorderThickness="1"
+                    CornerRadius="10"
+                    Margin="0,0,0,12">
+                <Grid>
+                    <Rectangle Width="3"
+                               Fill="{Binding AccentBrush}"
+                               HorizontalAlignment="Left"
+                               Margin="0,10,0,10"
+                               RadiusX="1.5"
+                               RadiusY="1.5" />
+
+                    <StackPanel Margin="12,10,12,12">
+                        <StackPanel Orientation="Horizontal"
+                                    Margin="0,0,0,8">
+                            <TextBlock Text="{Binding Title}"
+                                       FontSize="14"
+                                       FontWeight="SemiBold"
+                                       Foreground="#3A3A44"
+                                       VerticalAlignment="Center" />
+
+                            <TextBlock Text="{Binding CountText}"
+                                       FontSize="11"
+                                       FontWeight="SemiBold"
+                                       Foreground="#6B6B76"
+                                       Margin="8,0,0,1"
+                                       VerticalAlignment="Bottom" />
+                        </StackPanel>
+
+                        <ItemsControl ItemsSource="{Binding Cards}"
+                                      ItemTemplate="{StaticResource WorkOrderCardTemplate}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <!-- 宽屏一行两张，窄屏 / 图形过宽时自动退回一行一张；尺寸来自 CardMetrics -->
+                                    <controls:WorkOrderCardPanel ItemGap="12"
+                                                                 MinCardWidth="{Binding CardMinWidth}"
+                                                                 MaxColumns="2" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                        </ItemsControl>
+                    </StackPanel>
+                </Grid>
+            </Border>
         </DataTemplate>
     </Window.Resources>
 
@@ -701,12 +1063,56 @@
                                 </StackPanel>
                             </Border>
 
-                            <!-- 制作路径：总开关 + 交换工序 / 角的工序 两个子区域 -->
+                            <!--
+                                工序卡片：分析时按 CardBuilder 建一次并缓存，
+                                有卡片集时用它替换旧的「交换工序」节点图与「角的工序」占位。
+                                层顺序固定为 交换工序 → 半边工序 → 角工序。
+                            -->
                             <Border Style="{StaticResource SectionPanel}"
                                     BorderThickness="0"
                                     Padding="0"
                                     Margin="0"
-                                    Visibility="{Binding HasPathSection, Converter={StaticResource BoolToVis}}">
+                                    Visibility="{Binding HasWorkOrderCards, Converter={StaticResource BoolToVis}}">
+                                <StackPanel>
+                                    <Grid Margin="0,0,0,6">
+                                        <TextBlock Text="工序卡片"
+                                                   Style="{StaticResource Text.SectionTitle}"
+                                                   Margin="0" />
+                                        <ToggleButton Style="{StaticResource SectionToggle}"
+                                                      HorizontalAlignment="Right"
+                                                      IsChecked="{Binding IsCardsExpanded, Mode=TwoWay}" />
+                                    </Grid>
+
+                                    <TextBlock Text="{Binding CardsSummary}"
+                                               FontSize="12"
+                                               Foreground="{StaticResource Brush.Text}"
+                                               TextWrapping="Wrap" />
+
+                                    <StackPanel Visibility="{Binding IsCardsExpanded, Converter={StaticResource BoolToVis}}">
+                                        <!-- 整棵卡片树的说明（顶针 / 堆叠收尾、不可解原因） -->
+                                        <TextBlock Text="{Binding CardsNote}"
+                                                   Style="{StaticResource Text.Hint}"
+                                                   Margin="0,4,0,0"
+                                                   Visibility="{Binding HasCardsNote, Converter={StaticResource BoolToVis}}" />
+
+                                        <TextBlock Style="{StaticResource Text.Hint}"
+                                                   Margin="0,6,0,0"
+                                                   Text="按「交换工序 → 半边工序 → 角工序」三层从外到内平铺，同一层内卡片横向成行，窄屏自动换行；每张卡显示标题、验证标记、输入（上一层卡产物）、前态、可见步骤与输出。前态画在输入之后、步骤之前（v4 半边卡 = 拆柱后（跌落前），角卡 = 工序起点）；v4 半边卡的可见步骤固定是「交换 → 拆柱 → 跌落」，没有碎晶步。旋转 / 废料 / 纯支撑交接等隐藏步骤不渲染；未验证的卡不显示输入链，只显示 Note。角卡输出已归一化到 Q1：Q1 目标角、Q2 右柱、Q4 左柱（n = 4）。" />
+
+                                        <ItemsControl x:Name="WorkOrderCardsRoot"
+                                                      ItemsSource="{Binding CardVisuals.Layers}"
+                                                      ItemTemplate="{StaticResource WorkOrderCardLayerTemplate}"
+                                                      Margin="0,10,0,0" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- 制作路径：总开关 + 交换工序 / 角的工序 两个子区域（无卡片集时回退） -->
+                            <Border Style="{StaticResource SectionPanel}"
+                                    BorderThickness="0"
+                                    Padding="0"
+                                    Margin="0"
+                                    Visibility="{Binding ShowLegacyPathSection, Converter={StaticResource BoolToVis}}">
                                 <StackPanel>
                                     <Grid Margin="0,0,0,6">
                                         <TextBlock Text="制作路径"

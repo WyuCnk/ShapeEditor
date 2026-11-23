@@ -7,7 +7,9 @@ using ShapeEditor.Core.Analysis;
 using ShapeEditor.Core.Analysis.Production;
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Services;
+using ShapeEditor.Presentation.Cards;
 using ShapeEditor.Wpf.Controls;
+using ShapeEditor.Wpf.Cards;
 using ShapeEditor.Wpf.Rendering;
 using ShapeEditor.Core.Workspaces;
 using ShapeEditor.Wpf.Services;
@@ -24,6 +26,14 @@ namespace ShapeEditor.Wpf.SelfTest;
 /// </summary>
 public static class RenderRunner
 {
+    /// <summary>验收图形：只有第 1–2 象限有材料，三层卡片全部通过真实回放。</summary>
+    private const string WorkOrderHalfOnlyExample =
+        "crCu----:CuCu----:--Cu----:CuCu----:--------:crcr----:P-cr----:Cucr----";
+
+    /// <summary>失败形态：半边1 / 交换卡未通过回放，展示红色警示且没有输入链。</summary>
+    private const string WorkOrderFailureExample =
+        "crCu----:CuCu----:--Cu----:CuCu----:--------:cr------:crcr----:crcr----:Cucr----:crcr----";
+
     public static int Run(
         string outputDirectory)
     {
@@ -82,8 +92,26 @@ public static class RenderRunner
             RenderAnalysisExport(
                 Path.Combine(outputDirectory, "analysis-export.png"));
 
+            RenderAnalysisCardsExport(
+                Path.Combine(outputDirectory, "analysis-export-cards.png"));
+
+            RenderAnalysisCardsFailureExport(
+                Path.Combine(outputDirectory, "analysis-export-cards-failure.png"));
+
+            RenderAnalysisCardsWindow(
+                Path.Combine(outputDirectory, "ui-analysis-cards.png"));
+
+            RenderAnalysisCardsFailureWindow(
+                Path.Combine(outputDirectory, "ui-analysis-cards-failure.png"));
+
+            RenderAnalysisFallbackWindow(
+                Path.Combine(outputDirectory, "ui-analysis-fallback.png"));
+
             CheckAnalysis(
                 Path.Combine(outputDirectory, "analysis-check.txt"));
+
+            CheckWorkOrderCards(
+                Path.Combine(outputDirectory, "cards-check.txt"));
 
             CheckBatchActions(
                 Path.Combine(outputDirectory, "batch-actions.txt"));
@@ -411,12 +439,8 @@ public static class RenderRunner
     {
         ShapeDocument document = CreateSampleDocument();
 
-        string code = new ShortCodeExporter().Export(
-            document,
-            omitTopEmptyLayers: false);
-
         var viewModel = new AnalysisViewModel(
-            code,
+            CreateSampleCode(document),
             document.LayerCount,
             document.PartCount,
             Core.Models.ShortCodeFormat.Full,
@@ -425,26 +449,99 @@ public static class RenderRunner
         AnalysisImageExporter.Export(path, viewModel);
     }
 
+    /// <summary>验收图形的导出图：与窗口消费同一份卡片视图。</summary>
+    private static void RenderAnalysisCardsExport(
+        string path)
+    {
+        AnalysisImageExporter.Export(
+            path,
+            new AnalysisViewModel(WorkOrderHalfOnlyExample));
+    }
+
+    /// <summary>失败形态的导出图：未验证卡的红色警示框。</summary>
+    private static void RenderAnalysisCardsFailureExport(
+        string path)
+    {
+        AnalysisImageExporter.Export(
+            path,
+            new AnalysisViewModel(WorkOrderFailureExample));
+    }
+
+    /// <summary>样例图形的完整短代码（保留顶部空层，便于与窗口尺寸对齐）。</summary>
+    private static string CreateSampleCode(
+        ShapeDocument document) =>
+        new ShortCodeExporter().Export(
+            document,
+            omitTopEmptyLayers: false);
+
     private static void RenderAnalysisWindow(
         string path)
     {
         ShapeDocument document = CreateSampleDocument();
 
-        string code = new ShortCodeExporter().Export(
-            document,
-            omitTopEmptyLayers: false);
-
         /*
-         * 分析窗口的入口在编辑器和工作区，这里直接按同样的参数构造，
-         * 显示到屏幕外再离屏渲染，检查 XAML、绑定与表格布局。
-         *
-         * 自检图需要同时看到半边稳定的「一轴一块」与制作路径的分层节点图，
+         * 自检图需要同时看到半边稳定的「一轴一块」与三层工序卡片，
          * 所以把窗口放大到能容纳整页内容（真实使用时由外层滚动查看）。
          */
+        RenderAnalysisPage(
+            CreateSampleCode(document),
+            path,
+            1160,
+            2600);
+    }
+
+    /// <summary>验收图形的三层工序卡片（全部已验证）渲染图。</summary>
+    private static void RenderAnalysisCardsWindow(
+        string path)
+    {
+        RenderAnalysisPage(
+            WorkOrderHalfOnlyExample,
+            path,
+            1160,
+            3000);
+    }
+
+    /// <summary>失败形态：未验证卡的红色警示 / Note / 无输入链渲染图。</summary>
+    private static void RenderAnalysisCardsFailureWindow(
+        string path)
+    {
+        RenderAnalysisPage(
+            WorkOrderFailureExample,
+            path,
+            1160,
+            3200);
+    }
+
+    /// <summary>没有卡片集（n = 2）时回退旧「制作路径」区块的渲染图。</summary>
+    private static void RenderAnalysisFallbackWindow(
+        string path)
+    {
+        RenderAnalysisPage(
+            "Cu",
+            path,
+            900,
+            1400,
+            layers: 1,
+            parts: 2);
+    }
+
+    /// <summary>
+    /// 把分析窗口的整页内容离屏渲染成一张 PNG。
+    /// 窗口放在屏幕外，外层 ScrollViewer 按无限高度排布内容，
+    /// 因此直接渲染它的内容元素就能得到完整一页。
+    /// </summary>
+    private static void RenderAnalysisPage(
+        string code,
+        string path,
+        double windowWidth,
+        double windowHeight,
+        int layers = 0,
+        int parts = 0)
+    {
         var window = new AnalysisWindow(
             code,
-            document.LayerCount,
-            document.PartCount,
+            layers,
+            parts,
             Core.Models.ShortCodeFormat.Full,
             Core.Physics.CollapseMode.IncludeCycles)
         {
@@ -454,8 +551,8 @@ public static class RenderRunner
             WindowStartupLocation = WindowStartupLocation.Manual,
             Left = -20000,
             Top = -20000,
-            Width = 1160,
-            Height = 2500,
+            Width = windowWidth,
+            Height = windowHeight,
             Opacity = 0
         };
 
@@ -464,7 +561,7 @@ public static class RenderRunner
         window.UpdateLayout();
 
         /*
-         * 正式界面里节点图容器限高 560，图更大时在容器内滚动。
+         * 正式界面里旧的节点图容器限高 560，图更大时在容器内滚动。
          * 自检图需要在同一张 PNG 里看到完整的分层 DAG，
          * 这里临时取消限高，让整页按节点图的实际高度排布。
          */
@@ -476,12 +573,6 @@ public static class RenderRunner
 
         if (window.AnalysisScroll?.Content is FrameworkElement page)
         {
-            /*
-             * 窗口高度会被桌面大小限制，屏幕外的窗口装不下整页内容。
-             * 外层 ScrollViewer 已按无限高度排布内容，因此直接渲染
-             * 它的内容元素就能得到「一整页」自检图：
-             * 半边稳定的一轴一块与制作路径的分层节点图都会出现在同一张图里。
-             */
             page.UpdateLayout();
 
             Thickness margin = page.Margin;
@@ -603,51 +694,45 @@ public static class RenderRunner
 
             viewModel.OnlyLegalDirections = true;
 
-            ProductionPathResult? productionPath =
-                viewModel.GetProductionPath();
-
-            bool pathReady = productionPath is not null;
-
-            bool pathSummaryReady =
-                !string.IsNullOrWhiteSpace(viewModel.PathSummary);
-
-            string initialPathSummary = viewModel.PathSummary;
-
-            ProductionPathGraph? initialGraph = viewModel.PathGraph;
-
-            int initialPathNodeCount = initialGraph?.Nodes.Count ?? 0;
-
-            int initialPathEdgeCount = initialGraph?.Edges.Count ?? 0;
-
-            // 节点图必须与 Core 的图结构一一对应，且使用 1:1 预览。
-            bool pathGraphReady =
-                productionPath?.Path is null ||
-                (initialGraph is not null &&
-                 initialGraph.Nodes.Count == productionPath.Path.Nodes.Count &&
-                 initialGraph.Edges.Count == productionPath.Path.Edges.Count);
-
             /*
-             * 4 象限样例：接入顶针/堆叠后为 19 节点 / 18 条边，
-             * 按层分布 4/4/4/2/2/1/1/1（新增 Block / Stack 行），
-             * 3 个废料节点（含末端废料）与 3 条废料箭头。
+             * 工序卡片：分析时按图形建一次并缓存。
+             * 有卡片集时，旧的 ProductionPathParser 不再运行，
+             * 窗口与导出都消费同一个 CardVisuals。
              */
-            string rowDistribution = initialGraph is null
-                ? ""
-                : string.Join(
-                    "/",
-                    initialGraph.Nodes
-                        .GroupBy(node => node.Row)
-                        .OrderBy(group => group.Key)
-                        .Select(group => group.Count()));
+            WorkOrderCardVisualSet? cardSet = viewModel.CardVisuals;
 
-            bool graphLayoutReady =
-                initialGraph is not null &&
-                initialPathNodeCount == 19 &&
-                initialPathEdgeCount == 18 &&
-                rowDistribution == "4/4/4/2/2/1/1/1" &&
-                initialGraph.Nodes.Count(node => node.IsWaste) == 3 &&
-                initialGraph.Edges.Count(edge => edge.IsWaste) == 3 &&
-                initialGraph.Nodes.All(node => node.Preview is not null);
+            bool cardsReady =
+                viewModel.HasWorkOrderCards &&
+                cardSet is not null &&
+                cardSet.Layers.Count == 3 &&
+                cardSet.Layers[0].Kind == WorkOrderCardLayerKind.Exchange &&
+                cardSet.Layers[1].Kind == WorkOrderCardLayerKind.Half &&
+                cardSet.Layers[2].Kind == WorkOrderCardLayerKind.Corner &&
+                cardSet.Layers[0].Cards.Count == 1 &&
+                cardSet.Layers[1].Cards.Count == 2 &&
+                cardSet.Layers[2].Cards.Count == 4 &&
+                cardSet.TotalCount == 7 &&
+                cardSet.VerifiedCount == 7;
+
+            bool cardPreviewsReady =
+                cardSet is not null &&
+                cardSet.Layers
+                    .SelectMany(layer => layer.Cards)
+                    .All(card =>
+                        card.Output.Preview is not null &&
+                        (card.PreState is null || card.PreState.Preview is not null) &&
+                        card.Inputs.All(input => input.Preview.Preview is not null) &&
+                        card.Steps.All(step => step.Preview.Preview is not null));
+
+            bool cardsReplaceLegacyPath =
+                viewModel.GetProductionPath() is null &&
+                viewModel.PathGraph is null &&
+                string.IsNullOrWhiteSpace(viewModel.PathSummary) &&
+                !viewModel.ShowLegacyPathSection;
+
+            string initialCardsSummary = viewModel.CardsSummary;
+
+            int initialCardCount = cardSet?.TotalCount ?? 0;
 
             // 制作路径分两区：交换工序默认显示，角的工序默认隐藏。
             bool pathSubSectionsReady =
@@ -662,25 +747,19 @@ public static class RenderRunner
                 !viewModel.IsCycleMode &&
                 !string.IsNullOrWhiteSpace(viewModel.StabilityText);
 
-            // 另建一个仅地面模式的实例，确认切换规则后制作路径确实按新规则重算。
-            var floorViewModel = new AnalysisViewModel(
-                code,
-                document.LayerCount,
-                document.PartCount,
-                Core.Models.ShortCodeFormat.Full,
-                Core.Physics.CollapseMode.FloorOnly);
-
-            bool pathFollowsMode =
-                viewModel.PathSummary == floorViewModel.PathSummary &&
-                (viewModel.PathGraph?.Nodes.Count ?? -1) ==
-                    (floorViewModel.PathGraph?.Nodes.Count ?? -1) &&
-                (viewModel.PathGraph?.Edges.Count ?? -1) ==
-                    (floorViewModel.PathGraph?.Edges.Count ?? -1);
+            /*
+             * 卡片只依赖图形，切换下落规则应复用缓存而不是重跑 CardBuilder；
+             * 这里用引用相等确认同一个视图对象被保留下来。
+             */
+            bool cardsReused =
+                ReferenceEquals(cardSet, viewModel.CardVisuals) &&
+                viewModel.HasWorkOrderCards &&
+                viewModel.CardVisuals?.TotalCount == initialCardCount &&
+                viewModel.CardsSummary == initialCardsSummary;
 
             /*
-             * 2 象限没有合法的交换方向：
-             * 「交换工序」整块隐藏，但「角的工序」占位仍在，
-             * 也不能退化成「不可制作」文本。
+             * 2 象限没有合法的交换方向，CardBuilder 也返回空卡片集：
+             * 保留旧的「制作路径」区块作为回退。
              */
             var noPathViewModel = new AnalysisViewModel(
                 "Cu",
@@ -688,6 +767,14 @@ public static class RenderRunner
                 2,
                 Core.Models.ShortCodeFormat.Full,
                 Core.Physics.CollapseMode.IncludeCycles);
+
+            bool cardsFallback =
+                noPathViewModel.HasDocument &&
+                !noPathViewModel.HasWorkOrderCards &&
+                noPathViewModel.CardVisuals is null &&
+                noPathViewModel.WorkOrderCards is null &&
+                noPathViewModel.ShowLegacyPathSection &&
+                noPathViewModel.HasPathSection;
 
             bool pathGateHidden =
                 noPathViewModel.HasDocument &&
@@ -701,12 +788,13 @@ public static class RenderRunner
             lines.Add($"稳定性：{viewModel.StabilityText}");
             lines.Add($"半边稳定性：{viewModel.HalfSummary}");
             lines.Add($"交换方向：{viewModel.ExchangeDirections.Count} 个，{halfAxisCount} 个轴块，默认仅合法：{(halfGroupsReady ? "成功" : "失败")}，取消勾选后全部方向：{(halfAllVisible ? "成功" : "失败")}");
-            lines.Add($"交换工序节点图：{initialPathNodeCount} 节点 / {initialPathEdgeCount} 箭头，行分布 {rowDistribution}，废料 {initialGraph?.Nodes.Count(node => node.IsWaste) ?? 0} 个，{(graphLayoutReady ? "成功" : "失败")}");
-            lines.Add($"制作路径：{initialPathSummary}（{initialPathNodeCount} 节点 / {initialPathEdgeCount} 箭头）");
+            lines.Add($"工序卡片：{cardSet?.TotalCount ?? 0} 张（交换 {cardSet?.Layers[0].Cards.Count ?? 0} / 半边 {cardSet?.Layers[1].Cards.Count ?? 0} / 角 {cardSet?.Layers[2].Cards.Count ?? 0}），已验证 {cardSet?.VerifiedCount ?? 0}/{cardSet?.TotalCount ?? 0}，{(cardsReady ? "成功" : "失败")}");
+            lines.Add($"卡片 30px 预览：{(cardPreviewsReady ? "成功" : "失败")}");
+            lines.Add($"有卡片时替换旧制作路径：{(cardsReplaceLegacyPath ? "成功" : "失败")}");
             lines.Add($"切换仅地面：{(modeSwitched ? "成功" : "失败")}");
-            lines.Add($"切换后制作路径重算：{(pathFollowsMode ? "成功" : "失败")}");
-            lines.Add($"制作路径分两区：{(pathSubSectionsReady ? "成功" : "失败")}");
-            lines.Add($"无合法交换方向时隐藏交换工序：{(pathGateHidden ? "成功" : "失败")}");
+            lines.Add($"切换后卡片缓存复用：{(cardsReused ? "成功" : "失败")}");
+            lines.Add($"制作路径分两区（旧开关保留）：{(pathSubSectionsReady ? "成功" : "失败")}");
+            lines.Add($"n=2 无卡片时回退旧制作路径：{(cardsFallback && pathGateHidden ? "成功" : "失败")}");
 
             ok = loaded &&
                  properties &&
@@ -715,13 +803,13 @@ public static class RenderRunner
                  halfDirections &&
                  halfGroupsReady &&
                  halfAllVisible &&
-                 pathReady &&
-                 pathSummaryReady &&
-                 pathGraphReady &&
-                 graphLayoutReady &&
+                 cardsReady &&
+                 cardPreviewsReady &&
+                 cardsReplaceLegacyPath &&
                  pathSubSectionsReady &&
                  modeSwitched &&
-                 pathFollowsMode &&
+                 cardsReused &&
+                 cardsFallback &&
                  pathGateHidden;
         }
         catch (Exception exception)
@@ -732,6 +820,330 @@ public static class RenderRunner
         lines.Insert(0, ok ? "PASS" : "FAIL");
 
         File.WriteAllLines(path, lines);
+    }
+
+    /// <summary>
+    /// 三层工序卡片自检：
+    /// <list type="number">
+    /// <item>验收图形 = 5 张卡（交换 1 / 半边 2 / 角 2），全部已验证；</item>
+    /// <item>半边1 = A 类·角产物交换，可见步骤 交换 → 拆柱 → 跌落，前态「拆柱后（跌落前）」；</item>
+    /// <item>角卡保留自己的碎晶步骤，交换卡只有交换、没有可见废料；</item>
+    /// <item>失败形态里未验证卡有红色警示 / Note，且没有输入链；</item>
+    /// <item>n = 2 没有卡片集时回退旧「制作路径」区块；</item>
+    /// <item>窗口里确实把三层卡片模板实例化出来（不是只有数据）。</item>
+    /// </list>
+    /// </summary>
+    private static void CheckWorkOrderCards(
+        string path)
+    {
+        var lines = new List<string>();
+
+        bool ok = false;
+
+        try
+        {
+            var viewModel = new AnalysisViewModel(WorkOrderHalfOnlyExample);
+
+            WorkOrderCardVisualSet? cards = viewModel.CardVisuals;
+
+            bool threeLayers =
+                cards is not null &&
+                viewModel.HasWorkOrderCards &&
+                cards.Layers.Count == 3 &&
+                cards.Layers[0].Title == "交换工序" &&
+                cards.Layers[1].Title == "半边工序" &&
+                cards.Layers[2].Title == "角工序" &&
+                cards.Layers[0].Cards.Count == 1 &&
+                cards.Layers[1].Cards.Count == 2 &&
+                cards.Layers[2].Cards.Count == 2 &&
+                cards.TotalCount == 5 &&
+                cards.VerifiedCount == 5;
+
+            WorkOrderCardViewModel? half1 = cards?.Layers[1].Cards[0];
+
+            string half1Steps = half1 is null
+                ? ""
+                : string.Join("→", half1.Steps.Select(step => step.Operation));
+
+            bool half1Ready =
+                half1 is { Verified: true } &&
+                half1.ModeText == "A 类 · 角产物交换" &&
+                half1.Inputs.Count == 2 &&
+                half1Steps == "交换→拆柱→跌落" &&
+                half1.Steps.All(step => step.Operation != "碎晶") &&
+                half1 is { HasPreState: true, PreStateTitle: "拆柱后（跌落前）" } &&
+                half1.PreStateSectionTitle == "前态 · 拆柱后（跌落前）";
+
+            WorkOrderCardViewModel[] corners = cards is null
+                ? Array.Empty<WorkOrderCardViewModel>()
+                : cards.Layers[2].Cards.ToArray();
+
+            bool cornersReady =
+                corners.Length == 2 &&
+                corners.All(card =>
+                    card.Verified &&
+                    card.Steps.Any(step => step.Operation == "碎晶") &&
+                    card.HasCornerCaption &&
+                    card.CornerCaption == "Q1 目标角 / Q2 右柱 / Q4 左柱" &&
+                    card.Output.Preview is not null);
+
+            WorkOrderCardViewModel? exchange = cards?.Layers[0].Cards[0];
+
+            bool exchangeReady =
+                exchange is { Verified: true } &&
+                exchange.Inputs.Count == 2 &&
+                exchange.Steps.Count == 1 &&
+                exchange.Steps[0].Operation == "交换";
+
+            bool noWaste =
+                cards is not null &&
+                cards.Layers
+                    .SelectMany(layer => layer.Cards)
+                    .SelectMany(card => card.Steps)
+                    .All(step => step.Operation != "废料");
+
+            bool previewsReady =
+                cards is not null &&
+                cards.Layers
+                    .SelectMany(layer => layer.Cards)
+                    .All(card =>
+                        card.Output.Preview is not null &&
+                        (card.PreState is null || card.PreState.Preview is not null) &&
+                        card.Inputs.All(input => input.Preview.Preview is not null) &&
+                        card.Steps.All(step => step.Preview.Preview is not null));
+
+            int cardCount = cards is null
+                ? 0
+                : cards.Layers.Sum(layer => layer.Cards.Count);
+
+            int exportCount = viewModel.WorkOrderCards?
+                .ToExportLayers()
+                .Sum(layer => layer.Count) ?? -1;
+
+            bool exportMirrorsCards =
+                viewModel.WorkOrderCards is not null &&
+                viewModel.WorkOrderCards.TotalCount == cardCount &&
+                exportCount == cardCount;
+
+            /*
+             * 失败形态：半边1 与交换卡未通过回放，必须显示红色警示 + Note，
+             * 而且不显示输入链。
+             */
+            var failureViewModel = new AnalysisViewModel(WorkOrderFailureExample);
+
+            WorkOrderCardVisualSet? failureCards = failureViewModel.CardVisuals;
+
+            WorkOrderCardViewModel? failureHalf = failureCards?.Layers[1].Cards[0];
+
+            WorkOrderCardViewModel? failureExchange = failureCards?.Layers[0].Cards[0];
+
+            bool failureReady =
+                failureCards is { TotalCount: 5, VerifiedCount: 3 } &&
+                failureHalf is
+                {
+                    Verified: false,
+                    ShowWarning: true,
+                    HasNote: true,
+                    HasInputs: false
+                } &&
+                failureExchange is
+                {
+                    Verified: false,
+                    ShowWarning: true,
+                    HasNote: true,
+                    HasInputs: false
+                } &&
+                failureHalf.Inputs.Count == 0 &&
+                failureExchange.Inputs.Count == 0;
+
+            /*
+             * 回退：n = 2 时 CardBuilder 返回空卡片集，
+             * 旧的「制作路径」区块必须保留。
+             */
+            var fallbackViewModel = new AnalysisViewModel(
+                "Cu",
+                1,
+                2,
+                Core.Models.ShortCodeFormat.Full,
+                Core.Physics.CollapseMode.IncludeCycles);
+
+            bool fallbackReady =
+                fallbackViewModel.HasDocument &&
+                !fallbackViewModel.HasWorkOrderCards &&
+                fallbackViewModel.CardVisuals is null &&
+                fallbackViewModel.ShowLegacyPathSection;
+
+            bool windowLayout =
+                CheckWorkOrderCardWindowLayout(
+                    WorkOrderHalfOnlyExample,
+                    expectedCards: 5,
+                    windowWidth: 1200,
+                    expectTwoColumns: true,
+                    out string windowLayoutDetail) &&
+                CheckWorkOrderCardWindowLayout(
+                    WorkOrderHalfOnlyExample,
+                    expectedCards: 5,
+                    windowWidth: 900,
+                    expectTwoColumns: false,
+                    out _) &&
+                CheckWorkOrderCardWindowLayout(
+                    WorkOrderFailureExample,
+                    expectedCards: 5,
+                    windowWidth: 1200,
+                    expectTwoColumns: true,
+                    out _);
+
+            lines.Add($"验收图形卡片：{(threeLayers ? "通" : "失")}（层 {cards?.Layers.Count ?? 0}，共 {cardCount} 张，已验证 {cards?.VerifiedCount ?? 0}）");
+            lines.Add($"半边1：{(half1Ready ? "通" : "失")}（{half1?.ModeText}，步骤 {half1Steps}，前态 {half1?.PreStateSectionTitle}）");
+            lines.Add($"角卡保留碎晶 / Q1/Q2/Q4 小字：{(cornersReady ? "通" : "失")}");
+            lines.Add($"交换卡只有交换、无可见废料：{(exchangeReady && noWaste ? "通" : "失")}");
+            lines.Add($"卡片 30px 预览：{(previewsReady ? "通" : "失")}");
+            lines.Add($"导出与窗口同源：{(exportMirrorsCards ? "通" : "失")}（导出 {exportCount} 张）");
+            lines.Add($"失败形态红色警示 / Note / 无输入链：{(failureReady ? "通" : "失")}");
+            lines.Add($"n=2 回退旧制作路径：{(fallbackReady ? "通" : "失")}");
+            lines.Add($"窗口实例化三层卡片模板：{(windowLayout ? "通" : "失")}（{windowLayoutDetail}）");
+
+            ok = threeLayers &&
+                 half1Ready &&
+                 cornersReady &&
+                 exchangeReady &&
+                 noWaste &&
+                 previewsReady &&
+                 exportMirrorsCards &&
+                 failureReady &&
+                 fallbackReady &&
+                 windowLayout;
+        }
+        catch (Exception exception)
+        {
+            lines.Add(exception.ToString());
+        }
+
+        lines.Insert(0, ok ? "PASS" : "FAIL");
+
+        File.WriteAllLines(path, lines);
+    }
+
+    /// <summary>
+    /// 打开分析窗口并确认三层卡片的 ItemsControl 与卡片面板都实例化出预期数量。
+    /// </summary>
+    private static bool CheckWorkOrderCardWindowLayout(
+        string code,
+        int expectedCards,
+        double windowWidth,
+        bool expectTwoColumns,
+        out string detail)
+    {
+        detail = "";
+
+        var window = new AnalysisWindow(
+            code,
+            0,
+            0,
+            Core.Models.ShortCodeFormat.Full,
+            Core.Physics.CollapseMode.IncludeCycles)
+        {
+            ShowInTaskbar = false,
+            WindowStyle = WindowStyle.None,
+            ResizeMode = ResizeMode.NoResize,
+            WindowStartupLocation = WindowStartupLocation.Manual,
+            Left = -20000,
+            Top = -20000,
+            Width = windowWidth,
+            Height = 2600,
+            Opacity = 0
+        };
+
+        try
+        {
+            window.Show();
+
+            window.UpdateLayout();
+
+            if (window.ViewModel?.HasWorkOrderCards != true ||
+                window.WorkOrderCardsRoot.Items.Count != 3)
+            {
+                return false;
+            }
+
+            WorkOrderCardPanel[] panels = FindVisualChildren<WorkOrderCardPanel>(window)
+                .ToArray();
+
+            int realizedCards = panels.Sum(panel => panel.Children.Count);
+
+            if (panels.Length > 0 &&
+                panels[0].Children.Count > 0 &&
+                panels[0].Children[0] is FrameworkElement firstCard)
+            {
+                detail =
+                    $"层宽 {panels[0].ActualWidth:0} / 卡宽 {firstCard.ActualWidth:0}";
+            }
+
+            bool singleCardSpansRow =
+                panels.Length == 0 ||
+                panels[0].Children.Count != 1 ||
+                !(panels[0].Children[0] is FrameworkElement only) ||
+                Math.Abs(only.ActualWidth - panels[0].ActualWidth) < 1;
+
+            // 半边层有 2 张卡：宽屏时两张并排，窄屏时各占整行。
+            bool columnsReady = true;
+
+            if (panels.Length > 1 &&
+                panels[1].Children.Count == 2 &&
+                panels[1].Children[0] is FrameworkElement leftCard &&
+                panels[1].Children[1] is FrameworkElement rightCard)
+            {
+                if (expectTwoColumns)
+                {
+                    columnsReady =
+                        leftCard.ActualWidth < panels[1].ActualWidth - 1 &&
+                        rightCard.ActualWidth < panels[1].ActualWidth - 1;
+                }
+                else
+                {
+                    columnsReady =
+                        Math.Abs(leftCard.ActualWidth - panels[1].ActualWidth) < 1 &&
+                        Math.Abs(rightCard.ActualWidth - panels[1].ActualWidth) < 1;
+                }
+
+                detail =
+                    $"层宽 {panels[1].ActualWidth:0} / 卡宽 " +
+                    $"{leftCard.ActualWidth:0}+{rightCard.ActualWidth:0}" +
+                    (expectTwoColumns ? "（两列）" : "（单列）");
+            }
+
+            return panels.Length == 3 &&
+                   realizedCards == expectedCards &&
+                   singleCardSpansRow &&
+                   columnsReady;
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>在可视树里查找指定类型的子元素。</summary>
+    private static IEnumerable<T> FindVisualChildren<T>(
+        DependencyObject root)
+        where T : DependencyObject
+    {
+        int count = VisualTreeHelper.GetChildrenCount(root);
+
+        for (int index = 0; index < count; index++)
+        {
+            DependencyObject child = VisualTreeHelper.GetChild(root, index);
+
+            if (child is T match)
+            {
+                yield return match;
+            }
+
+            foreach (T descendant in FindVisualChildren<T>(child))
+            {
+                yield return descendant;
+            }
+        }
     }
 
     /// <summary>
