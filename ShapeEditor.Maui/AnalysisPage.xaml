@@ -121,6 +121,18 @@
                         Style="{StaticResource ModeButton}"
                         Clicked="OnModeClicked" />
 
+                <Button x:Name="ExportImageButton"
+                        Text="导出图"
+                        FontSize="12"
+                        HeightRequest="32"
+                        CornerRadius="8"
+                        Padding="12,0"
+                        MinimumWidthRequest="0"
+                        MinimumHeightRequest="0"
+                        BackgroundColor="#EFEAF9"
+                        TextColor="#512BD4"
+                        Clicked="OnExportImageClicked" />
+
                 <Button Text="返回"
                         FontSize="12"
                         HeightRequest="32"
@@ -340,8 +352,45 @@
                         </VerticalStackLayout>
                     </Border>
 
-                    <!-- 6. 制作路径：总开关 + 交换工序 / 角的工序两个独立开关 -->
-                    <Border Style="{StaticResource SectionCard}">
+                    <!-- 6. 工序卡片：交换 → 半边 → 角；无卡片集时回退下面的制作路径 -->
+                    <Border x:Name="CardsSection"
+                            Style="{StaticResource SectionCard}"
+                            IsVisible="False">
+                        <VerticalStackLayout Spacing="4">
+
+                            <Grid ColumnDefinitions="*,Auto"
+                                  ColumnSpacing="8">
+                                <Label Text="工序卡片"
+                                       Style="{StaticResource SectionTitle}" />
+                                <Button x:Name="CardsToggleButton"
+                                        Grid.Column="1"
+                                        Text="隐藏"
+                                        Style="{StaticResource SectionToggle}"
+                                        Clicked="OnSectionToggleClicked" />
+                            </Grid>
+
+                            <VerticalStackLayout x:Name="CardsBody"
+                                                 Spacing="6">
+
+                                <Label x:Name="CardsSummaryLabel"
+                                       Style="{StaticResource BodyText}" />
+
+                                <Label x:Name="CardsNoteLabel"
+                                       Style="{StaticResource MutedText}"
+                                       IsVisible="False" />
+
+                                <Label Text="按「交换工序 → 半边工序 → 角工序」三层平铺，同一层内卡片纵向排列；每张卡内部按「输入 → 前态 → 可见步骤 → 输出」横向流式排列，窄屏时自动换行。未验证的卡只显示红色警示与 Note，不显示输入链；角卡输出已归一化到 Q1。"
+                                       Style="{StaticResource MutedText}" />
+
+                                <VerticalStackLayout x:Name="CardsHost"
+                                                     Spacing="12" />
+                            </VerticalStackLayout>
+                        </VerticalStackLayout>
+                    </Border>
+
+                    <!-- 7. 制作路径：无卡片集（例如 n = 2）时回退显示 -->
+                    <Border x:Name="PathSection"
+                            Style="{StaticResource SectionCard}">
                         <VerticalStackLayout Spacing="4">
 
                             <Grid ColumnDefinitions="*,Auto"

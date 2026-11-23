@@ -5,6 +5,8 @@ using ShapeEditor.Core.Analysis.Production;
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Physics;
 using ShapeEditor.Core.Services;
+using ShapeEditor.Maui.Cards;
+using ShapeEditor.Presentation.Cards;
 
 namespace ShapeEditor.Maui;
 
@@ -14,12 +16,13 @@ namespace ShapeEditor.Maui;
 /// 只调用 Core 已有的分析器，不在界面里重复判定逻辑；
 /// 切换下落规则时整体重新分析一次。布局是单栏 ScrollView，
 /// 从上到下：竖式图、图形性质、角的合法性、稳定性、半边稳定性、
-/// 制作路径、角的判定规则。
+/// 工序卡片（交换 → 半边 → 角）、制作路径、角的判定规则。
 ///
 /// 与 Web 分析页对齐的交互：
 /// 每个板块都有独立的显示 / 隐藏开关；角的合法性折叠后仍显示角数摘要；
 /// 半边稳定性一轴一卡、只显示合法方向的开关只影响页面；
-/// 制作路径分成「交换工序」（分层 DAG）与「角的工序」（占位）两个独立开关。
+/// 有卡片集时用「工序卡片」替换旧的「制作路径」（交换工序节点图 + 角的工序占位），
+/// 没有卡片集（例如 n = 2）时回退旧渲染。
 /// </summary>
 public partial class AnalysisPage : ContentPage
 {
@@ -82,6 +85,17 @@ public partial class AnalysisPage : ContentPage
 
     private HalfStabilityResult? _half;
 
+    /// <summary>
+    /// 三层工序卡片：只在解析出新图形时由 CardBuilder 建一次并缓存，
+    /// 切换下落规则不会重建；页面与导出图共用这一份。
+    /// </summary>
+    private WorkOrderCardPresentation? _cards;
+
+    private ShapeDocument? _cardsDocument;
+
+    /// <summary>导出图：与页面消费同一个 <see cref="_cards"/>。</summary>
+    private readonly ShapeImageExporter _imageExporter = new();
+
     private CollapseMode _mode = CollapseMode.IncludeCycles;
 
     private string _code = "";
@@ -108,6 +122,8 @@ public partial class AnalysisPage : ContentPage
         RegisterSection(StabilityToggleButton, StabilityBody);
 
         RegisterSection(HalfToggleButton, HalfBody);
+
+        RegisterSection(CardsToggleButton, CardsBody);
 
         RegisterSection(PathToggleButton, PathBody);
 
@@ -287,6 +303,52 @@ public partial class AnalysisPage : ContentPage
         }
     }
 
+    /// <summary>
+    /// 导出当前分析图：竖式图 + 三层工序卡片。
+    /// 卡片直接复用分析阶段缓存好的 <see cref="_cards"/>，导出时不重跑 CardBuilder。
+    /// </summary>
+    private async void OnExportImageClicked(
+        object? sender,
+        EventArgs e)
+    {
+        if (_document is null || string.IsNullOrWhiteSpace(_code))
+        {
+            await DisplayAlertAsync("导出图", "还没有可导出的分析结果。", "好");
+
+            return;
+        }
+
+        try
+        {
+            string filePath = await _imageExporter.ExportAnalysisPng(
+                _document,
+                _code,
+                _cards,
+                includeCode: true);
+
+            if (!File.Exists(filePath))
+            {
+                throw new FileNotFoundException(
+                    "图片文件没有成功生成。",
+                    filePath);
+            }
+
+            await Share.Default.RequestAsync(
+                new ShareFileRequest
+                {
+                    Title = "分享分析图",
+                    File = new ShareFile(filePath)
+                });
+        }
+        catch (Exception exception)
+        {
+            await DisplayAlertAsync(
+                "导出失败",
+                exception.Message,
+                "确定");
+        }
+    }
+
     #endregion
 
     #region 分析
@@ -348,6 +410,8 @@ public partial class AnalysisPage : ContentPage
 
         _half = half;
 
+        EnsureCards(document);
+
         RenderPreview(document);
 
         RenderProperties(properties);
@@ -357,6 +421,8 @@ public partial class AnalysisPage : ContentPage
         RenderStability(analysis);
 
         RenderHalfStability(document, half);
+
+        RenderCards();
 
         RenderProductionPath(path, half);
     }
@@ -384,6 +450,12 @@ public partial class AnalysisPage : ContentPage
         PathOutcomeNoteLabel.Text = "";
 
         PathOutcomeNoteLabel.IsVisible = false;
+
+        CardsSummaryLabel.Text = "";
+
+        CardsNoteLabel.Text = "";
+
+        CardsNoteLabel.IsVisible = false;
     }
 
     private void RenderPreview(
@@ -676,13 +748,87 @@ public partial class AnalysisPage : ContentPage
     }
 
     /// <summary>
-    /// 制作路径：交换工序只在可交换时出现；角的工序始终占位。
-    /// 两块各自有独立开关，外层「制作路径」总开关由板块开关统一管理。
+    /// 三层工序卡片：按 <see cref="ShapeDocument"/> 的引用缓存。
+    ///
+    /// <para>
+    /// <see cref="CardBuilder.Build(ShapeDocument)"/> 只依赖图形，不依赖下落规则；
+    /// 切换「含循环支撑 / 仅地面」时复用同一份卡片，不重复建卡。
+    /// 建卡失败只影响卡片板块，页面回退旧的「制作路径」。
+    /// </para>
+    /// </summary>
+    private void EnsureCards(
+        ShapeDocument document)
+    {
+        if (ReferenceEquals(_cardsDocument, document))
+        {
+            return;
+        }
+
+        _cardsDocument = document;
+
+        _cards = null;
+
+        CardsHost.Clear();
+
+        try
+        {
+            WorkOrderCardSet set = CardBuilder.Build(document);
+
+            _cards = WorkOrderCardPresentation.Create(set);
+
+            if (_cards is { HasCards: true })
+            {
+                CardsHost.Add(WorkOrderCardViewFactory.Build(_cards));
+            }
+        }
+        catch
+        {
+            // 卡片构建失败不应让整页分析失败，回退旧渲染即可。
+            _cards = null;
+
+            CardsHost.Clear();
+        }
+    }
+
+    /// <summary>
+    /// 显示 / 隐藏工序卡片板块。有卡片集时不再显示旧的「制作路径」，
+    /// 避免同一份分析出现两套可能矛盾的节点图。
+    /// </summary>
+    private void RenderCards()
+    {
+        if (_cards is not { HasCards: true })
+        {
+            CardsSection.IsVisible = false;
+
+            return;
+        }
+
+        CardsSummaryLabel.Text = WorkOrderCardViewFactory.BuildSummary(_cards);
+
+        CardsNoteLabel.Text = _cards.Note ?? "";
+
+        CardsNoteLabel.IsVisible = !string.IsNullOrWhiteSpace(_cards.Note);
+
+        CardsSection.IsVisible = true;
+    }
+
+    /// <summary>
+    /// 制作路径：无卡片集时回退显示（例如 n = 2 没有半边层）。
+    /// 有卡片集时整块隐藏，卡片板块已经覆盖交换工序与角工序。
     /// </summary>
     private void RenderProductionPath(
         ProductionPathResult path,
         HalfStabilityResult half)
     {
+        bool hasCards = _cards is { HasCards: true };
+
+        PathSection.IsVisible = !hasCards;
+
+        if (hasCards)
+        {
+            return;
+        }
+
         PathExchangeSection.IsVisible = half.IsExchangeable;
 
         if (!half.IsExchangeable)
@@ -852,6 +998,8 @@ public partial class AnalysisPage : ContentPage
 
         _previewDocument = null;
 
+        ClearWorkOrderCards();
+
         PreviewView.Drawable = null;
 
         ContentPanel.IsVisible = false;
@@ -875,6 +1023,8 @@ public partial class AnalysisPage : ContentPage
 
         _previewDocument = null;
 
+        ClearWorkOrderCards();
+
         PreviewView.Drawable = null;
 
         ContentPanel.IsVisible = false;
@@ -886,6 +1036,18 @@ public partial class AnalysisPage : ContentPage
         ErrorLabel.IsVisible = true;
 
         CodeLabel.Text = string.IsNullOrWhiteSpace(_code) ? "—" : _code;
+    }
+
+    /// <summary>清空卡片缓存与页面上的卡片控件（换图形 / 解析失败时）。</summary>
+    private void ClearWorkOrderCards()
+    {
+        _cards = null;
+
+        _cardsDocument = null;
+
+        CardsHost.Clear();
+
+        CardsSection.IsVisible = false;
     }
 
     #endregion
