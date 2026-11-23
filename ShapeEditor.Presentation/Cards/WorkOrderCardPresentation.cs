@@ -1,8 +1,8 @@
 using ShapeEditor.Core.Analysis;
 using ShapeEditor.Core.Models;
-using ShapeEditor.Web.Models;
+using ShapeEditor.Presentation.Export;
 
-namespace ShapeEditor.Web.Services;
+namespace ShapeEditor.Presentation.Cards;
 
 /// <summary>
 /// 三层工序卡片的层（从外到内：交换 → 半边 → 角）。
@@ -221,13 +221,13 @@ public sealed class WorkOrderCardPresentation
     /// 未验证卡的输入链在 <see cref="ToItem"/> 里已经清空，因此导出同样不会画出未验证的输入。
     /// </para>
     /// </summary>
-    public IReadOnlyList<AnalysisExportWorkOrderLayer> ToExportLayers()
+    public IReadOnlyList<WorkOrderCardExportLayer> ToExportLayers()
     {
-        var layers = new List<AnalysisExportWorkOrderLayer>(Layers.Count);
+        var layers = new List<WorkOrderCardExportLayer>(Layers.Count);
 
         foreach (WorkOrderCardLayer layer in Layers)
         {
-            var exportLayer = new AnalysisExportWorkOrderLayer
+            var exportLayer = new WorkOrderCardExportLayer
             {
                 Title = layer.Title,
                 Count = layer.Cards.Count
@@ -235,7 +235,7 @@ public sealed class WorkOrderCardPresentation
 
             foreach (WorkOrderCardItem card in layer.Cards)
             {
-                var exportCard = new AnalysisExportWorkOrderCard
+                var exportCard = new WorkOrderCardExportCard
                 {
                     Title = card.Title,
                     KindText = card.KindText,
@@ -255,7 +255,7 @@ public sealed class WorkOrderCardPresentation
 
                 foreach (WorkOrderCardInput input in card.Inputs)
                 {
-                    exportCard.Inputs.Add(new AnalysisExportWorkOrderCardInput
+                    exportCard.Inputs.Add(new WorkOrderCardExportInput
                     {
                         Title = input.Title,
                         State = ShapeCanvasState.Create(input.Shape)
@@ -264,7 +264,7 @@ public sealed class WorkOrderCardPresentation
 
                 foreach (WorkOrderCardStep step in card.Steps)
                 {
-                    exportCard.Steps.Add(new AnalysisExportWorkOrderCardStep
+                    exportCard.Steps.Add(new WorkOrderCardExportStep
                     {
                         Operation = step.Operation,
                         State = ShapeCanvasState.Create(step.Shape)

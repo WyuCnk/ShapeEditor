@@ -19,6 +19,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\ShapeEditor.Core\ShapeEditor.Core.csproj" />
+
+    <!-- 共享展示模型（工序卡片 / 交换文案 / 角工序视图 / 晶体与形状样式） -->
+    <ProjectReference Include="..\ShapeEditor.Presentation\ShapeEditor.Presentation.csproj" />
   </ItemGroup>
 
 </Project>

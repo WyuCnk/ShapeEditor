@@ -1,5 +1,5 @@
 using ShapeEditor.Core.Models;
-using ShapeEditor.Core.Theme;
+using ShapeEditor.Presentation.Styling;
 using GraphicsFont = Microsoft.Maui.Graphics.Font;
 
 namespace ShapeEditor.Maui;
@@ -131,7 +131,7 @@ public sealed class WorkspaceCellDrawable : IDrawable
     {
         if (shape.HasColor && shape.ColorCode is char code)
         {
-            return Color.FromUint(ShapePalette.FromCode(code));
+            return Color.FromUint(ShapePalette.Argb(code));
         }
 
         return Color.FromArgb("#9E9E9E");

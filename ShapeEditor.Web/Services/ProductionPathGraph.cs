@@ -112,14 +112,14 @@ public sealed record ProductionPathGraphEdge(
 /// </summary>
 public sealed class ProductionPathGraph
 {
-    /// <summary>与工作区节点一致的单元格边长。</summary>
-    public const int CellSize = 30;
+    /// <summary>与卡片节点一致的单元格边长。</summary>
+    public const int CellSize = CardMetrics.CellSize;
 
-    /// <summary>节点标题区高度，与工作区节点一致。</summary>
-    public const int HeaderHeight = 50;
+    /// <summary>节点标题区高度，与卡片节点一致。</summary>
+    public const int HeaderHeight = CardMetrics.NodeHeaderHeight;
 
     /// <summary>节点左右内边距合计：宽度 = 象限数 × 30 + 16。</summary>
-    public const int HorizontalPadding = 16;
+    public const int HorizontalPadding = CardMetrics.NodeHorizontalPadding;
 
     /// <summary>行内节点之间的水平间距。</summary>
     public const int ColumnGap = 40;

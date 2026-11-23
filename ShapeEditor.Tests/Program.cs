@@ -344,7 +344,15 @@ internal static class Program
             ("卡片:独立角保留碎晶", CardHierarchyTests.IndependentCornersKeepCrystalBreak),
             ("卡片:只有 v4 半边的角用角产物", CardHierarchyTests.OnlyV4HalfCornersUseCornerProducts),
             ("卡片:n=6 六角两层", CardHierarchyTests.SixQuadrantCardsAreComplete),
-            ("卡片:校验失败降级", CardHierarchyTests.FailedCardsDropInputsAndExplain)
+            ("卡片:校验失败降级", CardHierarchyTests.FailedCardsDropInputsAndExplain),
+
+            // 共享展示模型 ShapeEditor.Presentation（迁移自 Web，行为不变）。
+            ("展示:交换半边文案", PresentationTests.ExchangeHalfTextRules),
+            ("展示:工序卡片三层投影", PresentationTests.CardLayersMirrorCardSet),
+            ("展示:卡片导出投影", PresentationTests.ExportLayersMirrorPresentation),
+            ("展示:角工序节点尺寸", PresentationTests.AngleWorkNodesUseCardMetrics),
+            ("展示:样式常量与 Core 一致", PresentationTests.StylingConstantsMatchCore),
+            ("展示:无卡片返回 null", PresentationTests.EmptyCardSetReturnsNull)
         };
 
         /*

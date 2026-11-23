@@ -320,7 +320,9 @@
     private const int CellHeight = 400;
     private const int NodeHeight = 280;
     private const int NodeWidth = 260;
-    private const int CellSize = 30;
+
+    /// <summary>节点内 1:1 竖式图的单元格边长，统一来自 Presentation 的 CardMetrics。</summary>
+    private const int CellSize = CardMetrics.CellSize;
 
     private WorkspaceItem? _selectedMaterial;
 
@@ -844,7 +846,7 @@
     {
         int parts = node.HasShape ? node.Parts : 4;
 
-        return parts * CellSize + 16;
+        return CardMetrics.NodeWidth(parts);
     }
 
     /// <summary>节点高度：50 + 层数 × 30；没有图形时按 1 个空层处理。</summary>
@@ -852,7 +854,7 @@
     {
         int layers = node.HasShape ? Math.Max(1, node.Layers) : 1;
 
-        return 50 + layers * CellSize;
+        return CardMetrics.NodeHeight(layers);
     }
     private (double X, double Y) EdgeAnchor(
         WorkspaceNode node,

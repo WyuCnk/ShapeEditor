@@ -1,6 +1,7 @@
 using Microsoft.Maui.Graphics;
 using ShapeEditor.Core.Models;
-using ShapeEditor.Core.Theme;
+using ShapeEditor.Presentation.Styling;
+using CoreGridMetrics = ShapeEditor.Core.Theme.GridMetrics;
 
 namespace ShapeEditor.Maui;
 
@@ -216,7 +217,7 @@ public sealed class ShapeGridDrawable : IDrawable
         int parts)
     {
         canvas.StrokeColor =
-            Color.FromUint(GridMetrics.GridLineColor);
+            Color.FromUint(CoreGridMetrics.GridLineColor);
 
         canvas.StrokeSize = 1;
 
@@ -295,7 +296,7 @@ public sealed class ShapeGridDrawable : IDrawable
         }
 
         canvas.StrokeColor =
-            Color.FromUint(GridMetrics.SelectionColor);
+            Color.FromUint(CoreGridMetrics.SelectionColor);
 
         canvas.StrokeSize = borderWidth;
 
@@ -332,7 +333,7 @@ public sealed class ShapeGridDrawable : IDrawable
                     canvas,
                     cell,
                     rect,
-                    "晶");
+                    CellGlyph.CrystalText);
 
                 break;
 
@@ -341,7 +342,7 @@ public sealed class ShapeGridDrawable : IDrawable
                     canvas,
                     cell,
                     rect,
-                    "图");
+                    CellGlyph.ShapeText);
 
                 break;
         }
@@ -455,7 +456,7 @@ public sealed class ShapeGridDrawable : IDrawable
         }
 
         canvas.FontColor =
-            colorCode == 'k'
+            ShapePalette.NeedsLightText(colorCode)
                 ? Colors.White
                 : Colors.Black;
 
@@ -739,7 +740,7 @@ public sealed class ShapeGridDrawable : IDrawable
     private static Color[] CreateCrystalGradientColors(
         char colorCode)
     {
-        uint[] bands = CrystalBands.Get(colorCode);
+        uint[] bands = ShapePalette.CrystalBands(colorCode);
 
         var colors = new Color[bands.Length];
 
@@ -814,7 +815,7 @@ public sealed class ShapeGridDrawable : IDrawable
     private static Color GetColor(
         char code)
     {
-        return Color.FromUint(ShapePalette.FromCode(code));
+        return Color.FromUint(ShapePalette.Argb(code));
     }
 
     #endregion

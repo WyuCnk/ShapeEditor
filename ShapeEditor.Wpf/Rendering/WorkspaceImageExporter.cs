@@ -6,6 +6,8 @@ using System.Windows.Media.Imaging;
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Theme;
 using ShapeEditor.Core.Workspaces;
+using ShapeEditor.Presentation.Styling;
+using PresentationPalette = ShapeEditor.Presentation.Styling.ShapePalette;
 
 namespace ShapeEditor.Wpf.Rendering;
 
@@ -18,9 +20,9 @@ namespace ShapeEditor.Wpf.Rendering;
 /// </summary>
 public static class WorkspaceImageExporter
 {
-    private const double CellSize = 30;
+    private const double CellSize = CardMetrics.CellSize;
 
-    private const double HeaderHeight = 50;
+    private const double HeaderHeight = CardMetrics.NodeHeaderHeight;
 
     private const double Padding = 24;
 
@@ -503,7 +505,7 @@ public static class WorkspaceImageExporter
                 rect);
         }
 
-        return ShapePalette.NeedsLightText(cell.ColorCode)
+        return PresentationPalette.NeedsLightText(cell.ColorCode)
             ? theme.LightTextBrush
             : theme.DarkTextBrush;
     }

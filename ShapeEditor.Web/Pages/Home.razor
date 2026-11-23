@@ -6,6 +6,7 @@
 @using ShapeEditor.Core.Theme
 @using ShapeEditor.Web.Models
 @using ShapeEditor.Web.Services
+@using PresentationPalette = ShapeEditor.Presentation.Styling.ShapePalette
 @inject IJSRuntime JS
 @inject WorkspaceStore Workspace
 @inject AnalysisRequest Analysis
@@ -420,12 +421,11 @@
 
     private const float DragThreshold = 8f;
 
-    private static readonly char[] ColorCodes =
-        {
-        'r', 'g', 'b',
-        'c', 'm', 'y',
-        'w', 'k', 'u'
-    };
+    /// <summary>
+    /// 画笔按钮的颜色码顺序：与 Presentation 的 ShapePalette.Codes（也就是 Core 的
+    /// ShapeColor.All）保持一致，颜色名称与色值也全部来自 ShapePalette。
+    /// </summary>
+    private static readonly IReadOnlyList<char> ColorCodes = PresentationPalette.Codes;
 
     private readonly ShapeEditorService Editor = new();
 
@@ -726,36 +726,24 @@
 
     private static string GetColorName(char color)
     {
-        return color switch
-        {
-            'r' => "红",
-            'g' => "绿",
-            'b' => "蓝",
-            'c' => "青",
-            'm' => "洋红",
-            'y' => "黄",
-            'w' => "白",
-            'k' => "黑",
-            'u' => "未着色",
-            _ => ""
-        };
+        // 颜色简称（红 / 绿 / 蓝 / …）来自 Presentation 的 ShapePalette。
+        return PresentationPalette.ShortName(color);
     }
 
     private static string GetColorStyle(char color)
     {
-        return color switch
+        if (!ShapeColor.IsValid(color))
         {
-            'r' => "background-color:#FF3864;color:#000000;",
-            'g' => "background-color:#83FF38;color:#000000;",
-            'b' => "background-color:#65B7FF;color:#000000;",
-            'c' => "background-color:#35E6C1;color:#000000;",
-            'm' => "background-color:#D85CFF;color:#000000;",
-            'y' => "background-color:#FFB83E;color:#000000;",
-            'w' => "background-color:#D8D8D8;color:#000000;",
-            'k' => "background-color:#35353C;color:#FFFFFF;",
-            'u' => "background-color:#A9BAC8;color:#000000;",
-            _ => "background-color:#EEEEEE;color:#000000;"
-        };
+            return "background-color:#EEEEEE;color:#000000;";
+        }
+
+        // 色值与前景色规则都来自 Presentation 的 ShapePalette：
+        // 只有黑色 k 用白字，其余用黑字，与迁移前逐字一致。
+        string foreground = PresentationPalette.NeedsLightText(color)
+            ? "#FFFFFF"
+            : "#000000";
+
+        return $"background-color:{PresentationPalette.Hex(color)};color:{foreground};";
     }
 
     private Task SetCanvasMode(CanvasMode mode)
@@ -1404,14 +1392,8 @@
 
     private static string GetCanvasType(ShapeCell cell)
     {
-        return cell.Type switch
-        {
-            CellType.Empty => "empty",
-            CellType.Pin => "pin",
-            CellType.Crystal => "crystal",
-            CellType.Shape => "shape",
-            _ => "empty"
-        };
+        // 单元格种类名与字形统一来自 Presentation，三端共用同一份映射。
+        return CellGlyph.KindName(cell.Type);
     }
 
     private void ApplyDimensions()
@@ -1584,14 +1566,8 @@
     private static string GetDisplayText(
         ShapeCell cell)
     {
-        return cell.Type switch
-        {
-            CellType.Empty => "",
-            CellType.Pin => "",
-            CellType.Crystal => "晶",
-            CellType.Shape => "图",
-            _ => ""
-        };
+        // 形状「图」、晶体「晶」，空格与顶针不画字：字形来自 Presentation 的 CellGlyph。
+        return CellGlyph.For(cell.Type);
     }
 
     private Task ResetView()

@@ -1,7 +1,7 @@
 using SkiaSharp;
 using ShapeEditor.Core.Models;
-using ShapeEditor.Core.Theme;
 using ShapeEditor.Core.Workspaces;
+using ShapeEditor.Presentation.Styling;
 
 namespace ShapeEditor.Maui;
 
@@ -18,7 +18,7 @@ public sealed class WorkspaceImageExporter
 {
     private const int Margin = 24;
 
-    private const int CellSize = 30;
+    private const int CellSize = CardMetrics.CellSize;
 
     private const int MaxImageSide = 16_000;
 
@@ -451,7 +451,7 @@ public sealed class WorkspaceImageExporter
         ShapeCell shape)
     {
         uint argb = shape.HasColor && shape.ColorCode is char code
-            ? ShapePalette.FromCode(code)
+            ? ShapePalette.Argb(code)
             : 0xFF9E9E9E;
 
         return ToSKColor(argb);

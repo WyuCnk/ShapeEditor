@@ -1,7 +1,7 @@
-namespace ShapeEditor.Web.Services;
+namespace ShapeEditor.Presentation.Exchange;
 
 /// <summary>
-/// 交换工序的显示文案（只改 Web 显示层，不改 Core 的 Direction / 节点标题）。
+/// 交换工序的显示文案（只改展示层 Presentation，不改 Core 的 Direction / 节点标题）。
 ///
 /// <para>
 /// 交换的两侧按「半边」为单位称呼：左侧是半边工序产物时叫「半边1」，

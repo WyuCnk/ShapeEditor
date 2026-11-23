@@ -1,4 +1,5 @@
 using ShapeEditor.Core.Analysis;
+using ShapeEditor.Presentation.Styling;
 
 namespace ShapeEditor.Maui;
 
@@ -89,14 +90,14 @@ public sealed record ProductionPathEdge(
 /// </summary>
 public sealed class ProductionPathGraphLayout
 {
-    /// <summary>与工作区节点一致的单元格边长。</summary>
-    public const double CellSize = 30;
+    /// <summary>与工作区节点一致的单元格边长（来自 Presentation 的 CardMetrics）。</summary>
+    public const double CellSize = CardMetrics.CellSize;
 
     /// <summary>节点标题区高度。</summary>
-    public const double HeaderHeight = 50;
+    public const double HeaderHeight = CardMetrics.NodeHeaderHeight;
 
     /// <summary>节点左右内边距合计：宽度 = 象限数 × 30 + 16。</summary>
-    public const double HorizontalPadding = 16;
+    public const double HorizontalPadding = CardMetrics.NodeHorizontalPadding;
 
     /// <summary>行内节点之间的水平间距。</summary>
     public const double ColumnGap = 40;

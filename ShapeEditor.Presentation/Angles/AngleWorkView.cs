@@ -2,8 +2,9 @@ using System.Globalization;
 using ShapeEditor.Core.Analysis;
 using ShapeEditor.Core.Analysis.Production;
 using ShapeEditor.Core.Models;
+using ShapeEditor.Presentation.Styling;
 
-namespace ShapeEditor.Web.Services;
+namespace ShapeEditor.Presentation.Angles;
 
 /// <summary>
 /// 「角的工序」里的一个步骤节点。
@@ -27,13 +28,13 @@ namespace ShapeEditor.Web.Services;
 public sealed class AngleWorkNode
 {
     /// <summary>竖式图单元格边长，与制作路径节点保持一致。</summary>
-    public const int CellSize = 30;
+    public const int CellSize = CardMetrics.CellSize;
 
     /// <summary>节点标题区高度。</summary>
-    public const int HeaderHeight = 50;
+    public const int HeaderHeight = CardMetrics.NodeHeaderHeight;
 
     /// <summary>节点左右内边距合计。</summary>
-    public const int HorizontalPadding = 16;
+    public const int HorizontalPadding = CardMetrics.NodeHorizontalPadding;
 
     public string Id { get; init; } = "";
 
@@ -817,13 +818,9 @@ public static class AngleWorkColumnBuilder
         {
             ShapeDocument shape = step.Shape!;
 
-            double width =
-                shape.PartCount * AngleWorkNode.CellSize +
-                AngleWorkNode.HorizontalPadding;
+            double width = CardMetrics.NodeWidth(shape.PartCount);
 
-            double height =
-                AngleWorkNode.HeaderHeight +
-                shape.LayerCount * AngleWorkNode.CellSize;
+            double height = CardMetrics.NodeHeight(shape.LayerCount);
 
             nodes.Add(new AngleWorkNode
             {

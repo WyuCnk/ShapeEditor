@@ -3,6 +3,8 @@ using System.Windows;
 using System.Windows.Media;
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Theme;
+using ShapeEditor.Presentation.Styling;
+using PresentationPalette = ShapeEditor.Presentation.Styling.ShapePalette;
 
 namespace ShapeEditor.Wpf.Rendering;
 
@@ -29,7 +31,7 @@ public sealed class ShapeTheme
 
     private ShapeTheme()
     {
-        EmptyBrush = CreateBrush(ShapePalette.Empty);
+        EmptyBrush = CreateBrush(PresentationPalette.Empty);
 
         PinBrush = CreateBrush(0xFF000000);
 
@@ -96,7 +98,7 @@ public sealed class ShapeTheme
             return brush;
         }
 
-        brush = CreateBrush(ShapePalette.FromCode(key));
+        brush = CreateBrush(PresentationPalette.Argb(key));
 
         _shapeBrushes[key] = brush;
 
@@ -118,7 +120,7 @@ public sealed class ShapeTheme
             return brushes;
         }
 
-        uint[] bands = CrystalBands.Get(key);
+        uint[] bands = PresentationPalette.CrystalBands(key);
 
         brushes = new SolidColorBrush[bands.Length];
 
@@ -211,12 +213,12 @@ public sealed class ShapeTheme
     }
 
     /// <summary>
-    /// 单元格类型对应的文字。
+    /// 单元格类型对应的文字：字形常量来自 Presentation 的 <see cref="CellGlyph"/>。
     /// </summary>
     public static string GetCellText(
         CellType type)
     {
-        return type == CellType.Crystal ? "晶" : "图";
+        return CellGlyph.For(type);
     }
 
     /// <summary>
@@ -225,6 +227,6 @@ public sealed class ShapeTheme
     public static bool HasText(
         CellType type)
     {
-        return type is CellType.Shape or CellType.Crystal;
+        return CellGlyph.HasText(type);
     }
 }

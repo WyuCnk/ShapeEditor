@@ -30,6 +30,9 @@
 
 	<ItemGroup>
 		<ProjectReference Include="..\ShapeEditor.Core\ShapeEditor.Core.csproj" />
+
+		<!-- 共享展示模型与晶体 / 形状样式（不引用任何 UI 框架） -->
+		<ProjectReference Include="..\ShapeEditor.Presentation\ShapeEditor.Presentation.csproj" />
 	</ItemGroup>
 
 </Project>

@@ -1,5 +1,6 @@
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Workspaces;
+using ShapeEditor.Presentation.Styling;
 
 namespace ShapeEditor.Maui;
 
@@ -9,8 +10,8 @@ namespace ShapeEditor.Maui;
 /// </summary>
 public static class WorkspaceLayout
 {
-    /// <summary>预览格子的固定边长，画布与导出图片都是 30。</summary>
-    public const double CellSize = 30;
+    /// <summary>预览格子的固定边长，画布与导出图片都是 30（来自 Presentation 的 CardMetrics）。</summary>
+    public const double CellSize = CardMetrics.CellSize;
 
     /// <summary>标题行高度。</summary>
     public const double HeaderHeight = 26;
@@ -18,8 +19,8 @@ public static class WorkspaceLayout
     /// <summary>摘要行高度。</summary>
     public const double SummaryHeight = 24;
 
-    /// <summary>节点装饰高度 = 标题行 + 摘要行。</summary>
-    public const double ChromeHeight = HeaderHeight + SummaryHeight;
+    /// <summary>节点装饰高度 = 标题行 + 摘要行 = 卡片节点的标题区高度（50）。</summary>
+    public const double ChromeHeight = CardMetrics.NodeHeaderHeight;
 
     /// <summary>节点左右留白之和，宽度 = 象限数 × 30 + 16。</summary>
     public const double HorizontalPadding = 8;

@@ -5,6 +5,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using ShapeEditor.Core.Analysis;
 using ShapeEditor.Core.Models;
+using ShapeEditor.Presentation.Styling;
 using ShapeEditor.Wpf.ViewModels;
 
 namespace ShapeEditor.Wpf.Rendering;
@@ -391,7 +392,7 @@ public static class AnalysisImageExporter
     {
         y = DrawSectionTitle(context, "竖式图", y);
 
-        const double baseCell = 30;
+        const double baseCell = CardMetrics.CellSize;
 
         double cell = Math.Min(
             MaxShapeWidth / document.PartCount,

@@ -1,6 +1,6 @@
 using SkiaSharp;
 using ShapeEditor.Core.Models;
-using ShapeEditor.Core.Theme;
+using ShapeEditor.Presentation.Styling;
 
 namespace ShapeEditor.Maui;
 
@@ -329,7 +329,7 @@ public sealed class ShapeImageExporter
                     canvas,
                     cell,
                     rect,
-                    "晶",
+                    CellGlyph.CrystalText,
                     typeface);
 
                 break;
@@ -339,7 +339,7 @@ public sealed class ShapeImageExporter
                     canvas,
                     cell,
                     rect,
-                    "图",
+                    CellGlyph.ShapeText,
                     typeface);
 
                 break;
@@ -448,7 +448,7 @@ public sealed class ShapeImageExporter
             colorCode);
 
         SKColor textColor =
-            colorCode == 'k'
+            ShapePalette.NeedsLightText(colorCode)
                 ? SKColors.White
                 : SKColors.Black;
 
@@ -648,7 +648,7 @@ public sealed class ShapeImageExporter
     private static SKColor[] CreateCrystalGradientColors(
         char colorCode)
     {
-        uint[] bands = CrystalBands.Get(colorCode);
+        uint[] bands = ShapePalette.CrystalBands(colorCode);
 
         var colors = new SKColor[bands.Length];
 
@@ -791,7 +791,7 @@ public sealed class ShapeImageExporter
     private static SKColor GetColor(
         char code)
     {
-        return ToSKColor(ShapePalette.FromCode(code));
+        return ToSKColor(ShapePalette.Argb(code));
     }
 
     #endregion

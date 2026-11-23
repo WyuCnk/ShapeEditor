@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>ShapeEditor.Presentation</RootNamespace>
+    <AssemblyName>ShapeEditor.Presentation</AssemblyName>
+
+    <!--
+      共享展示模型：只依赖 ShapeEditor.Core，不引用任何 UI 框架。
+
+      这里的 net10.0 必须能被 net10.0-windows（WPF）与 net10.0-android（MAUI）
+      直接引用，因此本文件不得出现 UseWPF / UseMaui / Microsoft.Maui 等
+      与平台或 UI 框架绑定的设置与依赖。
+    -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ShapeEditor.Core\ShapeEditor.Core.csproj" />
+  </ItemGroup>
+
+</Project>

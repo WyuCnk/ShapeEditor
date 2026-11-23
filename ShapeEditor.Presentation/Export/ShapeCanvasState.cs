@@ -1,11 +1,17 @@
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Theme;
+using ShapeEditor.Presentation.Styling;
 
-namespace ShapeEditor.Web.Models;
+namespace ShapeEditor.Presentation.Export;
 
 /// <summary>
-/// 传给 shape-grid.js 的绘制数据。
-/// 属性会按 camelCase 序列化，需与 shape-grid.js 中的字段名保持一致。
+/// 传给 shape-grid.js 的绘制数据（页面预览与导出图共用同一份快照）。
+///
+/// <para>
+/// 属性会按 camelCase 序列化，需与 shape-grid.js 中的字段名保持一致；
+/// 类型从 Web 迁到 Presentation 只换了命名空间，属性名与顺序不变，
+/// 因此 Web 端 JSON 与迁移前逐字相同。
+/// </para>
 /// </summary>
 public sealed class ShapeCanvasState
 {
@@ -59,7 +65,7 @@ public sealed class ShapeCanvasState
                 state.Cells.Add(
                     new ShapeCanvasCell
                     {
-                        Type = GetType(cell.Type),
+                        Type = CellGlyph.KindName(cell.Type),
                         ColorCode = cell.ColorCode,
                         Text = cell.ToDisplayText()
                     });
@@ -68,21 +74,9 @@ public sealed class ShapeCanvasState
 
         return state;
     }
-
-    private static string GetType(
-        CellType type)
-    {
-        return type switch
-        {
-            CellType.Empty => "empty",
-            CellType.Pin => "pin",
-            CellType.Crystal => "crystal",
-            CellType.Shape => "shape",
-            _ => "empty"
-        };
-    }
 }
 
+/// <summary>绘制数据里的一个单元格。</summary>
 public sealed class ShapeCanvasCell
 {
     public string Type { get; init; } = "empty";

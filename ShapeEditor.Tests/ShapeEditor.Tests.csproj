@@ -18,6 +18,7 @@
 
 	<ItemGroup>
 		<ProjectReference Include="..\ShapeEditor.Core\ShapeEditor.Core.csproj" />
+		<ProjectReference Include="..\ShapeEditor.Presentation\ShapeEditor.Presentation.csproj" />
 		<ProjectReference Include="..\ShapeEditor.Wpf\ShapeEditor.Wpf.csproj" />
 	</ItemGroup>
 

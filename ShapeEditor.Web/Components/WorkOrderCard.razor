@@ -106,7 +106,7 @@
                             }
 
                             <div class="graph-node path-node angle-node work-order-step @step.CssClass"
-                                 style="width:@Px(step.Shape.PartCount * 30 + 16)px;height:@Px(step.Shape.LayerCount * 30 + 50)px">
+                                 style="width:@Px(CardMetrics.NodeWidth(step.Shape.PartCount))px;height:@Px(CardMetrics.NodeHeight(step.Shape.LayerCount))px">
                                 <div class="path-node-head" title="@step.Operation">@step.Operation</div>
 
                                 <div class="graph-node-body path-node-body">

@@ -1,6 +1,7 @@
 using System.Windows;
 using ShapeEditor.Core.Models;
 using ShapeEditor.Core.Workspaces;
+using ShapeEditor.Presentation.Styling;
 
 namespace ShapeEditor.Wpf.Rendering;
 
@@ -13,14 +14,14 @@ namespace ShapeEditor.Wpf.Rendering;
 /// </summary>
 public static class WorkspaceLayout
 {
-    /// <summary>单元格边长（逻辑像素）。</summary>
-    public const double CellSize = 30;
+    /// <summary>单元格边长（逻辑像素），来自 Presentation 的 CardMetrics。</summary>
+    public const double CellSize = CardMetrics.CellSize;
 
     /// <summary>标题区高度；与上下边框合计为 50。</summary>
-    public const double HeaderHeight = 50;
+    public const double HeaderHeight = CardMetrics.NodeHeaderHeight;
 
     /// <summary>左右留白合计：每边 8。</summary>
-    public const double HorizontalPadding = 16;
+    public const double HorizontalPadding = CardMetrics.NodeHorizontalPadding;
 
     /// <summary>画布与导出图片的边距。</summary>
     public const double Padding = 24;
